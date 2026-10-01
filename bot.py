@@ -216,7 +216,6 @@ def reaction_buttons(chat_id: int, selected: list[str]):
     rows.append([Button.inline("✏️ Custom emojis", f"custom:{chat_id}".encode())])
     return rows
 
-@bot.on(events.NewMessage(incoming=True))
 async def messages(event):
     if not owner_only(event):
         return
@@ -264,7 +263,6 @@ async def messages(event):
     elif text == "/help":
         await event.reply("Use /panel to open the button dashboard.", buttons=main_buttons())
 
-@bot.on(events.CallbackQuery)
 async def callbacks(event):
     if event.sender_id != OWNER_ID:
         await event.answer("Access denied.", alert=True)
@@ -273,9 +271,11 @@ async def callbacks(event):
     try:
         await event.answer()
         if data == "dashboard":
+            pending.pop(OWNER_ID, None)
             await edit_or_reply(event, await dashboard_text(), main_buttons())
             return
         if data == "channels":
+            pending.pop(OWNER_ID, None)
             text = "📡 Configured Channels\n\n" + ("Tap a channel for controls." if channels else "No channels configured yet.")
             await edit_or_reply(event, text, channels_buttons())
             return
@@ -324,6 +324,7 @@ async def callbacks(event):
                 await event.answer("Channel not found.", alert=True)
                 return
             if action == "view":
+                pending.pop(OWNER_ID, None)
                 text, buttons = await channel_view(chat_id)
                 await edit_or_reply(event, text, buttons)
                 return
@@ -335,6 +336,7 @@ async def callbacks(event):
                 await edit_or_reply(event, text, buttons)
                 return
             if action == "remove":
+                pending.pop(OWNER_ID, None)
                 channels.pop(chat_id, None)
                 await db_delete_channel(chat_id)
                 await edit_or_reply(event, "✅ Channel removed.", [[Button.inline("⬅️ Channels", b"channels")]])
