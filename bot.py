@@ -5,6 +5,7 @@ import logging
 import os
 import random
 from datetime import datetime, timezone
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from typing import Any
 
 from dotenv import load_dotenv
@@ -42,19 +43,62 @@ mongo: MongoClient | None = None
 channel_collection = None
 log_collection = None
 settings_collection = None
+mongo_error = ""
 
-if MONGODB:
-    try:
-        mongo = MongoClient(MONGODB, serverSelectionTimeoutMS=5000)
-        mongo.admin.command("ping")
-        db = mongo.get_database("anitoons_1bot")
-        channel_collection = db.get_collection("channels")
-        log_collection = db.get_collection("logs")
-        settings_collection = db.get_collection("settings")
-        log.info("MongoDB connected.")
-    except Exception as exc:
-        log.warning("MongoDB unavailable; using memory: %s", exc)
-        mongo = None
+def normalized_mongodb_uri(uri: str) -> str:
+    """Normalize URI credentials so reserved password characters work."""
+    parsed = urlsplit(uri.strip())
+    if not parsed.scheme or not parsed.hostname:
+        return uri.strip()
+    if parsed.username is None:
+        return uri.strip()
+
+    username = quote(unquote(parsed.username), safe="")
+    password = ""
+    if parsed.password is not None:
+        password = quote(unquote(parsed.password), safe="")
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    userinfo = username
+    if parsed.password is not None:
+        userinfo += ":" + password
+    userinfo += "@"
+    rebuilt = urlunsplit((parsed.scheme, userinfo + host, parsed.path, parsed.query, parsed.fragment))
+    return rebuilt
+
+def configure_mongo(client: MongoClient) -> None:
+    global mongo, channel_collection, log_collection, settings_collection
+    mongo = client
+    db = client.get_database("anitoons_1bot")
+    channel_collection = db.get_collection("channels")
+    log_collection = db.get_collection("logs")
+    settings_collection = db.get_collection("settings")
+
+def connect_mongo() -> None:
+    global mongo_error
+    if not MONGODB:
+        mongo_error = "MONGODB environment variable is empty."
+        raise RuntimeError(mongo_error)
+
+    uri = normalized_mongodb_uri(MONGODB)
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    client.admin.command("ping")
+    configure_mongo(client)
+    mongo_error = ""
+    log.info("MongoDB connected.")
+
+try:
+    connect_mongo()
+except Exception as exc:
+    mongo_error = str(exc)
+    log.warning("MongoDB unavailable; using memory: %s", exc)
+    mongo = None
+    channel_collection = None
+    log_collection = None
+    settings_collection = None
 
 def owner_only(event) -> bool:
     return bool(event.is_private and event.sender_id == OWNER_ID)
@@ -111,8 +155,12 @@ async def recent_logs(limit: int = 12) -> list[dict[str, Any]]:
     return docs
 
 async def clear_mongo_storage() -> None:
-    if channel_collection is None or log_collection is None or settings_collection is None:
-        raise RuntimeError("MongoDB is not connected.")
+    global mongo, channel_collection, log_collection, settings_collection
+    # Reconnect for every clear request. This handles credentials fixed in Render
+    # without relying on a MongoClient that failed during process startup.
+    await asyncio.to_thread(connect_mongo)
+    if mongo is None or channel_collection is None or log_collection is None or settings_collection is None:
+        raise RuntimeError("MongoDB connection could not be established.")
     await asyncio.to_thread(channel_collection.delete_many, {})
     await asyncio.to_thread(log_collection.delete_many, {})
     await asyncio.to_thread(settings_collection.delete_many, {})
