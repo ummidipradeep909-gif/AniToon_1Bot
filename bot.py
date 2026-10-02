@@ -110,6 +110,15 @@ async def recent_logs(limit: int = 12) -> list[dict[str, Any]]:
         item.pop("_id", None)
     return docs
 
+async def clear_mongo_storage() -> None:
+    if channel_collection is None or log_collection is None or settings_collection is None:
+        raise RuntimeError("MongoDB is not connected.")
+    await asyncio.to_thread(channel_collection.delete_many, {})
+    await asyncio.to_thread(log_collection.delete_many, {})
+    await asyncio.to_thread(settings_collection.delete_many, {})
+    channels.clear()
+    pending.clear()
+
 def main_buttons():
     return [
         [Button.inline("📊 Dashboard", b"dashboard"), Button.inline("📡 Channels", b"channels")],
@@ -117,6 +126,7 @@ def main_buttons():
         [Button.inline("⏱ Delay", b"delay_menu"), Button.inline("📋 Logs", b"logs")],
         [Button.inline("▶️ Start", b"global_on"), Button.inline("⏸ Stop", b"global_off")],
         [Button.inline("🔍 Status", b"status"), Button.inline("❔ Help", b"help")],
+        [Button.inline("🧹 Clear MongoDB", b"clear_storage")],
     ]
 
 async def dashboard_text() -> str:
@@ -260,6 +270,13 @@ async def messages(event):
             return
     if text in {"/start", "/panel"}:
         await event.reply(await dashboard_text(), buttons=main_buttons())
+    elif text == "/clearstorage":
+        await event.reply(
+            "⚠️ This deletes the bot's MongoDB channels, logs, and settings. "
+            "Use the button below to confirm.",
+            buttons=[[Button.inline("✅ CONFIRM CLEAR", b"clear_confirm"),
+                       Button.inline("❌ Cancel", b"dashboard")]],
+        )
     elif text == "/help":
         await event.reply("Use /panel to open the button dashboard.", buttons=main_buttons())
 
@@ -294,6 +311,40 @@ async def callbacks(event):
             user_state = "authorized" if user_session_ok else ("revoked/not authorized" if user else "not configured")
             await edit_or_reply(event, f"🔍 Status\n\nBot: @{getattr(bot_me, 'username', 'unknown')}\nWorker: {worker_name()}\nUSER_SESSION: {user_state}\nMongoDB: {'connected' if mongo else 'not connected'}\nAuto reactions: {'ON' if auto_reactions else 'OFF'}", [[Button.inline("🔄 Refresh", b"status"), Button.inline("⬅️ Back", b"dashboard")]])
             return
+        if data == "clear_storage":
+            await edit_or_reply(
+                event,
+                "⚠️ CLEAR MONGODB STORAGE\n\n"
+                "This will delete only this bot's stored channels, logs, "
+                "and settings from the anitoons_1bot database.\n\n"
+                "This cannot be undone.",
+                [[
+                    Button.inline("✅ CONFIRM CLEAR", b"clear_confirm"),
+                    Button.inline("❌ Cancel", b"dashboard"),
+                ]],
+            )
+            return
+
+        if data == "clear_confirm":
+            try:
+                await clear_mongo_storage()
+                await edit_or_reply(
+                    event,
+                    "✅ MongoDB storage cleared.\n\n"
+                    "Channels, logs, and settings have been deleted.",
+                    [[Button.inline("🏠 Dashboard", b"dashboard")]],
+                )
+            except Exception as exc:
+                await edit_or_reply(
+                    event,
+                    f"❌ MongoDB storage was not cleared.\n\n{type(exc).__name__}: {exc}",
+                    [[
+                        Button.inline("🔍 Status", b"status"),
+                        Button.inline("⬅️ Dashboard", b"dashboard"),
+                    ]],
+                )
+            return
+
         if data == "logs":
             entries = await recent_logs()
             if not entries:
