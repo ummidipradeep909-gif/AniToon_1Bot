@@ -569,90 +569,286 @@ def web_section(report: Report, section: str) -> str:
 
 
 def web_page(report: Report) -> bytes:
-    summary = web_section(report, "summary")
-    audio = web_section(report, "audio")
-    subs = web_section(report, "subs")
-    video = web_section(report, "video")
-    technical = web_section(report, "technical")
-
     filename = html.escape(report.filename)
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated = datetime.now(timezone.utc)
+    generated_text = generated.strftime("%Y-%m-%d %H:%M UTC")
+
+    audio = report.audio.get("tracks", [])
+    video = report.video.get("tracks", [])
+    subtitles = report.subtitles or []
+
+    def esc(value: Any) -> str:
+        return html.escape(str(value))
+
+    def track_cards(items: list[dict[str, Any]], kind: str) -> str:
+        if not items:
+            return (
+                '<div class="empty">No confirmed '
+                + esc(kind)
+                + ' track was exposed by the player engine within the bounded probe.</div>'
+            )
+
+        cards = []
+        for index, track in enumerate(items, 1):
+            name = track.get("name") or track.get("display_name") or "Unnamed track"
+            language = track.get("language_name") or track.get("language") or "Unknown"
+            codec = track.get("codec_name") or track.get("codec") or "Unknown"
+
+            details = [
+                ("Language", language),
+                ("Codec", codec),
+            ]
+
+            if kind == "Audio":
+                details.extend([
+                    ("Channels", track.get("channels")),
+                    ("Layout", track.get("layout")),
+                    ("Sample rate", track.get("sample_rate")),
+                    ("Bitrate", track.get("bitrate")),
+                ])
+            elif kind == "Video":
+                details.extend([
+                    ("Resolution", track.get("dimensions")),
+                    ("Pixel format", track.get("pixel_format")),
+                    ("Profile", track.get("profile")),
+                ])
+            else:
+                details.append(("Format", track.get("subtitle_format") or codec))
+
+            for label, value in details:
+                if value:
+                    pass
+                else:
+                    continue
+                details_html = ""
+
+            rows = "".join(
+                f'<div class="kv"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
+                for label, value in details
+                if value
+            )
+
+            flags = []
+            if track.get("default") == "yes":
+                flags.append("DEFAULT")
+            if track.get("original") == "yes":
+                flags.append("ORIGINAL")
+            if track.get("commentary") == "yes":
+                flags.append("COMMENTARY")
+            if track.get("forced") == "yes":
+                flags.append("FORCED")
+            if track.get("hearing_impaired") == "yes":
+                flags.append("HI")
+            if track.get("visual_impaired") == "yes":
+                flags.append("VI")
+
+            badges = "".join(f'<span class="badge">{esc(flag)}</span>' for flag in flags)
+            source = esc(track.get("name_source", "player metadata"))
+
+            cards.append(
+                f"""
+                <article class="track">
+                  <div class="track-top">
+                    <div class="index">{index:02d}</div>
+                    <div class="track-main">
+                      <h3>{esc(name)}</h3>
+                      <div class="subline">{esc(kind)} • {esc(source)}</div>
+                    </div>
+                    <div class="badges">{badges}</div>
+                  </div>
+                  <div class="grid">{rows}</div>
+                </article>
+                """
+            )
+        return "".join(cards)
+
+    runtime = report.container.get("runtime") or "Unknown"
+    container_name = report.detected or "Unknown"
+    mime = report.mime or "Unknown"
+    sampled = f"{report.sampled / 1024 / 1024:.2f} MiB"
+    audio_names = [str(t.get("name")) for t in audio if t.get("name")]
+    subtitle_names = [str(t.get("name")) for t in subtitles if t.get("name")]
 
     document = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AniToons File Info — {filename}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>AniToons File Intelligence — {filename}</title>
 <style>
 :root {{
   color-scheme: dark;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bg: #070b14;
+  --panel: rgba(17,24,39,.88);
+  --border: rgba(148,163,184,.18);
+  --muted: #94a3b8;
+  --text: #f8fafc;
+  --accent: #7dd3fc;
+  --good: #86efac;
 }}
+* {{ box-sizing: border-box; }}
 body {{
   margin: 0;
-  background: #0f172a;
-  color: #e5e7eb;
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 400px at 15% -10%, rgba(56,189,248,.13), transparent 60%),
+    radial-gradient(800px 380px at 100% 0%, rgba(168,85,247,.10), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font: 14px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 }}
-.wrap {{
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 24px 16px 48px;
+.wrap {{ max-width: 1080px; margin:auto; padding:20px 14px 50px; }}
+.hero {{
+  padding:24px;
+  border:1px solid var(--border);
+  border-radius:24px;
+  background:linear-gradient(135deg,rgba(15,23,42,.96),rgba(17,24,39,.84));
+  box-shadow:0 20px 60px rgba(0,0,0,.26);
 }}
-.header {{
-  background: #111827;
-  border: 1px solid #334155;
-  border-radius: 18px;
-  padding: 22px;
-  margin-bottom: 16px;
+.logo {{ font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); font-weight:800; }}
+h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
+.file {{ color:#cbd5e1; overflow-wrap:anywhere; }}
+.meta {{ margin-top:10px; color:var(--muted); font-size:12px; display:flex; gap:10px; flex-wrap:wrap; }}
+.pill {{
+  display:inline-flex; align-items:center; gap:7px;
+  padding:7px 10px; border-radius:999px;
+  background:rgba(148,163,184,.08); border:1px solid var(--border);
 }}
-h1 {{ margin: 0 0 8px; font-size: 24px; }}
-.meta {{ color: #94a3b8; font-size: 13px; }}
-.card {{
-  background: #111827;
-  border: 1px solid #334155;
-  border-radius: 16px;
-  padding: 18px;
-  margin-top: 14px;
-  overflow-wrap: anywhere;
+.summary {{
+  display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px; margin-top:18px;
 }}
-.card h2 {{
-  margin: 0 0 12px;
-  font-size: 18px;
+.stat {{
+  padding:15px; border:1px solid var(--border); border-radius:16px;
+  background:rgba(2,6,23,.28);
 }}
-.info {{
-  line-height: 1.65;
-  font-size: 14px;
+.stat b {{ display:block; font-size:22px; margin-bottom:2px; }}
+.stat span {{ color:var(--muted); font-size:12px; }}
+.section {{
+  margin-top:16px; border:1px solid var(--border); border-radius:20px;
+  background:var(--panel); overflow:hidden;
 }}
+.section-head {{
+  padding:16px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px;
+  border-bottom:1px solid var(--border);
+}}
+.section-head h2 {{ margin:0; font-size:18px; }}
+.section-body {{ padding:14px; }}
+.track {{
+  padding:16px; border:1px solid var(--border); border-radius:16px;
+  background:rgba(2,6,23,.22); margin-bottom:10px;
+}}
+.track:last-child {{ margin-bottom:0; }}
+.track-top {{ display:flex; gap:12px; align-items:flex-start; }}
+.index {{
+  width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto;
+  border-radius:12px; background:rgba(125,211,252,.10); color:var(--accent); font-weight:800;
+}}
+.track-main {{ min-width:0; flex:1; }}
+.track-main h3 {{ margin:0; font-size:16px; overflow-wrap:anywhere; }}
+.subline {{ color:var(--muted); font-size:12px; margin-top:2px; }}
+.badges {{ display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }}
+.badge {{
+  padding:3px 7px; border-radius:999px; background:rgba(134,239,172,.09);
+  border:1px solid rgba(134,239,172,.18); color:var(--good); font-size:10px; font-weight:800;
+}}
+.grid {{
+  margin-top:13px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;
+}}
+.kv {{
+  display:flex; justify-content:space-between; gap:14px;
+  padding:8px 10px; border-radius:10px; background:rgba(148,163,184,.05);
+}}
+.kv span {{ color:var(--muted); }}
+.kv strong {{ text-align:right; overflow-wrap:anywhere; }}
+.empty {{ color:var(--muted); padding:10px; }}
 .note {{
-  margin-top: 16px;
-  background: #1e293b;
-  border-radius: 12px;
-  padding: 12px;
-  color: #cbd5e1;
-  font-size: 13px;
+  margin-top:16px; padding:14px 16px; border:1px solid var(--border); border-radius:16px;
+  background:rgba(15,23,42,.72); color:#cbd5e1;
+}}
+.countdown {{ color:var(--accent); font-weight:800; }}
+@media(max-width:720px) {{
+  .summary {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+  .grid {{ grid-template-columns:1fr; }}
+  .badges {{ justify-content:flex-start; }}
 }}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="header">
-    <h1>🔬 AniToons File Intelligence</h1>
-    <div class="meta">{filename}</div>
-    <div class="meta">Generated {generated} • bounded partial scan</div>
-  </div>
+  <header class="hero">
+    <div class="logo">AniToons File Intelligence</div>
+    <h1>Media Metadata Report</h1>
+    <div class="file">{filename}</div>
+    <div class="meta">
+      <span class="pill">Generated {generated_text}</span>
+      <span class="pill">⏳ Link valid for <span id="countdown" class="countdown">05:00</span></span>
+      <span class="pill">🛡️ No complete file download</span>
+    </div>
 
-  <section class="card"><h2>📋 Summary</h2><div class="info">{summary}</div></section>
-  <section class="card"><h2>🔊 Audio</h2><div class="info">{audio}</div></section>
-  <section class="card"><h2>💬 Subtitles</h2><div class="info">{subs}</div></section>
-  <section class="card"><h2>🎬 Video</h2><div class="info">{video}</div></section>
-  <section class="card"><h2>⚙️ Technical</h2><div class="info">{technical}</div></section>
+    <div class="summary">
+      <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
+      <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
+      <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
+      <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="section-head"><h2>🎬 Video</h2><span class="pill">{esc(container_name)}</span></div>
+    <div class="section-body">{track_cards(video, "Video")}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>🔊 Audio</h2>
+      <span class="pill">{esc(", ".join(audio_names) if audio_names else "Not detected")}</span>
+    </div>
+    <div class="section-body">{track_cards(audio, "Audio")}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>💬 Subtitles</h2>
+      <span class="pill">{esc(", ".join(subtitle_names) if subtitle_names else "Not detected")}</span>
+    </div>
+    <div class="section-body">{track_cards(subtitles, "Subtitle")}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>⚙️ Technical</h2></div>
+    <div class="section-body">
+      <div class="grid">
+        <div class="kv"><span>Container</span><strong>{esc(container_name)}</strong></div>
+        <div class="kv"><span>MIME</span><strong>{esc(mime)}</strong></div>
+        <div class="kv"><span>Runtime</span><strong>{esc(runtime)}</strong></div>
+        <div class="kv"><span>Sample read</span><strong>{esc(sampled)}</strong></div>
+        <div class="kv"><span>Average bitrate</span><strong>{esc(report.container.get("average_bitrate", "Unknown"))}</strong></div>
+        <div class="kv"><span>Probe ranges</span><strong>{len(report.probe_ranges)}</strong></div>
+      </div>
+    </div>
+  </section>
 
   <div class="note">
-    🛡️ This page contains scan metadata only. The scanner uses bounded Telegram byte-range reads and does not intentionally download the complete large file.
-    Browser report links expire after approximately 1 hour or when the service restarts.
+    <b>Privacy / bandwidth:</b> this page is a metadata report. The scanner does not create a complete local copy of the Telegram file.
+    The browser report token is held in memory and expires after 5 minutes or when the service restarts.
   </div>
 </div>
+
+<script>
+(() => {{
+  let left = 300;
+  const el = document.getElementById("countdown");
+  const tick = () => {{
+    const m = Math.floor(left / 60);
+    const s = left % 60;
+    if (el) el.textContent = String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    if (left > 0) {{ left -= 1; setTimeout(tick, 1000); }}
+  }};
+  tick();
+}})();
+</script>
 </body>
 </html>"""
     return document.encode("utf-8")
