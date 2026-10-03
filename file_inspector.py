@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 MAX_INITIAL_PROBE = 8 * 1024 * 1024
-MAX_DEEP_PROBE = 64 * 1024 * 1024
+MAX_DEEP_PROBE = 12 * 1024 * 1024
 DEFAULT_CHUNK = 256 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
@@ -36,7 +36,7 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_DEEP_PROBE,8*1024*1024,MAX_DEEP_PROBE)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_DEEP_PROBE,4*1024*1024,MAX_DEEP_PROBE)
 def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,64*1024,512*1024)
 
 @dataclass(slots=True)
@@ -276,14 +276,15 @@ def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
 def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
     if not total or used>=budget:
         return
+
+    # Bandwidth-safe fallback: after the initial probe, only inspect a few
+    # small windows around likely metadata locations. This keeps each scan
+    # bounded to the configured budget instead of walking through the video.
     windows=[
-        (initial,4*1024*1024,"metadata window 8-12 MiB"),
-        (12*1024*1024,4*1024*1024,"metadata window 12-16 MiB"),
-        (16*1024*1024,4*1024*1024,"metadata window 16-20 MiB"),
-        (20*1024*1024,4*1024*1024,"metadata window 20-24 MiB"),
-        (24*1024*1024,8*1024*1024,"metadata window 24-32 MiB"),
-        (32*1024*1024,16*1024*1024,"metadata window 32-48 MiB"),
-        (48*1024*1024,16*1024*1024,"metadata window 48-64 MiB"),
+        (initial,1*1024*1024,"metadata window 8-9 MiB"),
+        (9*1024*1024,1*1024*1024,"metadata window 9-10 MiB"),
+        (10*1024*1024,1*1024*1024,"metadata window 10-11 MiB"),
+        (11*1024*1024,1*1024*1024,"metadata window 11-12 MiB"),
     ]
     for off,n,label in windows:
         if off>=total or used>=budget:
