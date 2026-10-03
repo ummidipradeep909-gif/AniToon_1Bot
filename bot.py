@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -90,7 +91,7 @@ async def analyze(event) -> None:
     filename = safe_filename(event.message)
     status = await event.reply(
         "🧠 <b>Analyzing file…</b>\n"
-        f"📄 <code>{filename[:100]}</code>\n"
+        f"📄 <code>{html.escape(filename[:100])}</code>\n"
         "⏱ Reading only a small beginning sample — no full-file download."
     )
 
@@ -101,7 +102,7 @@ async def analyze(event) -> None:
 
             footer = (
                 "\n\n⚡ <b>Lightweight scan</b>"
-                f" • {sample.data.__len__() / 1024 / 1024:.2f} MiB sampled"
+                f" • {len(sample.data) / 1024 / 1024:.2f} MiB sampled"
             )
             result += footer
 
