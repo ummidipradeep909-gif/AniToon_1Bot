@@ -412,16 +412,18 @@ async def inspect_telegram_player(
             await progress(value)
 
     try:
-        await say("🎬 Opening player-style media engine…")
+        await say("🧭 Stage 1/4 • player engine opening the remote media stream…")
 
         # av.open is synchronous. Run it off the Telegram event loop so the
         # local /probe endpoint can continue serving its ranged reads.
         container = await asyncio.to_thread(_open_with_ffmpeg, url)
 
         try:
-            await say("🎵 Reading all audio and subtitle stream metadata…")
+            await say("🎯 Stage 2/4 • FFmpeg locating every media stream…")
+            await say("🔎 Stage 3/4 • reading track names, languages and player flags…")
             # Accessing metadata/streams is enough; do not decode any packets.
             report = _build_report(message, container, session)
+            await say("🧩 Stage 4/4 • building the final audio/subtitle list…")
         finally:
             container.close()
 
