@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-MAX_PROBE = 4 * 1024 * 1024
-DEFAULT_PROBE = 2 * 1024 * 1024
+MAX_PROBE = 16 * 1024 * 1024
+DEFAULT_PROBE = 8 * 1024 * 1024
 DEFAULT_CHUNK = 256 * 1024
 
 SUB_EXT = {".srt":"SubRip (SRT)", ".vtt":"WebVTT", ".ass":"ASS", ".ssa":"SSA", ".sub":"SUB", ".ttml":"TTML", ".dfxp":"DFXP/TTML", ".smi":"SAMI", ".sami":"SAMI", ".sbv":"SBV", ".stl":"EBU STL", ".idx":"VobSub IDX"}
@@ -410,6 +410,32 @@ def mkv_info(data: bytes, report: Report) -> None:
 
 def attrs(message: Any, report: Report) -> None:
     file_obj = getattr(message, "file", None)
+    if file_obj is not None:
+        direct_mime = getattr(file_obj, "mime_type", None)
+        direct_duration = getattr(file_obj, "duration", None)
+        direct_title = getattr(file_obj, "title", None)
+        direct_performer = getattr(file_obj, "performer", None)
+        direct_width = getattr(file_obj, "width", None)
+        direct_height = getattr(file_obj, "height", None)
+        if direct_mime:
+            if str(direct_mime).startswith("video/"):
+                report.media_kind = "Video"
+            elif str(direct_mime).startswith("audio/"):
+                report.media_kind = "Audio"
+            elif str(direct_mime).startswith("image/"):
+                report.media_kind = "Photo"
+        if direct_width and direct_height:
+            report.media_kind = "Video"
+            report.video["dimensions"] = f"{int(direct_width)} × {int(direct_height)}"
+        if direct_duration is not None:
+            if report.media_kind == "Video":
+                report.video["duration"] = f"{int(direct_duration)} s"
+            else:
+                report.audio["duration"] = f"{int(direct_duration)} s"
+        if direct_title:
+            report.audio["title"] = str(direct_title)
+        if direct_performer:
+            report.audio["artist"] = str(direct_performer)
     for attr in getattr(file_obj, "attributes", []) or []:
         cls = type(attr).__name__
         if "Audio" in cls:
@@ -514,27 +540,39 @@ def lines_dict(values: dict[str, str]) -> list[str]:
 def format_report(report: Report) -> str:
     percent = f" ({report.sampled / report.size * 100:.3f}%)" if report.size else ""
     out = [
-        "🔎 LIGHTWEIGHT FILE CHECK",
+        "🔎 FILE INTELLIGENCE REPORT",
         "",
         f"Name: {report.filename}",
         f"Type: {report.detected}",
         f"Media: {report.media_kind}",
         f"MIME: {report.mime or 'unknown'}",
         f"Size: {human(report.size)}",
-        f"Read: {human(report.sampled)} from the beginning{percent}",
+        f"Sample: {human(report.sampled)} from file beginning{percent}",
     ]
     if report.sample_hash:
         out.append(f"Sample SHA-256: {report.sample_hash[:32]}…")
     if report.video:
-        out += ["", "🎬 Video"] + lines_dict(report.video)
+        out += ["", "🎬 VIDEO"] + lines_dict(report.video)
+        tracks = report.video.get("tracks")
+        if isinstance(tracks, list) and tracks:
+            out += ["", "🎞 VIDEO TRACKS"] + [
+                " • " + " | ".join(f"{k.title()}: {v}" for k, v in track.items())
+                for track in tracks
+            ]
     if report.audio:
-        out += ["", "🔊 Audio"] + lines_dict(report.audio)
+        out += ["", "🔊 AUDIO"] + lines_dict(report.audio)
+        tracks = report.audio.get("tracks")
+        if isinstance(tracks, list) and tracks:
+            out += ["", "🎵 AUDIO TRACKS"] + [
+                " • " + " | ".join(f"{k.title()}: {v}" for k, v in track.items())
+                for track in tracks
+            ]
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
         out += ["", "🔊 Audio", "Not detected in the sampled metadata."]
     if report.subtitles:
         out += [
             "",
-            "💬 Subtitles",
+            "💬 SUBTITLE TRACKS",
             *[
                 " • " + " | ".join(f"{k}: {v}" for k, v in item.items())
                 for item in report.subtitles
@@ -551,7 +589,7 @@ def format_report(report: Report) -> str:
     if report.container:
         out += ["", "📦 Container"] + lines_dict(report.container)
     if report.notes:
-        out += ["", "ℹ️ Notes"] + [" • " + note for note in report.notes]
+        out += ["", "ℹ️ SCAN NOTES"] + [" • " + note for note in report.notes]
     return "\n".join(out)
 
 async def inspect_telegram_message(client: Any, message: Any):
