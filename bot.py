@@ -92,6 +92,39 @@ def web_report_button(token: str):
     return [[Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]]
 
 
+def compact_scan_result(report: Report) -> str:
+    audio_tracks = report.audio.get("tracks", [])
+    subtitle_tracks = report.subtitles or []
+
+    def names(items):
+        values = []
+        for item in items:
+            name = item.get("name") or item.get("display_name") or item.get("language_name") or item.get("codec_name")
+            if name and name not in values:
+                values.append(str(name))
+        return values
+
+    audio_names = names(audio_tracks) if isinstance(audio_tracks, list) else []
+    subtitle_names = names(subtitle_tracks)
+
+    lines = ["✅ <b>FILE SCAN COMPLETE</b>", ""]
+    lines.append(f"📄 <b>{html.escape(report.filename)}</b>")
+
+    if report.container.get("runtime"):
+        lines.append(f"⏱ Runtime: <b>{html.escape(report.container['runtime'])}</b>")
+
+    lines.append(
+        f"🔊 Audio: <b>{len(audio_tracks) if isinstance(audio_tracks, list) else 0}</b>"
+        + (f" — {html.escape(', '.join(audio_names))}" if audio_names else " — names not detected")
+    )
+    lines.append(
+        f"💬 Subtitles: <b>{len(subtitle_tracks)}</b>"
+        + (f" — {html.escape(', '.join(subtitle_names))}" if subtitle_names else " — names not detected")
+    )
+    lines += ["", "🌐 <b>Open the complete file information in your browser.</b>"]
+    return "\n".join(lines)
+
+
 def is_checkable_message(event) -> bool:
     message = event.message
     if not message or not getattr(message, "media", None):
@@ -235,7 +268,7 @@ async def analyze(event) -> None:
             if state is None:
                 raise RuntimeError("Could not create web report link")
 
-            result = clip(format_report(report))
+            result = compact_scan_result(report)
             await edit_status(
                 status,
                 result,
