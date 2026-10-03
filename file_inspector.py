@@ -339,6 +339,29 @@ def _vint(data: bytes, pos: int) -> tuple[int, int] | None:
         value = (value << 8) | data[pos + i]
     return value, width
 
+def _read_ebml_element(data: bytes, pos: int) -> tuple[int, int, int] | None:
+    if pos >= len(data):
+        return None
+    first = data[pos]
+    mask = 0x80
+    id_len = 1
+    while id_len <= 4 and not (first & mask):
+        mask >>= 1
+        id_len += 1
+    if id_len > 4 or pos + id_len >= len(data):
+        return None
+    element_id = int.from_bytes(data[pos:pos + id_len], "big")
+    size_info = _vint(data, pos + id_len)
+    if not size_info:
+        return None
+    size, size_len = size_info
+    start = pos + id_len + size_len
+    end = len(data) if size == (1 << (7 * size_len)) - 1 else min(len(data), start + size)
+    if end < start:
+        return None
+    return element_id, start, end
+
+
 def _ebml_children(data: bytes, start: int, end: int) -> Iterable[tuple[int, int, int]]:
     pos = start
     while pos + 2 <= end:
