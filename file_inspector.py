@@ -832,8 +832,14 @@ def build_report(
         report.notes.append("Some embedded metadata may be outside the sampled beginning.")
     return report
 
-def lines_dict(values: dict[str, str]) -> list[str]:
-    return [f"{key.replace('_', ' ').title()}: {value}" for key, value in values.items()]
+def lines_dict(values: dict[str, Any]) -> list[str]:
+    lines = []
+    for key, value in values.items():
+        if key.endswith("_seconds") or isinstance(value, (list, dict)):
+            continue
+        lines.append(f"{key.replace('_', ' ').title()}: {value}")
+    return lines
+
 
 def format_report(report: Report) -> str:
     percent = f" ({report.sampled / report.size * 100:.3f}%)" if report.size else ""
@@ -846,65 +852,85 @@ def format_report(report: Report) -> str:
         f"🧾 MIME: {report.mime or 'unknown'}",
     ]
 
-    if report.video:
-        out += ["", "🎬 VIDEO"]
-        tracks = report.video.get("tracks")
+    runtime = report.container.get("runtime")
+    if runtime:
+        out.append(f"⏱ Runtime: {runtime}")
+
+    if report.container.get("title"):
+        out.append(f"🏷 Container Title: {report.container['title']}")
+
+    video_tracks = report.video.get("tracks")
+    if report.video or isinstance(video_tracks, list):
+        out += ["", f"🎬 VIDEO • {len(video_tracks) if isinstance(video_tracks, list) else 1} track(s)"]
         for key, value in lines_dict(report.video):
             out.append(f"{key}: {value}")
-        if isinstance(tracks, list) and tracks:
-            for index, track in enumerate(tracks, 1):
+        if isinstance(video_tracks, list):
+            for index, track in enumerate(video_tracks, 1):
                 out += ["", f"🎞 VIDEO TRACK {index}"]
-                out.append(f"Name: {track.get('name') or track.get('display_name') or 'Unnamed'}")
+                out.append(f"Name: {track.get('name') or track.get('display_name') or 'Unnamed video track'}")
+                if track.get("name_source"):
+                    out.append(f"Name Source: {track['name_source']}")
                 for key in ("language_name", "language", "codec_name", "codec", "dimensions"):
                     if track.get(key):
                         out.append(f"{key.replace('_', ' ').title()}: {track[key]}")
 
-    if report.audio:
+    audio_tracks = report.audio.get("tracks")
+    if isinstance(audio_tracks, list) and audio_tracks:
+        out += ["", f"🔊 AUDIO • {len(audio_tracks)} track(s)"]
+        for index, track in enumerate(audio_tracks, 1):
+            out += ["", f"🎵 AUDIO TRACK {index}"]
+            out.append(f"Name: {track.get('name') or track.get('display_name') or 'Unnamed audio track'}")
+            if track.get("name_source"):
+                out.append(f"Name Source: {track['name_source']}")
+            if runtime:
+                out.append(f"Runtime: {runtime} (container)")
+            for key in (
+                "language_name", "language", "codec_name", "codec",
+                "channels", "sample_rate", "bit_depth",
+                "default", "enabled", "original", "commentary"
+            ):
+                if track.get(key):
+                    out.append(f"{key.replace('_', ' ').title()}: {track[key]}")
+    elif report.audio:
         out += ["", "🔊 AUDIO"]
         for key, value in lines_dict(report.audio):
             out.append(f"{key}: {value}")
-        tracks = report.audio.get("tracks")
-        if isinstance(tracks, list) and tracks:
-            for index, track in enumerate(tracks, 1):
-                out += ["", f"🎵 AUDIO TRACK {index}"]
-                out.append(f"Name: {track.get('name') or track.get('display_name') or 'Unnamed audio track'}")
-                if track.get("name_source"):
-                    out.append(f"Name Source: {track['name_source']}")
-                for key in (
-                    "language_name", "language", "codec_name", "codec",
-                    "channels", "sample_rate", "bit_depth",
-                    "default", "enabled", "original", "commentary"
-                ):
-                    if track.get(key):
-                        out.append(f"{key.replace('_', ' ').title()}: {track[key]}")
-        elif not report.audio.get("sample_codecs"):
+        if report.audio.get("sample_codecs"):
+            out.append(f"Detected Codec(s): {report.audio['sample_codecs']}")
+        else:
             out.append("No audio track metadata detected in the sample.")
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
         out += ["", "🔊 AUDIO", "No audio track metadata detected in the sample."]
 
     if report.subtitles:
-        out += ["", "💬 SUBTITLE TRACKS"]
+        out += ["", f"💬 SUBTITLES • {len(report.subtitles)} track(s)"]
         for index, item in enumerate(report.subtitles, 1):
-            out += ["", f"💬 SUBTITLE {index}"]
+            out += ["", f"💬 SUBTITLE TRACK {index}"]
             out.append(f"Name: {item.get('name') or item.get('display_name') or item.get('format') or 'Unnamed subtitle track'}")
             if item.get("name_source"):
                 out.append(f"Name Source: {item['name_source']}")
+            if runtime:
+                out.append(f"Runtime: {runtime} (container)")
             for key in (
                 "language_name", "language", "codec_name", "codec",
                 "format", "default", "forced", "enabled",
-                "hearing_impaired", "visual_impaired"
+                "hearing_impaired", "visual_impaired",
+                "original", "commentary"
             ):
                 if item.get(key):
                     out.append(f"{key.replace('_', ' ').title()}: {item[key]}")
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
-        out += ["", "💬 SUBTITLE TRACKS", "No subtitle track metadata detected in the sample."]
+        out += ["", "💬 SUBTITLES", "No subtitle track metadata detected in the sample."]
 
-    if report.container:
-        out += ["", "📦 CONTAINER"]
-        for key, value in report.container.items():
-            if key == "runtime_seconds":
-                continue
-            out.append(f"{key.replace('_', ' ').title()}: {value}")
+    technical = {}
+    for key, value in report.container.items():
+        if key not in {"runtime", "runtime_seconds", "title"}:
+            technical[key] = value
+    if technical:
+        out += ["", "⚙️ TECHNICAL"] + [
+            f"{key.replace('_', ' ').title()}: {value}"
+            for key, value in technical.items()
+        ]
 
     if report.image:
         out += ["", "🖼 IMAGE"] + lines_dict(report.image)
