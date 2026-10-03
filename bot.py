@@ -131,23 +131,47 @@ def purge_pending_scans() -> None:
 
 def compact_scan_result(report: Report) -> str:
     audio_tracks = report.audio.get("tracks", [])
+    video_tracks = report.video.get("tracks", [])
     subtitle_tracks = report.subtitles or []
 
-    def names(items):
-        values = []
-        for item in items:
-            name = (
-                item.get("name")
-                or item.get("display_name")
-                or item.get("language_name")
-                or item.get("codec_name")
-                or "Unnamed track"
-            )
-            values.append(str(name))
-        return values
+    def track_name(track: dict[str, Any]) -> str:
+        return str(
+            track.get("name")
+            or track.get("display_name")
+            or track.get("language_name")
+            or track.get("codec_name")
+            or "Unnamed track"
+        )
 
-    audio_names = names(audio_tracks) if isinstance(audio_tracks, list) else []
-    subtitle_names = names(subtitle_tracks)
+    def stream_line(track: dict[str, Any]) -> str:
+        name = html.escape(track_name(track))
+        language = track.get("language_name") or track.get("language")
+        codec = track.get("codec_name") or track.get("codec")
+
+        bits = []
+        if language:
+            bits.append(html.escape(str(language)))
+        if codec:
+            bits.append(html.escape(str(codec)))
+        if track.get("channels"):
+            bits.append(f"{html.escape(str(track['channels']))}ch")
+        if track.get("sample_rate"):
+            bits.append(html.escape(str(track["sample_rate"])))
+
+        suffix = f" <i>({', '.join(bits)})</i>" if bits else ""
+        flags = []
+        if track.get("default") == "yes":
+            flags.append("Default")
+        if track.get("forced") == "yes":
+            flags.append("Forced")
+        if track.get("original") == "yes":
+            flags.append("Original")
+        if track.get("commentary") == "yes":
+            flags.append("Commentary")
+        if flags:
+            suffix += f" — {' / '.join(flags)}"
+
+        return f"• <b>{name}</b>{suffix}"
 
     lines = ["✅ <b>FILE SCAN COMPLETE</b>", ""]
     lines.append(f"📄 <b>{html.escape(report.filename)}</b>")
@@ -155,16 +179,32 @@ def compact_scan_result(report: Report) -> str:
     if report.container.get("runtime"):
         lines.append(f"⏱ Runtime: <b>{html.escape(report.container['runtime'])}</b>")
 
-    lines.append(
-        f"🔊 Audio: <b>{len(audio_tracks) if isinstance(audio_tracks, list) else 0}</b>"
-        + (f" — {html.escape(', '.join(audio_names))}" if audio_names else " — names not detected")
-    )
-    lines.append(
-        f"💬 Subtitles: <b>{len(subtitle_tracks)}</b>"
-        + (f" — {html.escape(', '.join(subtitle_names))}" if subtitle_names else " — names not detected")
-    )
-    lines += ["", "🌐 <b>Open the complete file information in your browser.</b>"]
-    return "\n".join(lines)
+    if video_tracks:
+        lines += ["", f"🎬 <b>VIDEO ({len(video_tracks)})</b>"]
+        for track in video_tracks:
+            lines.append(stream_line(track))
+    else:
+        lines += ["", "🎬 <b>VIDEO</b>", "• Not detected"]
+
+    if audio_tracks:
+        lines += ["", f"🔊 <b>AUDIO ({len(audio_tracks)})</b>"]
+        for track in audio_tracks:
+            lines.append(stream_line(track))
+    else:
+        lines += ["", "🔊 <b>AUDIO</b>", "• Not detected in the safe metadata range"]
+
+    if subtitle_tracks:
+        lines += ["", f"💬 <b>SUBTITLES ({len(subtitle_tracks)})</b>"]
+        for track in subtitle_tracks:
+            lines.append(stream_line(track))
+    else:
+        lines += ["", "💬 <b>SUBTITLES</b>", "• Not detected in the safe metadata range"]
+
+    lines += [
+        "",
+        "🌐 <b>Open the advanced complete report:</b>",
+    ]
+    return clip("\n".join(lines), 3900)
 
 
 def is_checkable_message(event) -> bool:
@@ -239,7 +279,7 @@ def _purge_states() -> None:
 
     expired_tokens = [
         token for token, state in web_states.items()
-        if now - state.created_at > STATE_TTL_SECONDS
+        if now - state.created_at > REPORT_LINK_TTL_SECONDS
     ]
     for token in expired_tokens:
         web_states.pop(token, None)
