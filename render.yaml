@@ -1,6 +1,6 @@
 services:
-  - type: worker
-    name: anitoons-1bot
+  - type: web
+    name: anitoons-file-checker
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python file_bot.py
@@ -9,20 +9,10 @@ services:
         sync: false
       - key: API_HASH
         sync: false
-      - key: OWNER_ID
-        sync: false
       - key: BOT_TOKEN
         sync: false
-      - key: USER_SESSION
-        sync: false
-      - key: DB_PATH
-        value: data/bot.sqlite3
-      - key: FILE_CHECKER_ENABLED
-        value: "1"
       - key: FILE_CHECKER_PRIVATE_ONLY
         value: "1"
-      - key: FILE_CHECKER_OWNER_ONLY
-        value: "0"
       - key: FILE_PROBE_BYTES
         value: "2097152"
       - key: FILE_PROBE_CHUNK_BYTES
