@@ -17,8 +17,12 @@ services:
       - key: FILE_CHECKER_PRIVATE_ONLY
         value: "0"
       - key: FILE_PROBE_BYTES
-        value: "2097152"
+        value: "8388608"
+      - key: FILE_DEEP_PROBE_BYTES
+        value: "25165824"
       - key: FILE_PROBE_CHUNK_BYTES
         value: "262144"
       - key: MAX_CONCURRENT_CHECKS
-        value: "3"
+        value: "2"
+      - key: SCAN_TIMEOUT_SECONDS
+        value: "300"
