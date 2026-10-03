@@ -514,9 +514,7 @@ async def inspect_telegram_player(
                 deep=True,
             )
             real_audio = report.audio.get("tracks", [])
-            real_video = report.video.get("tracks", [])
-            real_subs = report.subtitles or []
-            if real_audio or real_video or real_subs or report.container.get("runtime"):
+            if real_audio:
                 await say("🧩 Stage 4/4 • building the final player-style track list…")
                 return report
         except Exception as exc:
