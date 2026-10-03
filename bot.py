@@ -90,8 +90,8 @@ async def analyze(event) -> None:
 
     filename = safe_filename(event.message)
     status = await event.reply(
-        "🧠 <b>Analyzing file…</b>\n"
-        f"📄 <code>{html.escape(filename[:100])}</code>\n"
+        "🧠 Analyzing file…\n"
+        f"📄 {html.escape(filename[:100])}\n"
         "⏱ Reading only a small beginning sample — no full-file download."
     )
 
@@ -101,7 +101,7 @@ async def analyze(event) -> None:
             result = format_report(report)
 
             footer = (
-                "\n\n⚡ <b>Lightweight scan</b>"
+                "\n\n⚡ Smart partial scan"
                 f" • {len(sample.data) / 1024 / 1024:.2f} MiB sampled"
             )
             result += footer
