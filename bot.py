@@ -16,7 +16,15 @@ from typing import Any
 from dotenv import load_dotenv
 from telethon import Button, TelegramClient, errors, events
 
-from file_inspector import Report, format_report, format_section, inspect_telegram_message
+from file_inspector import Report, format_report, format_section
+from media_probe import (
+    ProbeBudgetExceeded,
+    ProbeCancelled,
+    cancel_probe,
+    get_probe,
+    inspect_telegram_player,
+    purge_probes,
+)
 
 load_dotenv()
 
@@ -30,7 +38,8 @@ FILE_CHECKER_PRIVATE_ONLY = (
 )
 MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 4))
 SCAN_TIMEOUT_SECONDS = max(30, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "300")), 300))
-STATE_TTL_SECONDS = 60 * 60
+REPORT_LINK_TTL_SECONDS = 5 * 60
+PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 PUBLIC_WEB_URL = (
     os.getenv("PUBLIC_WEB_URL", "https://anitoons-1bot-oa44.onrender.com")
@@ -114,7 +123,7 @@ def purge_pending_scans() -> None:
     expired = [
         token
         for token, pending in pending_scans.items()
-        if now - pending.created_at > STATE_TTL_SECONDS
+        if now - pending.created_at > PENDING_SCAN_TTL_SECONDS
     ]
     for token in expired:
         pending_scans.pop(token, None)
@@ -221,7 +230,7 @@ def _purge_states() -> None:
     now = time.monotonic()
     expired_keys = [
         key for key, state in scan_states.items()
-        if now - state.created_at > STATE_TTL_SECONDS
+        if now - state.created_at > REPORT_LINK_TTL_SECONDS
     ]
     for key in expired_keys:
         state = scan_states.pop(key, None)
@@ -287,32 +296,29 @@ async def run_scan(
     source_message: Any,
     status_message: Any,
     *,
-    deep: bool,
-    scan_token: str | None = None,
+    scan_token: str,
 ) -> Report:
     filename = safe_filename(source_message)
+    port = int(os.getenv("PORT", "10000"))
 
     async def progress(line: str):
         await edit_status(
             status_message,
             status_text(filename, line),
-            buttons=cancel_button(scan_token) if scan_token else None,
+            buttons=cancel_button(scan_token),
         )
 
-    report, sampled = await asyncio.wait_for(
-        inspect_telegram_message(
+    return await asyncio.wait_for(
+        inspect_telegram_player(
             bot,
             source_message,
+            scan_token,
             progress=progress,
-            deep=deep,
+            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "8388608")),
+            port=port,
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
     )
-    report.notes.insert(
-        0,
-        f"Read approximately {sampled / 1024 / 1024:.2f} MiB across targeted ranges.",
-    )
-    return report
 
 
 async def analyze_source(
@@ -329,7 +335,6 @@ async def analyze_source(
             report = await run_scan(
                 source_message,
                 status_message,
-                deep=True,
                 scan_token=scan_token,
             )
 
@@ -351,12 +356,30 @@ async def analyze_source(
 
     except asyncio.CancelledError:
         checks_failed += 1
+        await cancel_probe(scan_token)
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
             buttons=main_buttons(),
         )
         raise
+
+    except ProbeBudgetExceeded:
+        checks_failed += 1
+        await edit_status(
+            status_message,
+            "🛑 <b>Safe scan limit reached.</b>\n\n"
+            "The player engine stopped before downloading the complete file.",
+            buttons=main_buttons(),
+        )
+
+    except ProbeCancelled:
+        checks_failed += 1
+        await edit_status(
+            status_message,
+            "❌ <b>Metadata scan cancelled.</b>",
+            buttons=main_buttons(),
+        )
 
     except asyncio.TimeoutError:
         checks_failed += 1
@@ -385,6 +408,7 @@ async def analyze_source(
         )
 
     finally:
+        await cancel_probe(scan_token) if scan_token in active_scans else None
         active_scans.pop(scan_token, None)
 
 
@@ -443,7 +467,7 @@ async def handle_callback(event):
             "• Searches Matroska metadata for real audio/subtitle TrackEntry records.\n"
             "• Never intentionally downloads the complete large file.\n"
             "• Scan limit: 5 minutes.\n"
-            "• Browser report expires after about 1 hour or a service restart.",
+            "• Browser report link stays valid for 5 minutes or until the service restarts.",
             parse_mode="html",
             buttons=[[Button.inline("⬅️ Back", b"home:back")]],
         )
@@ -644,6 +668,137 @@ async def health_server():
             parts = first.split(" ", 2)
             target = parts[1] if len(parts) > 1 else "/"
             path = urlsplit(target).path
+            purge_probes()
+
+            if path.startswith("/probe/"):
+                token = path[len("/probe/"):].strip("/")
+                session = get_probe(token)
+                method = first.split(" ", 1)[0].upper()
+
+                if not session:
+                    body = b"Probe session expired"
+                    head = b"Content-Type: text/plain; charset=utf-8\r\n"
+                    code = b"404 Not Found"
+                    body_for_send = body
+                elif method not in {"GET", "HEAD"}:
+                    body = b"Method Not Allowed"
+                    head = b"Allow: GET, HEAD\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                    code = b"405 Method Not Allowed"
+                    body_for_send = body
+                else:
+                    range_value = next(
+                        (line.split(":", 1)[1].strip() for line in raw.decode("latin1", "replace").split("\r\n")
+                         if line.lower().startswith("range:")),
+                        "",
+                    )
+
+                    total = session.total
+                    start = 0
+                    end = min(
+                        (total - 1) if total is not None else session.chunk_size - 1,
+                        session.chunk_size - 1,
+                    )
+                    partial = False
+
+                    if range_value.lower().startswith("bytes="):
+                        spec = range_value[6:].split(",", 1)[0].strip()
+                        if "-" not in spec:
+                            body = b"Invalid Range"
+                            head = b"Content-Type: text/plain; charset=utf-8\r\n"
+                            code = b"416 Range Not Satisfiable"
+                            body_for_send = body
+                        else:
+                            left, right = spec.split("-", 1)
+                            try:
+                                if left:
+                                    start = int(left)
+                                    if right:
+                                        end = int(right)
+                                    elif total is not None:
+                                        end = total - 1
+                                    else:
+                                        end = start + session.chunk_size - 1
+                                else:
+                                    suffix = int(right)
+                                    if total is None:
+                                        raise ValueError
+                                    start = max(0, total - suffix)
+                                    end = total - 1
+
+                                if total is not None:
+                                    if start < 0 or start >= total:
+                                        raise ValueError
+                                    end = min(end, total - 1)
+                                if end < start:
+                                    raise ValueError
+                                partial = True
+
+                                body_for_send = (
+                                    b"" if method == "HEAD"
+                                    else await session.read(start, end - start + 1)
+                                )
+                                actual_end = start + len(body_for_send) - 1
+                                if method == "HEAD":
+                                    actual_end = end
+                                body = body_for_send
+                                code = b"206 Partial Content"
+                                head = (
+                                    b"Accept-Ranges: bytes\r\n"
+                                    + f"Content-Range: bytes {start}-{actual_end}/{total}\r\n".encode("ascii")
+                                    if total is not None
+                                    else b"Accept-Ranges: bytes\r\n"
+                                )
+                                head += b"Content-Type: application/octet-stream\r\n"
+                                body_for_send = body
+                            except (ValueError, ProbeBudgetExceeded, ProbeCancelled):
+                                body = b"Requested media range is unavailable"
+                                head = b"Content-Type: text/plain; charset=utf-8\r\n"
+                                code = b"416 Range Not Satisfiable"
+                                body_for_send = body
+                    else:
+                        try:
+                            if method == "HEAD":
+                                body_for_send = b""
+                            else:
+                                body_for_send = await session.read(0, min(session.chunk_size, session.total or session.chunk_size))
+                            actual_end = start + len(body_for_send) - 1
+                            body = body_for_send
+                            code = b"206 Partial Content"
+                            head = (
+                                b"Accept-Ranges: bytes\r\n"
+                                + (
+                                    f"Content-Range: bytes 0-{actual_end}/{total}\r\n".encode("ascii")
+                                    if total is not None else b""
+                                )
+                                + b"Content-Type: application/octet-stream\r\n"
+                            )
+                        except (ProbeBudgetExceeded, ProbeCancelled):
+                            body = b"Probe budget exceeded"
+                            head = b"Content-Type: text/plain; charset=utf-8\r\n"
+                            code = b"509 Bandwidth Limit Exceeded"
+                            body_for_send = body
+
+                    writer.write(
+                        b"HTTP/1.1 " + code + b"\r\n"
+                        + head
+                        + f"Content-Length: {len(body_for_send)}\r\n".encode("ascii")
+                        + f'ETag: "probe-{token}"\r\n'.encode("ascii")
+                        + b"Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+                        + body_for_send
+                    )
+                    await writer.drain()
+                    return
+
+                writer.write(
+                    b"HTTP/1.1 " + code + b"\r\n"
+                    + head
+                    + f"Content-Length: {len(body_for_send)}\r\n".encode("ascii")
+                    + b"Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+                    + body_for_send
+                )
+                await writer.drain()
+                return
+
 
             if path == "/health":
                 _purge_states()
