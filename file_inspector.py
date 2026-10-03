@@ -396,15 +396,28 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
 
         current=_report(message,parts)
 
-        if not current.audio.get("tracks") and not current.subtitles:
-            await say("🔎 Stage 3/4 • adaptively searching deeper ranges for TrackEntry names…")
+        # Codec hints such as "ASS" are not proof of an embedded subtitle
+        # TrackEntry. Deep search must continue until real TrackEntry metadata
+        # is found.
+        def has_real_tracks(report:Report)->bool:
+            return bool(
+                isinstance(report.audio.get("tracks"), list) and report.audio.get("tracks")
+            ) or bool(
+                isinstance(report.video.get("tracks"), list) and report.video.get("tracks")
+            ) or any(
+                item.get("source") not in {"codec marker in sample", "sample entry", "filename extension"}
+                and item.get("codec")
+                for item in report.subtitles
+            )
+
+        if not has_real_tracks(current):
+            await say("🔎 Stage 3/4 • adaptively searching deeper ranges for real TrackEntry names…")
 
             for off,n,label in _adaptive_ranges(total,budget,used,initial):
                 x,_=await _read_range(client,media,total,off,n)
                 if not x:
                     continue
 
-                pieces_before=len(parts)
                 parts.append(ProbePiece(off,x,label))
                 used+=len(x)
 
@@ -420,7 +433,6 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
                     required_end=_required_element_end(x,local)
                     if required_end is None:
                         continue
-                    available=len(x)-local
                     if required_end>len(x) and used<budget:
                         extra=min(
                             required_end-len(x),
@@ -444,7 +456,7 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
                                 used+=len(extra_data)
 
                 current=_report(message,parts)
-                if current.audio.get("tracks") or current.subtitles:
+                if has_real_tracks(current):
                     break
 
         await say("🧩 Stage 4/4 • extracting final audio/subtitle names and metadata…")
