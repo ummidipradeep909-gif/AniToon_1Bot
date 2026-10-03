@@ -408,6 +408,33 @@ def mkv_info(data: bytes, report: Report) -> None:
                 ) + " / ".join(item.values())
         pos = data.find(marker, end)
 
+
+def mkv_codec_hints(data: bytes, report: Report) -> None:
+    # Fast hints for common Matroska audio/subtitle codecs inside the sampled bytes.
+    audio_codes = [
+        (b"A_AAC", "AAC"),
+        (b"A_AC3", "AC-3"),
+        (b"A_EAC3", "E-AC-3"),
+        (b"A_OPUS", "Opus"),
+        (b"A_FLAC", "FLAC"),
+        (b"A_MPEG/L3", "MP3"),
+        (b"A_VORBIS", "Vorbis"),
+    ]
+    found_audio = [name for marker, name in audio_codes if marker in data]
+    if found_audio:
+        report.audio["sample_codecs"] = ", ".join(dict.fromkeys(found_audio))
+
+    subtitle_codes = [
+        (b"S_TEXT/UTF8", "SubRip/UTF-8"),
+        (b"S_TEXT/ASS", "ASS"),
+        (b"S_TEXT/SSA", "SSA"),
+        (b"S_TEXT/WEBVTT", "WebVTT"),
+        (b"S_HDMV/PGS", "PGS"),
+        (b"S_VOBSUB", "VobSub"),
+    ]
+    found_subs = [name for marker, name in subtitle_codes if marker in data]
+    for name in found_subs:
+        report.subtitles.append({"format": name, "source": "codec found in sample"})
 def attrs(message: Any, report: Report) -> None:
     file_obj = getattr(message, "file", None)
     if file_obj is not None:
@@ -481,7 +508,9 @@ def build_report(
     attrs(message, report)
     report.detected, kind = magic(sample, filename, mime)
 
-    if kind == "png":
+    if kind == "mkv":
+        mkv_codec_hints(sample, report)
+    elif kind == "png":
         png_info(sample, report)
     elif kind == "jpeg":
         jpeg_info(sample, report)
@@ -540,25 +569,15 @@ def lines_dict(values: dict[str, str]) -> list[str]:
 def format_report(report: Report) -> str:
     percent = f" ({report.sampled / report.size * 100:.3f}%)" if report.size else ""
     out = [
-        "🔎 FILE INTELLIGENCE REPORT",
+        "🔬 FILE INTELLIGENCE",
         "",
-        f"Name: {report.filename}",
-        f"Type: {report.detected}",
-        f"Media: {report.media_kind}",
-        f"MIME: {report.mime or 'unknown'}",
-        f"Size: {human(report.size)}",
-        f"Sample: {human(report.sampled)} from file beginning{percent}",
+        f"📄 {report.filename}",
+        f"📦 {report.detected}",
+        f"📏 {human(report.size)}{percent}",
+        f"🧾 MIME: {report.mime or 'unknown'}",
     ]
-    if report.sample_hash:
-        out.append(f"Sample SHA-256: {report.sample_hash[:32]}…")
     if report.video:
         out += ["", "🎬 VIDEO"] + lines_dict(report.video)
-        tracks = report.video.get("tracks")
-        if isinstance(tracks, list) and tracks:
-            out += ["", "🎞 VIDEO TRACKS"] + [
-                " • " + " | ".join(f"{k.title()}: {v}" for k, v in track.items())
-                for track in tracks
-            ]
     if report.audio:
         out += ["", "🔊 AUDIO"] + lines_dict(report.audio)
         tracks = report.audio.get("tracks")
@@ -568,30 +587,27 @@ def format_report(report: Report) -> str:
                 for track in tracks
             ]
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
-        out += ["", "🔊 Audio", "Not detected in the sampled metadata."]
+        out += ["", "🔊 AUDIO", "No audio metadata detected in the sampled file data."]
     if report.subtitles:
         out += [
             "",
             "💬 SUBTITLE TRACKS",
             *[
-                " • " + " | ".join(f"{k}: {v}" for k, v in item.items())
+                " • " + " | ".join(f"{k.title()}: {v}" for k, v in item.items())
                 for item in report.subtitles
             ],
         ]
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
-        out += [
-            "",
-            "💬 Subtitles",
-            "Not detected in the filename or sampled metadata.",
-        ]
+        out += ["", "💬 SUBTITLE TRACKS", "No subtitle metadata detected in the sampled file data."]
     if report.image:
-        out += ["", "🖼 Image"] + lines_dict(report.image)
+        out += ["", "🖼 IMAGE"] + lines_dict(report.image)
     if report.container:
-        out += ["", "📦 Container"] + lines_dict(report.container)
+        out += ["", "📦 CONTAINER"] + lines_dict(report.container)
+    if report.sample_hash:
+        out += ["", f"🧬 Sample SHA-256: {report.sample_hash[:32]}…"]
     if report.notes:
         out += ["", "ℹ️ SCAN NOTES"] + [" • " + note for note in report.notes]
     return "\n".join(out)
-
 async def inspect_telegram_message(client: Any, message: Any):
     file_obj = getattr(message, "file", None)
     sample = await sample_telegram_media(
