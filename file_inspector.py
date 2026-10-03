@@ -336,14 +336,37 @@ def _codec_hints(data:bytes,r:Report):
     for marker,name in ((b"S_TEXT/UTF8","SubRip/UTF-8"),(b"S_TEXT/ASS","ASS"),(b"S_TEXT/SSA","SSA"),(b"S_TEXT/WEBVTT","WebVTT"),(b"S_HDMV/PGS","PGS"),(b"S_VOBSUB","VobSub")):
         if marker in data:r.subtitles.append({"name":name,"format":name,"source":"codec marker in sample"})
 
+def _required_element_end(data:bytes,pos:int)->int|None:
+    if pos<0 or pos>=len(data):
+        return None
+    first=data[pos]
+    mask=0x80
+    id_len=1
+    while id_len<=4 and not(first&mask):
+        mask>>=1
+        id_len+=1
+    if id_len>4 or pos+id_len>=len(data):
+        return None
+    size_info=_vint(data,pos+id_len)
+    if not size_info:
+        return None
+    size,size_len=size_info
+    if size==(1<<(7*size_len))-1:
+        return None
+    return pos+id_len+size_len+size
+
+
 async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|None=None,deep:bool=True)->tuple[Report,int]:
-    f=getattr(message,"file",None);total=getattr(f,"size",None);media=getattr(message,"media",None)
+    f=getattr(message,"file",None)
+    total=getattr(f,"size",None)
+    media=getattr(message,"media",None)
     if not media:
         raise ValueError("Message has no media")
 
     budget=deep_probe_budget()
     initial=min(initial_probe_bytes(),budget)
-    parts=[];used=0
+    parts=[]
+    used=0
 
     async def say(s):
         if progress:
@@ -361,14 +384,11 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     _,kind=magic(b,name,mime)
 
     if kind=="mkv" and deep:
-        await say("🎯 Stage 2/4 • locating the real Matroska Info/Tracks blocks…")
+        await say("🎯 Stage 2/4 • locating the Matroska Tracks index…")
 
-        # First use SeekHead when available.
+        # SeekHead is the fastest path when the release contains it.
         targets=_seek_targets(b)
-        indexed_ranges=_probe_ranges(total,budget,initial,targets)
-        for off,n,label in indexed_ranges:
-            if off<=0:
-                continue
+        for off,n,label in _probe_ranges(total,budget,initial,targets):
             x,_=await _read_range(client,media,total,off,n)
             if x:
                 parts.append(ProbePiece(off,x,label))
@@ -376,28 +396,60 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
 
         current=_report(message,parts)
 
-        # If the index did not reveal tracks, progressively search deeper.
         if not current.audio.get("tracks") and not current.subtitles:
-            await say("🔎 Stage 3/4 • adaptive range search for TrackEntry metadata…")
+            await say("🔎 Stage 3/4 • adaptively searching deeper ranges for TrackEntry names…")
+
             for off,n,label in _adaptive_ranges(total,budget,used,initial):
                 x,_=await _read_range(client,media,total,off,n)
-                if x:
-                    parts.append(ProbePiece(off,x,label))
-                    used+=len(x)
+                if not x:
+                    continue
+
+                pieces_before=len(parts)
+                parts.append(ProbePiece(off,x,label))
+                used+=len(x)
+
+                # If Tracks/Info starts near a window boundary, fetch exactly the
+                # remaining bytes needed to complete that metadata element.
+                for element_id,element_label in (
+                    (b"\x16\x54\xAE\x6B","Matroska Tracks continuation"),
+                    (b"\x15\x49\xA9\x66","Matroska Info continuation"),
+                ):
+                    local=x.find(element_id)
+                    if local<0:
+                        continue
+                    required_end=_required_element_end(x,local)
+                    if required_end is None:
+                        continue
+                    available=len(x)-local
+                    if required_end>len(x) and used<budget:
+                        extra=min(
+                            required_end-len(x),
+                            budget-used,
+                            max(0,(total or 0)-(off+len(x))),
+                        )
+                        if extra>0:
+                            extra_data,_=await _read_range(
+                                client,
+                                media,
+                                total,
+                                off+len(x),
+                                extra,
+                            )
+                            if extra_data:
+                                parts.append(
+                                    ProbePiece(
+                                        off+len(x),
+                                        extra_data,
+                                        element_label,
+                                    )
+                                )
+                                used+=len(extra_data)
 
                 current=_report(message,parts)
                 if current.audio.get("tracks") or current.subtitles:
                     break
 
-        # Once the Tracks element marker is located, fetch the whole metadata
-        # element if the current window cut it off at a boundary.
-        current=_report(message,parts)
-        combined=b"".join(p.data for p in parts)
-        marker_pos=combined.find(b"\x16\x54\xAE\x6B")
-        if (current.audio.get("tracks") or current.subtitles) and marker_pos>=0:
-            await say("🧩 Stage 4/4 • extracting track names, languages and codecs…")
-        else:
-            await say("🧩 Stage 4/4 • finalizing available media metadata…")
+        await say("🧩 Stage 4/4 • extracting final audio/subtitle names and metadata…")
     else:
         await say("🧩 Stage 2/2 • reading available media metadata…")
 
