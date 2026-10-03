@@ -63,8 +63,16 @@ class ScanState:
     busy: bool = False
 
 
+@dataclass(slots=True)
+class PendingScan:
+    source_message: Any
+    created_at: float
+    busy: bool = False
+
+
 scan_states: dict[tuple[int, int], ScanState] = {}
 web_states: dict[str, ScanState] = {}
+pending_scans: dict[str, PendingScan] = {}
 
 HELP_TEXT = (
     "🔬 <b>AniToons File Intelligence</b>\n\n"
@@ -90,6 +98,21 @@ def main_buttons():
 
 def web_report_button(token: str):
     return [[Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]]
+
+
+def metadata_button(token: str):
+    return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
+
+
+def purge_pending_scans() -> None:
+    now = time.monotonic()
+    expired = [
+        token
+        for token, pending in pending_scans.items()
+        if now - pending.created_at > STATE_TTL_SECONDS
+    ]
+    for token in expired:
+        pending_scans.pop(token, None)
 
 
 def compact_scan_result(report: Report) -> str:
@@ -184,6 +207,7 @@ def cache_state(report_message: Any, source_message: Any, report: Report) -> Sca
 
 
 def _purge_states() -> None:
+    purge_pending_scans()
     now = time.monotonic()
     expired_keys = [
         key for key, state in scan_states.items()
@@ -250,27 +274,23 @@ async def run_scan(source_message: Any, status_message: Any, *, deep: bool) -> R
     return report
 
 
-async def analyze(event) -> None:
+async def analyze_source(source_message: Any, status_message: Any) -> None:
     global checks_total, checks_ok, checks_failed
     checks_total += 1
 
-    filename = safe_filename(event.message)
-    status = await event.reply(
-        status_text(filename, "⏳ Starting advanced scan…"),
-        parse_mode="html",
-    )
+    filename = safe_filename(source_message)
 
     async with check_semaphore:
         try:
-            report = await run_scan(event.message, status, deep=True)
-            state = cache_state(status, event.message, report)
+            report = await run_scan(source_message, status_message, deep=True)
+            state = cache_state(status_message, source_message, report)
 
             if state is None:
                 raise RuntimeError("Could not create web report link")
 
             result = compact_scan_result(report)
             await edit_status(
-                status,
+                status_message,
                 result,
                 buttons=web_report_button(state.web_token),
             )
@@ -279,30 +299,50 @@ async def analyze(event) -> None:
         except asyncio.TimeoutError:
             checks_failed += 1
             await edit_status(
-                status,
-                "⏰ <b>Scan time limit reached.</b>\n\n"
-                "The scanner stopped safely before attempting a full-file download.",
+                status_message,
+                "⏰ <b>Metadata scan reached the 5-minute limit.</b>\n\n"
+                "The scanner stopped safely without downloading the complete file.",
                 buttons=main_buttons(),
             )
 
         except errors.FloodWaitError as exc:
             checks_failed += 1
             await edit_status(
-                status,
+                status_message,
                 f"⏳ Telegram temporarily rate-limited this scan. Try again in {int(exc.seconds)} seconds.",
                 buttons=main_buttons(),
             )
 
         except Exception as exc:
             checks_failed += 1
-            log.exception("File analysis failed for %s", filename)
+            log.exception("File metadata scan failed for %s", filename)
             await edit_status(
-                status,
-                "❌ <b>Could not inspect this file.</b>\n\n"
-                f"<code>{html.escape(type(exc).__name__)}</code>\n\n"
-                "The scanner did not perform a full-file download.",
+                status_message,
+                "❌ <b>Metadata scan failed.</b>\n\n"
+                f"<code>{html.escape(type(exc).__name__)}</code>",
                 buttons=main_buttons(),
             )
+
+
+async def analyze(event) -> None:
+    purge_pending_scans()
+
+    token = secrets.token_urlsafe(18)
+    pending_scans[token] = PendingScan(
+        source_message=event.message,
+        created_at=time.monotonic(),
+    )
+
+    filename = safe_filename(event.message)
+    label = (
+        f"📄 <b>{html.escape(filename[:120])}</b>\n"
+        "📥 <b>Metadata</b>"
+    )
+    await event.reply(
+        label,
+        parse_mode="html",
+        buttons=metadata_button(token),
+    )
 
 
 async def handle_new_message(event):
@@ -322,7 +362,8 @@ async def handle_new_message(event):
 
 
 async def handle_callback(event):
-    data = (event.data or b"").decode("utf-8", "ignore")
+    purge_pending_scans()
+    data = (event.data or b"").decode("ascii", "ignore")
 
     if data == "home:help":
         await event.answer()
@@ -337,12 +378,13 @@ async def handle_callback(event):
         await event.answer()
         await event.edit(
             "🛡️ <b>SCAN POLICY</b>\n\n"
-            "• Reads only bounded byte ranges from Telegram.\n"
-            "• Uses Matroska Info/Tracks indexes when available.\n"
-            "• May probe sparse ranges if required.\n"
+            "• Sending a file does not start a scan.\n"
+            "• Scan starts only after <b>📥 Download Metadata</b> is pressed.\n"
+            "• Uses targeted Telegram byte-range reads.\n"
+            "• Searches Matroska metadata for real audio/subtitle TrackEntry records.\n"
             "• Never intentionally downloads the complete large file.\n"
-            "• Each browser report expires from memory after 1 hour or when the service restarts.\n"
-            "• The scan has a hard 5-minute limit.",
+            "• Scan limit: 5 minutes.\n"
+            "• Browser report expires after about 1 hour or a service restart.",
             parse_mode="html",
             buttons=[[Button.inline("⬅️ Back", b"home:back")]],
         )
@@ -357,8 +399,7 @@ async def handle_callback(event):
             f"⏱ Uptime: <code>{str(uptime).split('.')[0]}</code>\n"
             f"📦 Scans: <code>{checks_total}</code>\n"
             f"✅ Successful: <code>{checks_ok}</code>\n"
-            f"❌ Failed: <code>{checks_failed}</code>\n"
-            f"⚙️ Concurrent scans: <code>{MAX_CONCURRENT_CHECKS}</code>",
+            f"❌ Failed: <code>{checks_failed}</code>",
             parse_mode="html",
             buttons=[[Button.inline("⬅️ Back", b"home:back")]],
         )
@@ -371,6 +412,41 @@ async def handle_callback(event):
             parse_mode="html",
             buttons=main_buttons(),
         )
+        return
+
+    if data.startswith("scan:"):
+        token = data[5:].strip()
+        pending = pending_scans.get(token)
+
+        if pending is None:
+            await event.answer(
+                "This metadata request expired. Send the file again.",
+                alert=True,
+            )
+            return
+
+        if pending.busy:
+            await event.answer(
+                "Metadata scan is already running.",
+                alert=True,
+            )
+            return
+
+        pending.busy = True
+        pending.created_at = time.monotonic()
+        pending_scans.pop(token, None)
+
+        await event.answer("Metadata scan started…")
+
+        status_message = await event.get_message()
+        await edit_status(
+            status_message,
+            status_text(
+                safe_filename(pending.source_message),
+                "⏳ Starting metadata scan…",
+            ),
+        )
+        await analyze_source(pending.source_message, status_message)
         return
 
     await event.answer()
