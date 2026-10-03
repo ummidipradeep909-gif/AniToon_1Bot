@@ -492,13 +492,13 @@ async def health_server():
                 state = web_states.get(token)
 
                 if not state:
-                    body = b"""<!doctype html>
+                    body = """<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Report expired</title></head>
 <body style="font-family:system-ui;padding:32px">
 <h2>🔎 File report expired</h2>
 <p>This report is no longer stored. Send the Telegram file to the bot again to create a new report.</p>
-</body></html>"""
+</body></html>""".encode("utf-8")
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"404 Not Found"
                 else:
