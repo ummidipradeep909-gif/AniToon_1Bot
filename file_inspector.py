@@ -187,8 +187,11 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
                 nb=data[ns:ne]
                 if nid==0xB0 and nb:width=int.from_bytes(nb,"big")
                 elif nid==0xBA and nb:height=int.from_bytes(nb,"big")
-    if typ not in {"audio","video","subtitles"} or not cid:return None
-    use_lang=lang_i or lang; lname=_lang(use_lang); cdisplay=cname or CODEC.get(cid) or cid
+    if typ not in {"audio","video","subtitles"}:
+        return None
+    use_lang=lang_i or lang
+    lname=_lang(use_lang)
+    cdisplay=cname or CODEC.get(cid or "") or cid or "Unknown"
     d={"type":typ,"track":str(num) if num is not None else None,"name":name or lname or cdisplay,"display_name":name or lname or cdisplay,
        "name_source":"track metadata" if name else ("language metadata" if lname else "codec metadata"),"language":use_lang,"language_name":lname,"codec":cid,"codec_name":cname or CODEC.get(cid)}
     for k,v in (("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),("hearing_impaired",sdh if typ=="subtitles" else None),("visual_impaired",vi if typ=="subtitles" else None),("original",original),("commentary",commentary)):
