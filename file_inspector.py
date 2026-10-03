@@ -97,10 +97,19 @@ def _elem(data:bytes,pos:int):
     first=data[pos]; mask=0x80; il=1
     while il<=4 and not(first&mask):mask>>=1;il+=1
     if il>4 or pos+il>=len(data):return None
-    eid=int.from_bytes(data[pos:pos+il],"big"); si=_vint(data,pos+il)
+    eid=int.from_bytes(data[pos:pos+il],"big")
+    si=_vint(data,pos+il)
     if not si:return None
-    size,sl=si; start=pos+il+sl; unknown=size==(1<<(7*sl))-1; end=len(data) if unknown else start+size
-    if end<start or end>len(data):return None
+    size,sl=si
+    start=pos+il+sl
+    unknown=size==(1<<(7*sl))-1
+    declared_end=len(data) if unknown else start+size
+
+    # Partial byte-range scans routinely end inside a large EBML element
+    # such as Segment or Tracks. Treat the visible part as a valid truncated
+    # element so its children can still be parsed.
+    end=min(len(data),declared_end)
+    if end<start:return None
     return eid,start,end
 
 def _children(data:bytes,start:int,end:int):
