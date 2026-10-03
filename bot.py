@@ -130,25 +130,10 @@ def purge_pending_scans() -> None:
 
 
 def compact_scan_result(report: Report) -> str:
-    audio_tracks = report.audio.get("tracks", [])
-
-    def audio_name(track: dict[str, Any]) -> str:
-        return str(
-            track.get("name")
-            or track.get("display_name")
-            or track.get("language_name")
-            or track.get("codec_name")
-            or "Unnamed audio track"
-        )
-
-    lines = ["✅ <b>AUDIO METADATA READY</b>", ""]
-    if audio_tracks:
-        for index, track in enumerate(audio_tracks, 1):
-            lines.append(f"<b>{index}.</b> {html.escape(audio_name(track))}")
-    else:
-        lines.append("No audio track names were detected.")
-
-    return "\n".join(lines)
+    return (
+        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
+        "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
+    )
 
 
 def is_checkable_message(event) -> bool:
