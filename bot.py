@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import logging
 import os
@@ -53,7 +52,7 @@ HELP_TEXT = (
     "🧩 Other files — MIME/type/signature detection\n\n"
     "<b>Download policy</b>\n"
     "For large files I read only a small sample from the beginning "
-    "(default 2 MiB). The complete large file is not downloaded or saved.\n\n"
+    "(default 8 MiB for media). The complete large file is not downloaded or saved.\n\n"
     "<i>Some containers store important indexes near the end, so a "
     "beginning-only check cannot always reveal every track.</i>"
 )
@@ -91,7 +90,7 @@ async def analyze(event) -> None:
     filename = safe_filename(event.message)
     status = await event.reply(
         "🧠 Analyzing file…\n"
-        f"📄 {html.escape(filename[:100])}\n"
+        f"📄 {filename[:100]}\n"
         "⏱ Reading only a small beginning sample — no full-file download."
     )
 
