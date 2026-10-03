@@ -6,25 +6,28 @@ Render-ready Telegram channel join/reaction worker with a lightweight file check
 
 Build command:
 
-\`\`\`text
+```text
 pip install -r requirements.txt
-\`\`\`
+```
 
 Start command:
 
-\`\`\`text
+```text
 python file_bot.py
-\`\`\`
+```
 
 Required environment variables:
 
-\`API_ID\`, \`API_HASH\`, \`BOT_TOKEN\`, \`OWNER_ID\`, \`MONGODB\` and optionally \`USER_SESSION\` as used by the existing worker.
+`API_ID`, `API_HASH`, `BOT_TOKEN`, and `OWNER_ID`.
+`USER_SESSION` is optional for the existing user-account worker.
+
+MongoDB is **not required**. Channel settings, reactions, delays, global state, and logs are stored in a local SQLite database.
 
 The bot token and Telegram user session are secrets and must not be committed.
 
 ## Button dashboard
 
-Send \`/panel\` in the bot private chat. The existing dashboard provides channel, reaction, delay, test, log and global start/stop controls.
+Send `/panel` in the bot private chat. The existing dashboard provides channel, reaction, delay, test, log and global start/stop controls.
 
 ## Lightweight file checker
 
@@ -32,14 +35,24 @@ Send a file, audio, video, subtitle, image, archive, PDF or other document to th
 
 See [README_FILE_CHECKER.md](README_FILE_CHECKER.md) for supported checks and limitations.
 
+## Storage
+
+Default SQLite path:
+
+`data/bot.sqlite3`
+
+Set `DB_PATH` to change it. The repository ignores SQLite files and the `data/` directory.
+
+On hosting platforms where the local filesystem is ephemeral, SQLite data can be lost when the service is recreated. The bot itself still runs without an external database.
+
 ## File-checker environment variables
 
-\`FILE_CHECKER_ENABLED=1\` enables the checker.
+`FILE_CHECKER_ENABLED=1` enables the checker.
 
-\`FILE_CHECKER_PRIVATE_ONLY=1\` (default) limits checks to private chats. Set it to \`0\` for groups/channels.
+`FILE_CHECKER_PRIVATE_ONLY=1` (default) limits checks to private chats. Set it to `0` for groups/channels.
 
-\`FILE_CHECKER_OWNER_ONLY=1\` restricts file checks to \`OWNER_ID\`.
+`FILE_CHECKER_OWNER_ONLY=1` restricts file checks to `OWNER_ID`.
 
-\`FILE_PROBE_BYTES=2097152\` controls the maximum prefix sample (64 KiB to 4 MiB).
+`FILE_PROBE_BYTES=2097152` controls the maximum prefix sample (64 KiB to 4 MiB).
 
-\`FILE_PROBE_CHUNK_BYTES=262144\` controls the Telegram request/chunk size (64 KiB to 512 KiB).
+`FILE_PROBE_CHUNK_BYTES=262144` controls the Telegram request/chunk size (64 KiB to 512 KiB).
