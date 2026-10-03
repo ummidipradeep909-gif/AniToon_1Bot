@@ -896,7 +896,18 @@ async def health_server():
                     )
                     partial = False
 
-                    if range_value.lower().startswith("bytes="):
+                    if method == "HEAD" and not range_value:
+                        body_for_send = b""
+                        body = body_for_send
+                        code = b"200 OK"
+                        head = (
+                            b"Accept-Ranges: bytes\r\n"
+                            + (
+                                f"Content-Length: {total if total is not None else 0}\r\n".encode("ascii")
+                            )
+                            + b"Content-Type: application/octet-stream\r\n"
+                        )
+                    elif range_value.lower().startswith("bytes="):
                         spec = range_value[6:].split(",", 1)[0].strip()
                         if "-" not in spec:
                             body = b"Invalid Range"
