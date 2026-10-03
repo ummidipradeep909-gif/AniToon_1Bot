@@ -1,58 +1,76 @@
-# AniToons_1Bot
+# AniToons_1Bot — Telegram File Info Bot
 
-Render-ready Telegram channel join/reaction worker with a lightweight file checker.
+This project now does **one job only**: receive a Telegram file and send file information back.
+
+## What the bot checks
+
+Audio, video, subtitle, image, document, archive, PDF and other file types.
+
+The report can include:
+
+- filename, MIME type, detected type and total size
+- Telegram audio/video metadata
+- audio header information when available
+- subtitle formats such as SRT, VTT, ASS/SSA, TTML and SAMI
+- embedded Matroska/WebM and MP4 track hints when those atoms/elements are inside the sample
+- basic image dimensions
+- common file signatures
+- a SHA-256 hash of the sampled bytes
+
+## No full-file download
+
+For large files the bot samples only the beginning of the remote file.
+
+Default maximum sample: **2 MiB**.
+
+Maximum configurable sample: **4 MiB**.
+
+The sample is kept in memory and is not saved as a complete downloaded file. A file that is smaller than the sample limit may necessarily be read completely.
+
+A beginning-only sample cannot guarantee metadata stored near the end of some containers.
+
+## Telegram usage
+
+Open the bot and send a file.
+
+Use:
+
+- \`/start\`
+- \`/help\`
+
+The bot replies with the inspection report. No channel management, reactions, MongoDB, SQLite, user session or other bot features are used.
 
 ## Render
 
-Build command:
-
-```text
-pip install -r requirements.txt
-```
-
-Start command:
-
-```text
-python file_bot.py
-```
+The service is configured as a Render **web service** because UptimeRobot needs an HTTP endpoint.
 
 Required environment variables:
 
-`API_ID`, `API_HASH`, `BOT_TOKEN`, and `OWNER_ID`.
-`USER_SESSION` is optional for the existing user-account worker.
+- \`API_ID\`
+- \`API_HASH\`
+- \`BOT_TOKEN\`
 
-MongoDB is **not required**. Channel settings, reactions, delays, global state, and logs are stored in a local SQLite database.
+Optional:
 
-The bot token and Telegram user session are secrets and must not be committed.
+- \`FILE_CHECKER_PRIVATE_ONLY=1\` limits checks to private chats.
+- \`FILE_PROBE_BYTES=2097152\` sets the prefix sample size (64 KiB–4 MiB).
+- \`FILE_PROBE_CHUNK_BYTES=262144\` sets the request chunk size (64 KiB–512 KiB).
 
-## Button dashboard
+Render exposes the service URL after deployment.
 
-Send `/panel` in the bot private chat. The existing dashboard provides channel, reaction, delay, test, log and global start/stop controls.
+### UptimeRobot
 
-## Lightweight file checker
+Create an **HTTP(s) monitor** using:
 
-Send a file, audio, video, subtitle, image, archive, PDF or other document to the bot. The checker uses Telegram metadata plus only a small prefix sample from the beginning of the remote file. By default it reads at most **2 MiB** and does not save the complete file to disk.
+\`https://<your-render-service-url>/health\`
 
-See [README_FILE_CHECKER.md](README_FILE_CHECKER.md) for supported checks and limitations.
+The endpoint returns HTTP 200 with a small JSON response while the service is running.
 
-## Storage
+Do not use the Telegram \`t.me\` bot link as the UptimeRobot monitor URL.
 
-Default SQLite path:
+## Local run
 
-`data/bot.sqlite3`
-
-Set `DB_PATH` to change it. The repository ignores SQLite files and the `data/` directory.
-
-On hosting platforms where the local filesystem is ephemeral, SQLite data can be lost when the service is recreated. The bot itself still runs without an external database.
-
-## File-checker environment variables
-
-`FILE_CHECKER_ENABLED=1` enables the checker.
-
-`FILE_CHECKER_PRIVATE_ONLY=1` (default) limits checks to private chats. Set it to `0` for groups/channels.
-
-`FILE_CHECKER_OWNER_ONLY=1` restricts file checks to `OWNER_ID`.
-
-`FILE_PROBE_BYTES=2097152` controls the maximum prefix sample (64 KiB to 4 MiB).
-
-`FILE_PROBE_CHUNK_BYTES=262144` controls the Telegram request/chunk size (64 KiB to 512 KiB).
+\`\`\`bash
+pip install -r requirements.txt
+python file_bot.py
+\`\`\`
