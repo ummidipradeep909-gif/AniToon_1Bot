@@ -121,7 +121,7 @@ def _lang(code:str|None)->str|None:
 def _fmtsec(sec:float|None)->str:
     if sec is None or sec<0:return "Unknown"
     total=int(round(sec)); h,rem=divmod(total,3600); m,s=divmod(rem,60)
-    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 def _segment_start(data:bytes):
     p=data.find(b"\\x18\\x53\\x80\\x67")
