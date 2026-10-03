@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
+import sqlite3
 from datetime import datetime, timezone
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pymongo import MongoClient
 from telethon import Button, TelegramClient, events, functions, types, errors
 from telethon.sessions import StringSession
 
@@ -20,7 +21,8 @@ API_HASH = os.environ["API_HASH"].strip()
 BOT_TOKEN = os.environ["BOT_TOKEN"].strip()
 OWNER_ID = int(os.environ["OWNER_ID"])
 USER_SESSION = os.getenv("USER_SESSION", "").strip()
-MONGODB = os.getenv("MONGODB", "").strip()
+
+DB_PATH = os.getenv("DB_PATH", "data/bot.sqlite3").strip() or "data/bot.sqlite3"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("anitoons")
@@ -39,66 +41,47 @@ pending: dict[int, dict[str, Any]] = {}
 DEFAULT_REACTIONS = ["❤️", "🔥", "👍"]
 REACTION_CHOICES = ["❤️", "🔥", "👍", "😂", "😍", "😢", "😡", "👏", "🎉", "💯"]
 
-mongo: MongoClient | None = None
-channel_collection = None
-log_collection = None
-settings_collection = None
-mongo_error = ""
+def db_connect() -> sqlite3.Connection:
+    path = Path(DB_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
 
-def normalized_mongodb_uri(uri: str) -> str:
-    """Normalize URI credentials so reserved password characters work."""
-    parsed = urlsplit(uri.strip())
-    if not parsed.scheme or not parsed.hostname:
-        return uri.strip()
-    if parsed.username is None:
-        return uri.strip()
+def init_storage() -> None:
+    with db_connect() as db:
+        db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS channels (
+                chat_id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                username TEXT,
+                reference TEXT NOT NULL,
+                reactions TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                delay_min REAL NOT NULL DEFAULT 1,
+                delay_max REAL NOT NULL DEFAULT 4,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
 
-    username = quote(unquote(parsed.username), safe="")
-    password = ""
-    if parsed.password is not None:
-        password = quote(unquote(parsed.password), safe="")
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    if parsed.port:
-        host = f"{host}:{parsed.port}"
-    userinfo = username
-    if parsed.password is not None:
-        userinfo += ":" + password
-    userinfo += "@"
-    rebuilt = urlunsplit((parsed.scheme, userinfo + host, parsed.path, parsed.query, parsed.fragment))
-    return rebuilt
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
 
-def configure_mongo(client: MongoClient) -> None:
-    global mongo, channel_collection, log_collection, settings_collection
-    mongo = client
-    db = client.get_database("anitoons_1bot")
-    channel_collection = db.get_collection("channels")
-    log_collection = db.get_collection("logs")
-    settings_collection = db.get_collection("settings")
-
-def connect_mongo() -> None:
-    global mongo_error
-    if not MONGODB:
-        mongo_error = "MONGODB environment variable is empty."
-        raise RuntimeError(mongo_error)
-
-    uri = normalized_mongodb_uri(MONGODB)
-    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-    client.admin.command("ping")
-    configure_mongo(client)
-    mongo_error = ""
-    log.info("MongoDB connected.")
-
-try:
-    connect_mongo()
-except Exception as exc:
-    mongo_error = str(exc)
-    log.warning("MongoDB unavailable; using memory: %s", exc)
-    mongo = None
-    channel_collection = None
-    log_collection = None
-    settings_collection = None
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                reaction TEXT,
+                status TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+    log.info("SQLite storage ready: %s", DB_PATH)
 
 def owner_only(event) -> bool:
     return bool(event.is_private and event.sender_id == OWNER_ID)
@@ -111,61 +94,151 @@ def worker_name() -> str:
 
 async def db_load() -> None:
     global auto_reactions
-    if channel_collection is None:
-        return
     try:
-        docs = await asyncio.to_thread(lambda: list(channel_collection.find({})))
-        for item in docs:
-            item.pop("_id", None)
-            channels[int(item["chat_id"])] = item
-        setting = await asyncio.to_thread(lambda: settings_collection.find_one({"_id": "global"})) if settings_collection is not None else None
-        if setting:
-            auto_reactions = bool(setting.get("auto_reactions", True))
+        def read():
+            with db_connect() as db:
+                rows = db.execute("SELECT * FROM channels").fetchall()
+                setting = db.execute(
+                    "SELECT value FROM settings WHERE key = ?",
+                    ("auto_reactions",),
+                ).fetchone()
+                return rows, setting
+
+        rows, setting = await asyncio.to_thread(read)
+        channels.clear()
+        for row in rows:
+            channels[int(row["chat_id"])] = {
+                "chat_id": int(row["chat_id"]),
+                "title": row["title"],
+                "username": row["username"],
+                "reference": row["reference"],
+                "reactions": json.loads(row["reactions"]) or DEFAULT_REACTIONS[:],
+                "enabled": bool(row["enabled"]),
+                "delay_min": float(row["delay_min"]),
+                "delay_max": float(row["delay_max"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+        if setting is not None:
+            auto_reactions = setting["value"] == "1"
     except Exception:
-        log.exception("Failed to load MongoDB data")
+        log.exception("Failed to load SQLite data")
 
 async def db_save_channel(config: dict[str, Any]) -> None:
-    if channel_collection is None:
-        return
     payload = dict(config)
-    await asyncio.to_thread(lambda: channel_collection.replace_one({"chat_id": int(payload["chat_id"])}, payload, upsert=True))
+
+    def write():
+        with db_connect() as db:
+            db.execute(
+                """
+                INSERT INTO channels
+                (chat_id, title, username, reference, reactions, enabled,
+                 delay_min, delay_max, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title=excluded.title,
+                    username=excluded.username,
+                    reference=excluded.reference,
+                    reactions=excluded.reactions,
+                    enabled=excluded.enabled,
+                    delay_min=excluded.delay_min,
+                    delay_max=excluded.delay_max,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    int(payload["chat_id"]),
+                    str(payload.get("title", "Channel")),
+                    payload.get("username"),
+                    str(payload.get("reference", "")),
+                    json.dumps(payload.get("reactions") or DEFAULT_REACTIONS, ensure_ascii=False),
+                    int(bool(payload.get("enabled", True))),
+                    float(payload.get("delay_min", 1)),
+                    float(payload.get("delay_max", 4)),
+                    str(payload.get("created_at", now_iso())),
+                    str(payload.get("updated_at", now_iso())),
+                ),
+            )
+
+    await asyncio.to_thread(write)
 
 async def db_delete_channel(chat_id: int) -> None:
-    if channel_collection is not None:
-        await asyncio.to_thread(lambda: channel_collection.delete_one({"chat_id": int(chat_id)}))
+    def delete():
+        with db_connect() as db:
+            db.execute("DELETE FROM channels WHERE chat_id = ?", (int(chat_id),))
+    await asyncio.to_thread(delete)
 
 async def db_set_global(value: bool) -> None:
     global auto_reactions
     auto_reactions = value
-    if settings_collection is not None:
-        await asyncio.to_thread(lambda: settings_collection.update_one({"_id": "global"}, {"$set": {"auto_reactions": value}}, upsert=True))
 
-async def db_log(chat_id: int, message_id: int, reaction: str | None, status: str, detail: str = "") -> None:
-    if log_collection is None:
-        return
-    payload = {"chat_id": int(chat_id), "message_id": int(message_id), "reaction": reaction, "status": status, "detail": detail[:500], "created_at": now_iso()}
-    await asyncio.to_thread(lambda: log_collection.insert_one(payload))
+    def write():
+        with db_connect() as db:
+            db.execute(
+                """
+                INSERT INTO settings(key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                ("auto_reactions", "1" if value else "0"),
+            )
+
+    await asyncio.to_thread(write)
+
+async def db_log(
+    chat_id: int,
+    message_id: int,
+    reaction: str | None,
+    status: str,
+    detail: str = "",
+) -> None:
+    def write():
+        with db_connect() as db:
+            db.execute(
+                """
+                INSERT INTO logs
+                (chat_id, message_id, reaction, status, detail, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(chat_id),
+                    int(message_id),
+                    reaction,
+                    status,
+                    detail[:500],
+                    now_iso(),
+                ),
+            )
+
+    await asyncio.to_thread(write)
 
 async def recent_logs(limit: int = 12) -> list[dict[str, Any]]:
-    if log_collection is None:
-        return []
-    docs = await asyncio.to_thread(lambda: list(log_collection.find({}).sort("_id", -1).limit(limit)))
-    for item in docs:
-        item.pop("_id", None)
-    return docs
+    def read():
+        with db_connect() as db:
+            rows = db.execute(
+                """
+                SELECT chat_id, message_id, reaction, status, detail, created_at
+                FROM logs
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 50)),),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
-async def clear_mongo_storage() -> None:
-    global mongo, channel_collection, log_collection, settings_collection
-    # Reconnect for every clear request. This handles credentials fixed in Render
-    # without relying on a MongoClient that failed during process startup.
-    await asyncio.to_thread(connect_mongo)
-    if mongo is None or channel_collection is None or log_collection is None or settings_collection is None:
-        raise RuntimeError("MongoDB connection could not be established.")
-    await asyncio.to_thread(channel_collection.delete_many, {})
-    await asyncio.to_thread(log_collection.delete_many, {})
-    await asyncio.to_thread(settings_collection.delete_many, {})
+    return await asyncio.to_thread(read)
+
+async def clear_local_storage() -> None:
+    global auto_reactions
+
+    def clear():
+        with db_connect() as db:
+            db.execute("DELETE FROM channels")
+            db.execute("DELETE FROM logs")
+            db.execute("DELETE FROM settings")
+
+    await asyncio.to_thread(clear)
     channels.clear()
     pending.clear()
+    auto_reactions = True
 
 def main_buttons():
     return [
@@ -174,19 +247,18 @@ def main_buttons():
         [Button.inline("⏱ Delay", b"delay_menu"), Button.inline("📋 Logs", b"logs")],
         [Button.inline("▶️ Start", b"global_on"), Button.inline("⏸ Stop", b"global_off")],
         [Button.inline("🔍 Status", b"status"), Button.inline("❔ Help", b"help")],
-        [Button.inline("🧹 Clear MongoDB", b"clear_storage")],
+        [Button.inline("🧹 Clear Local Storage", b"clear_storage")],
     ]
 
 async def dashboard_text() -> str:
     enabled = sum(1 for x in channels.values() if x.get("enabled", True))
     state = "🟢 ON" if auto_reactions else "🔴 OFF"
-    mongo_state = "🟢 Connected" if mongo else "🟡 Not connected"
     return (
         "🎬 AniToons 1Bot Control Panel\n\n"
         f"Auto reactions: {state}\n"
         f"Channels: {len(channels)} ({enabled} enabled)\n"
         f"Worker: {worker_name()}\n"
-        f"MongoDB: {mongo_state}\n\n"
+        f"Storage: 🟢 SQLite ({DB_PATH})\n\n"
         "Use the buttons below."
     )
 
@@ -320,7 +392,7 @@ async def messages(event):
         await event.reply(await dashboard_text(), buttons=main_buttons())
     elif text == "/clearstorage":
         await event.reply(
-            "⚠️ This deletes the bot's MongoDB channels, logs, and settings. "
+            "⚠️ This deletes the bot's local SQLite channels, logs, and settings. "
             "Use the button below to confirm.",
             buttons=[[Button.inline("✅ CONFIRM CLEAR", b"clear_confirm"),
                        Button.inline("❌ Cancel", b"dashboard")]],
@@ -357,14 +429,14 @@ async def callbacks(event):
         if data == "status":
             bot_me = await bot.get_me()
             user_state = "authorized" if user_session_ok else ("revoked/not authorized" if user else "not configured")
-            await edit_or_reply(event, f"🔍 Status\n\nBot: @{getattr(bot_me, 'username', 'unknown')}\nWorker: {worker_name()}\nUSER_SESSION: {user_state}\nMongoDB: {'connected' if mongo else 'not connected'}\nAuto reactions: {'ON' if auto_reactions else 'OFF'}", [[Button.inline("🔄 Refresh", b"status"), Button.inline("⬅️ Back", b"dashboard")]])
+            await edit_or_reply(event, f"🔍 Status\n\nBot: @{getattr(bot_me, 'username', 'unknown')}\nWorker: {worker_name()}\nUSER_SESSION: {user_state}\nStorage: SQLite ({DB_PATH})\nAuto reactions: {'ON' if auto_reactions else 'OFF'}", [[Button.inline("🔄 Refresh", b"status"), Button.inline("⬅️ Back", b"dashboard")]])
             return
         if data == "clear_storage":
             await edit_or_reply(
                 event,
-                "⚠️ CLEAR MONGODB STORAGE\n\n"
-                "This will delete only this bot's stored channels, logs, "
-                "and settings from the anitoons_1bot database.\n\n"
+                "⚠️ CLEAR LOCAL STORAGE\n\n"
+                "This deletes the bot's locally stored channels, logs, "
+                "and settings from the SQLite database.\n\n"
                 "This cannot be undone.",
                 [[
                     Button.inline("✅ CONFIRM CLEAR", b"clear_confirm"),
@@ -375,17 +447,17 @@ async def callbacks(event):
 
         if data == "clear_confirm":
             try:
-                await clear_mongo_storage()
+                await clear_local_storage()
                 await edit_or_reply(
                     event,
-                    "✅ MongoDB storage cleared.\n\n"
+                    "✅ Local SQLite storage cleared.\n\n"
                     "Channels, logs, and settings have been deleted.",
                     [[Button.inline("🏠 Dashboard", b"dashboard")]],
                 )
             except Exception as exc:
                 await edit_or_reply(
                     event,
-                    f"❌ MongoDB storage was not cleared.\n\n{type(exc).__name__}: {exc}",
+                    f"❌ Local storage was not cleared.\n\n{type(exc).__name__}: {exc}",
                     [[
                         Button.inline("🔍 Status", b"status"),
                         Button.inline("⬅️ Dashboard", b"dashboard"),
@@ -396,7 +468,7 @@ async def callbacks(event):
         if data == "logs":
             entries = await recent_logs()
             if not entries:
-                text = "📋 Logs\n\nNo MongoDB logs available yet."
+                text = "📋 Logs\n\nNo local logs available yet."
             else:
                 lines = ["📋 Recent Logs", ""]
                 for item in entries:
@@ -405,7 +477,7 @@ async def callbacks(event):
             await edit_or_reply(event, text, [[Button.inline("⬅️ Back", b"dashboard")]])
             return
         if data == "help":
-            await edit_or_reply(event, "❔ How to use\n\n1. Add a channel.\n2. Choose reactions.\n3. Set delay.\n4. Keep Auto Reactions ON.\n\nBot-only mode requires the bot to be a member of the channel. USER_SESSION enables the user-account worker.", [[Button.inline("⬅️ Dashboard", b"dashboard")]])
+            await edit_or_reply(event, "❔ How to use\n\n1. Add a channel.\n2. Choose reactions.\n3. Set delay.\n4. Keep Auto Reactions ON.\n\nStorage uses SQLite locally, so MONGODB is not required. Bot-only mode requires the bot to be a member of the channel. USER_SESSION enables the user-account worker.", [[Button.inline("⬅️ Dashboard", b"dashboard")]])
             return
         if data == "global_on":
             await db_set_global(True)
@@ -539,6 +611,7 @@ async def bot_post_handler(event):
 
 async def main():
     global active_client, user_session_ok
+    init_storage()
     await bot.start(bot_token=BOT_TOKEN)
     bot.add_event_handler(messages, events.NewMessage(incoming=True))
     bot.add_event_handler(callbacks, events.CallbackQuery)
@@ -570,7 +643,7 @@ async def main():
                 pass
     bot.add_event_handler(bot_post_handler, events.NewMessage(incoming=True))
     await db_load()
-    log.info("AniToons_1Bot online | mode=%s | mongodb=%s", worker_name(), bool(mongo))
+    log.info("AniToons_1Bot online | mode=%s | sqlite=%s", worker_name(), DB_PATH)
     await bot.run_until_disconnected()
 
 if __name__ == "__main__":
