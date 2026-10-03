@@ -568,6 +568,248 @@ def web_section(report: Report, section: str) -> str:
     return format_section(report, section).replace("\n", "<br>")
 
 
+def home_page() -> bytes:
+    channels = [
+        ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1", False),
+        ("🍿", "All Animes Channel", "https://t.me/anitoons_ani", False),
+        ("🎧", "Dual Content Channel", "https://t.me/ani_engjaphin", True),
+        ("📚", "Manga Channel", "https://t.me/mangauniverse_ani", False),
+        ("🏴‍☠️", "One Piece All New Episodes", "https://t.me/ani_pocket_monster", False),
+        ("⚔️", "Jujutsu Kaisen Channel", "https://t.me/jjk_anitoon", False),
+        ("🍥", "Naruto Shippuden Channel", "https://t.me/naruto_shippuden_in_telugudub", False),
+    ]
+
+    completed = [
+        ("🤖", "Doraemon All Movies & Seasons", "https://t.me/ani_seas"),
+        ("🌻", "Shin-Chan All Seasons & Movies", "https://t.me/shin_seas"),
+        ("⚡", "Beyblade Channel", "https://t.me/Ani_beyblade"),
+        ("⚡", "Pokemon All Seasons & Movies", "https://t.me/poketmonster_01"),
+    ]
+
+    def card(icon, name, url, stopped=False):
+        badge = '<span class="stopped">STOPPED</span>' if stopped else ""
+        return f"""
+        <a class="channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">
+          <span class="icon">{icon}</span>
+          <span class="name">{html.escape(name)}</span>
+          {badge}
+          <span class="arrow">↗</span>
+        </a>
+        """
+
+    current_html = "".join(card(*item) for item in channels)
+    completed_html = "".join(card(*item) for item in completed)
+
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080b16">
+<meta name="description" content="AniToon's official channel list and AniToons File Intelligence.">
+<title>⛩ AniToon's List ⛩</title>
+<style>
+:root {{
+  color-scheme: dark;
+  --bg:#070a12;
+  --panel:#0f1422;
+  --panel2:#12192a;
+  --border:rgba(255,255,255,.09);
+  --text:#f6f7fb;
+  --muted:#98a3b8;
+  --accent:#f5c76a;
+  --accent2:#8b5cf6;
+  --danger:#ff8a8a;
+}}
+* {{ box-sizing:border-box; }}
+html {{ scroll-behavior:smooth; }}
+body {{
+  margin:0;
+  min-height:100vh;
+  background:
+    radial-gradient(800px 420px at 50% -10%, rgba(139,92,246,.18), transparent 65%),
+    radial-gradient(700px 360px at 100% 20%, rgba(245,199,106,.10), transparent 70%),
+    var(--bg);
+  color:var(--text);
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}}
+.wrap {{ max-width:900px; margin:auto; padding:18px 14px 50px; }}
+.hero {{
+  position:relative;
+  text-align:center;
+  padding:28px 18px 22px;
+  border:1px solid var(--border);
+  border-radius:24px;
+  background:linear-gradient(145deg,rgba(19,24,38,.96),rgba(10,14,25,.92));
+  box-shadow:0 20px 70px rgba(0,0,0,.35);
+  overflow:hidden;
+}}
+.hero:after {{
+  content:"";
+  position:absolute; inset:auto 8% -40px;
+  height:90px;
+  background:radial-gradient(circle,rgba(245,199,106,.12),transparent 70%);
+  pointer-events:none;
+}}
+.kicker {{
+  color:var(--accent);
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+}}
+h1 {{
+  margin:8px 0 5px;
+  font-size:clamp(26px,6vw,42px);
+  line-height:1.08;
+}}
+.subtitle {{ color:var(--muted); font-size:13px; }}
+.quick {{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  margin-top:16px;
+}}
+.quick a {{
+  text-decoration:none;
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:15px;
+  padding:12px 10px;
+  background:rgba(255,255,255,.035);
+  font-weight:700;
+  font-size:12px;
+}}
+.quick a:hover,.channel:hover {{ transform:translateY(-1px); background:rgba(255,255,255,.06); }}
+.section {{ margin-top:16px; }}
+.section-title {{
+  display:flex; align-items:center; gap:10px;
+  padding:14px 2px 10px;
+  font-size:17px; font-weight:850;
+}}
+.line {{
+  height:1px; flex:1;
+  background:linear-gradient(90deg,rgba(255,255,255,.16),transparent);
+}}
+.list {{ display:grid; gap:9px; }}
+.channel {{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  text-decoration:none;
+  color:var(--text);
+  min-height:58px;
+  padding:12px 13px;
+  border-radius:16px;
+  border:1px solid var(--border);
+  background:linear-gradient(135deg,rgba(18,25,42,.92),rgba(12,17,29,.92));
+  transition:.15s ease;
+}}
+.icon {{
+  width:36px; height:36px; flex:0 0 auto;
+  display:grid; place-items:center;
+  border-radius:12px;
+  background:rgba(245,199,106,.08);
+  border:1px solid rgba(245,199,106,.12);
+  font-size:18px;
+}}
+.name {{ flex:1; min-width:0; font-weight:700; line-height:1.3; }}
+.stopped {{
+  font-size:9px; font-weight:900; letter-spacing:.08em;
+  color:var(--danger);
+  border:1px solid rgba(255,138,138,.20);
+  background:rgba(255,138,138,.07);
+  padding:4px 7px;
+  border-radius:999px;
+}}
+.arrow {{ color:var(--muted); font-size:18px; }}
+.info-grid {{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}}
+.info-card {{
+  display:block;
+  padding:15px;
+  border:1px solid var(--border);
+  border-radius:16px;
+  color:var(--text);
+  text-decoration:none;
+  background:var(--panel);
+}}
+.info-card b {{ display:block; margin-bottom:3px; }}
+.info-card span {{ color:var(--muted); font-size:12px; }}
+.footer {{
+  text-align:center;
+  margin-top:24px;
+  color:var(--muted);
+  font-size:11px;
+}}
+.footer a {{ color:var(--accent); text-decoration:none; }}
+@media(max-width:650px) {{
+  .quick,.info-grid {{ grid-template-columns:1fr; }}
+  .wrap {{ padding-left:10px; padding-right:10px; }}
+}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="kicker">AniToon's</div>
+    <h1>⛩ AniToon's List ⛩</h1>
+    <div class="subtitle">Official channels, groups and social links</div>
+    <div class="quick">
+      <a href="/health">💚 Bot Status</a>
+      <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open Bot</a>
+      <a href="/report/">🔬 File Intelligence</a>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="section-title"><span>📡 Active Channels</span><span class="line"></span></div>
+    <div class="list">{current_html}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><span>✅ Completed Channels of Us</span><span class="line"></span></div>
+    <div class="list">{completed_html}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><span>👥 Community & Support</span><span class="line"></span></div>
+    <div class="info-grid">
+      <a class="info-card" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">
+        <b>👉 Main Group Chats</b><span>AniToon's Group ↗</span>
+      </a>
+      <a class="info-card" href="https://t.me/Anitoon_edit" target="_blank" rel="noopener noreferrer">
+        <b>👉 BackUp Channel</b><span>@Anitoon_edit ↗</span>
+      </a>
+      <a class="info-card" href="https://t.me/Anitoon_edit/155?single" target="_blank" rel="noopener noreferrer">
+        <b>👉 Tutorial To Clear Ads</b><span>Watch Video ↗</span>
+      </a>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-title"><span>↗️ Follow Us</span><span class="line"></span></div>
+    <div class="info-grid">
+      <a class="info-card" href="https://www.instagram.com/ani_toon_edits?igsh=Y2syejF5bG1wN3ps" target="_blank" rel="noopener noreferrer">
+        <b>Instagram</b><span>@ani_toon_edits ↗</span>
+      </a>
+      <a class="info-card" href="https://youtube.com/@teluguanitoons-a?si=HMMXIAjTbwgyKSZk" target="_blank" rel="noopener noreferrer">
+        <b>YouTube</b><span>Telugu AniToons ↗</span>
+      </a>
+    </div>
+  </section>
+
+  <div class="footer">
+    ⛩ AniToon's • <a href="/health">System status</a>
+  </div>
+</div>
+</body>
+</html>"""
+    return document.encode("utf-8")
+
 def web_page(report: Report) -> bytes:
     filename = html.escape(report.filename)
     generated = datetime.now(timezone.utc)
@@ -1048,12 +1290,9 @@ async def health_server():
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"200 OK"
 
-            elif path == "/":
-                body = (
-                    b"AniToons File Intelligence Bot is running. "
-                    b"Use /health or open a scan report link from Telegram."
-                )
-                head = b"Content-Type: text/plain; charset=utf-8\r\n"
+            elif path == "/" or path == "":
+                body = home_page()
+                head = b"Content-Type: text/html; charset=utf-8\r\n"
                 code = b"200 OK"
 
             else:
