@@ -2,8 +2,11 @@ services:
   - type: web
     name: anitoons-1bot
     runtime: python
+    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python file_bot.py
+    startCommand: python bot.py
+    autoDeployTrigger: commit
+    healthCheckPath: /health
     envVars:
       - key: API_ID
         sync: false
@@ -12,8 +15,10 @@ services:
       - key: BOT_TOKEN
         sync: false
       - key: FILE_CHECKER_PRIVATE_ONLY
-        value: "1"
+        value: "0"
       - key: FILE_PROBE_BYTES
         value: "2097152"
       - key: FILE_PROBE_CHUNK_BYTES
         value: "262144"
+      - key: MAX_CONCURRENT_CHECKS
+        value: "3"
