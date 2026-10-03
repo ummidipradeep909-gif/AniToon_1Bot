@@ -333,13 +333,8 @@ async def analyze(event) -> None:
         created_at=time.monotonic(),
     )
 
-    filename = safe_filename(event.message)
-    label = (
-        f"📄 <b>{html.escape(filename[:120])}</b>\n"
-        "📥 <b>Metadata</b>"
-    )
     await event.reply(
-        label,
+        "📥 <b>Download Metadata</b>",
         parse_mode="html",
         buttons=metadata_button(token),
     )
