@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from typing import Any
 
 from dotenv import load_dotenv
-from telethon import Button, TelegramClient, errors, events
+from telethon import Button, TelegramClient, errors, events, functions, types
 
 from file_inspector import Report, format_report, format_section
 from media_probe import (
@@ -78,6 +78,7 @@ class ScanState:
 class PendingScan:
     source_message: Any
     created_at: float
+    user_id: int | None = None
     busy: bool = False
 
 
@@ -88,24 +89,34 @@ active_scans: dict[str, asyncio.Task] = {}
 
 HELP_TEXT = (
     "🔬 <b>AniToons File Intelligence</b>\n\n"
-    "Send a video or Telegram document and I will inspect its media metadata.\n\n"
-    "<b>Audio</b> — track name, language, codec, channels, sample rate and flags when stored.\n"
-    "<b>Subtitles</b> — track name, language, codec, default/forced and accessibility flags when stored.\n"
-    "<b>Video</b> — codec, resolution and track metadata when available.\n"
-    "<b>Container</b> — runtime, title and estimated average bitrate.\n\n"
-    "🌐 After the scan, I send one button that opens the complete file-information page in your browser.\n\n"
-    "🛡️ <b>Large-file safety:</b> the scanner uses bounded byte-range reads and does not intentionally download the complete large file."
+    "Send a video or Telegram document and inspect its media metadata.\n\n"
+    "🔊 Audio, 💬 subtitles, 🎬 video and ⚙️ container details are available in the web report.\n\n"
+    "<b>Commands</b>\n"
+    "/start — Open the bot\n"
+    "/help — Show help\n"
+    "/about — About AniToons\n"
+    "/addtogroup — Add the bot to a group\n"
+    "/clone — Open the linked clone bot\n"
+    "/cancel — Cancel your running scan\n\n"
+    "🛡️ Scans use bounded byte-range reads and do not intentionally download the complete large file."
+)
+
+ABOUT_TEXT = (
+    "⛩ <b>AniToons Bot</b> ⛩\n\n"
+    "File metadata inspection for Telegram media.\n"
+    "Detailed metadata is shown on the web report after a scan.\n\n"
+    "🌐 Web: " + PUBLIC_WEB_URL
 )
 
 
 def main_buttons():
-    return [
-        [
-            Button.inline("📖 Help", b"home:help"),
-            Button.inline("📊 Status", b"home:status"),
-        ],
-        [Button.inline("🛡️ Scan policy", b"home:policy")],
+    buttons = [
+        [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
+        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
     ]
+    if CLONE_BOT_USERNAME:
+        buttons.append([Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+    return buttons
 
 
 def web_report_button(token: str):
@@ -396,9 +407,12 @@ async def analyze(event) -> None:
     purge_pending_scans()
 
     token = secrets.token_urlsafe(18)
+    sender = await event.get_sender()
+    sender_id = getattr(sender, "id", None)
     pending_scans[token] = PendingScan(
         source_message=event.message,
         created_at=time.monotonic(),
+        user_id=int(sender_id) if sender_id is not None else None,
     )
 
     await event.reply(
@@ -408,14 +422,64 @@ async def analyze(event) -> None:
     )
 
 
+async def cancel_user_scan(user_id: int) -> bool:
+    for token, pending in list(pending_scans.items()):
+        if pending.user_id == user_id:
+            pending_scans.pop(token, None)
+            return True
+
+    for token, task in list(active_scans.items()):
+        pending = getattr(task, "scan_user_id", None)
+        if pending == user_id:
+            task.cancel()
+            return True
+
+    return False
+
+
 async def handle_new_message(event):
-    text = (event.raw_text or "").strip().lower()
-    if text in {"/start", "/help"}:
+    text = (event.raw_text or "").strip()
+    command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
+
+    if command in {"/start", "/help"}:
+        await event.reply(HELP_TEXT, parse_mode="html", buttons=main_buttons())
+        return
+
+    if command == "/about":
+        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=main_buttons())
+        return
+
+    if command == "/addtogroup":
         await event.reply(
-            HELP_TEXT,
+            "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
-            buttons=main_buttons(),
+            buttons=[[Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")]],
         )
+        return
+
+    if command == "/clone":
+        if CLONE_BOT_USERNAME:
+            await event.reply(
+                "🤖 <b>AniToon Clone Bot</b>\n\n"
+                "Open the linked clone bot below.",
+                parse_mode="html",
+                buttons=[[Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")]],
+            )
+        else:
+            await event.reply(
+                "🤖 <b>Clone Bot</b>\n\n"
+                "The linked clone bot is not configured yet.",
+                parse_mode="html",
+                buttons=main_buttons(),
+            )
+        return
+
+    if command == "/cancel":
+        user_id = getattr(getattr(event, "sender", None), "id", None)
+        if user_id is not None and await cancel_user_scan(int(user_id)):
+            await event.reply("❌ Your metadata scan has been cancelled.")
+        else:
+            await event.reply("ℹ️ You do not have a running metadata scan.")
         return
 
     if not is_checkable_message(event):
@@ -430,11 +494,12 @@ async def handle_callback(event):
 
     if data == "home:help":
         await event.answer()
-        await event.edit(
-            HELP_TEXT,
-            parse_mode="html",
-            buttons=main_buttons(),
-        )
+        await event.edit(HELP_TEXT, parse_mode="html", buttons=main_buttons())
+        return
+
+    if data == "home:about":
+        await event.answer()
+        await event.edit(ABOUT_TEXT, parse_mode="html", buttons=main_buttons())
         return
 
     if data == "home:policy":
@@ -450,30 +515,6 @@ async def handle_callback(event):
             "• Browser report link stays valid for 5 minutes or until the service restarts.",
             parse_mode="html",
             buttons=[[Button.inline("⬅️ Back", b"home:back")]],
-        )
-        return
-
-    if data == "home:status":
-        uptime = datetime.now(timezone.utc) - started_at
-        await event.answer()
-        await event.edit(
-            "📊 <b>BOT STATUS</b>\n\n"
-            f"🟢 Telegram: <b>{'connected' if bot.is_connected() else 'disconnected'}</b>\n"
-            f"⏱ Uptime: <code>{str(uptime).split('.')[0]}</code>\n"
-            f"📦 Scans: <code>{checks_total}</code>\n"
-            f"✅ Successful: <code>{checks_ok}</code>\n"
-            f"❌ Failed: <code>{checks_failed}</code>",
-            parse_mode="html",
-            buttons=[[Button.inline("⬅️ Back", b"home:back")]],
-        )
-        return
-
-    if data == "home:back":
-        await event.answer()
-        await event.edit(
-            HELP_TEXT,
-            parse_mode="html",
-            buttons=main_buttons(),
         )
         return
 
@@ -509,6 +550,7 @@ async def handle_callback(event):
                 token,
             )
         )
+        task.scan_user_id = pending.user_id
         active_scans[token] = task
         return
 
@@ -527,21 +569,6 @@ async def handle_callback(event):
     await event.answer()
 
 
-async def handle_ping(event):
-    text = (event.raw_text or "").strip().lower()
-    if text not in {"/ping", "/status"}:
-        return
-
-    uptime = datetime.now(timezone.utc) - started_at
-    await event.reply(
-        "🟢 <b>AniToons File Intelligence is online</b>\n"
-        f"⏱ Uptime: <code>{str(uptime).split('.')[0]}</code>\n"
-        f"📦 Scans: <code>{checks_total}</code>\n"
-        f"✅ Successful: <code>{checks_ok}</code>\n"
-        f"❌ Failed: <code>{checks_failed}</code>",
-        parse_mode="html",
-        buttons=main_buttons(),
-    )
 
 
 def web_section(report: Report, section: str) -> str:
@@ -1350,11 +1377,6 @@ async def main():
         handle_callback,
         events.CallbackQuery,
     )
-    bot.add_event_handler(
-        handle_ping,
-        events.NewMessage(incoming=True),
-    )
-
     health = await health_server()
 
     try:
@@ -1369,6 +1391,19 @@ async def main():
                     wait_seconds,
                 )
                 await asyncio.sleep(wait_seconds)
+
+        await bot(functions.bots.SetBotCommandsRequest(
+            scope=types.BotCommandScopeDefault(),
+            lang_code="en",
+            commands=[
+                types.BotCommand(command="start", description="Open the bot"),
+                types.BotCommand(command="help", description="Show help"),
+                types.BotCommand(command="about", description="About AniToons"),
+                types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+                types.BotCommand(command="clone", description="Open the linked clone bot"),
+                types.BotCommand(command="cancel", description="Cancel your running scan"),
+            ],
+        ))
 
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
