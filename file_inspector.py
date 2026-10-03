@@ -397,15 +397,11 @@ def mkv_info(data: bytes, report: Report) -> None:
             if item["type"] == "subtitles":
                 report.subtitles.append(item)
             elif item["type"] == "audio":
-                report.audio.setdefault("embedded_tracks", "")
-                report.audio["embedded_tracks"] += (
-                    ", " if report.audio["embedded_tracks"] else ""
-                ) + " / ".join(item.values())
+                report.audio.setdefault("tracks", [])
+                report.audio["tracks"].append(item)
             elif item["type"] == "video":
-                report.video.setdefault("embedded_tracks", "")
-                report.video["embedded_tracks"] += (
-                    ", " if report.video["embedded_tracks"] else ""
-                ) + " / ".join(item.values())
+                report.video.setdefault("tracks", [])
+                report.video["tracks"].append(item)
         pos = data.find(marker, end)
 
 
@@ -510,6 +506,8 @@ def build_report(
 
     if kind == "mkv":
         mkv_info(sample, report)
+        if not report.audio.get("tracks") and not report.subtitles:
+            mkv_info(sample, report)
         if not report.audio.get("tracks") and not report.subtitles:
             mkv_codec_hints(sample, report)
     elif kind == "png":
