@@ -579,8 +579,7 @@ def format_report(report: Report) -> str:
     if report.audio:
         out += ["", "🔊 AUDIO"]
         tracks = report.audio.get("tracks")
-        for key, value in lines_dict(report.audio):
-            out.append(f"{key}: {value}")
+        out += lines_dict(report.audio)
         if isinstance(tracks, list) and tracks:
             out += ["", "🎵 AUDIO TRACKS"]
             for index, track in enumerate(tracks, 1):
