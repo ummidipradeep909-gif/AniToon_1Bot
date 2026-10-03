@@ -436,12 +436,10 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
                                 extra,
                             )
                             if extra_data:
-                                parts.append(
-                                    ProbePiece(
-                                        off+len(x),
-                                        extra_data,
-                                        element_label,
-                                    )
+                                parts[-1]=ProbePiece(
+                                    off,
+                                    x+extra_data,
+                                    f"{label} + continuation",
                                 )
                                 used+=len(extra_data)
 
