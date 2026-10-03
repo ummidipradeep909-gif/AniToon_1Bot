@@ -9,14 +9,14 @@ services:
         sync: false
       - key: API_HASH
         sync: false
-      - key: MONGODB
-        sync: false
       - key: OWNER_ID
         sync: false
       - key: BOT_TOKEN
         sync: false
       - key: USER_SESSION
         sync: false
+      - key: DB_PATH
+        value: data/bot.sqlite3
       - key: FILE_CHECKER_ENABLED
         value: "1"
       - key: FILE_CHECKER_PRIVATE_ONLY
