@@ -405,6 +405,139 @@ def mkv_info(data: bytes, report: Report) -> None:
         pos = data.find(marker, end)
 
 
+def _friendly_language(code: str | None) -> str | None:
+    names = {
+        "eng": "English", "jpn": "Japanese", "hin": "Hindi",
+        "tel": "Telugu", "tam": "Tamil", "mal": "Malayalam",
+        "kan": "Kannada", "kor": "Korean", "zho": "Chinese",
+        "chi": "Chinese", "spa": "Spanish", "fra": "French",
+        "fre": "French", "deu": "German", "ger": "German",
+        "ita": "Italian", "rus": "Russian", "ara": "Arabic",
+        "por": "Portuguese", "und": "Undetermined",
+    }
+    return names.get((code or "").lower())
+
+def _read_ebml_element(data: bytes, pos: int) -> tuple[int, int, int] | None:
+    if pos >= len(data):
+        return None
+    first = data[pos]
+    mask = 0x80
+    id_len = 1
+    while id_len <= 4 and not (first & mask):
+        mask >>= 1
+        id_len += 1
+    if id_len > 4 or pos + id_len >= len(data):
+        return None
+    element_id = int.from_bytes(data[pos:pos + id_len], "big")
+    size_info = _vint(data, pos + id_len)
+    if not size_info:
+        return None
+    size, size_len = size_info
+    start = pos + id_len + size_len
+    end = min(len(data), start + size)
+    return element_id, start, end
+
+def _discover_mkv_tracks(data: bytes, report: Report) -> None:
+    # TrackEntry parsing fallback. It searches only inside the already-read sample.
+    codec_markers = [
+        (b"A_AAC", "AAC", "audio"),
+        (b"A_AC3", "AC-3", "audio"),
+        (b"A_EAC3", "E-AC-3", "audio"),
+        (b"A_OPUS", "Opus", "audio"),
+        (b"A_FLAC", "FLAC", "audio"),
+        (b"A_MPEG/L3", "MP3", "audio"),
+        (b"A_VORBIS", "Vorbis", "audio"),
+        (b"V_MPEG4/ISO/AVC", "H.264", "video"),
+        (b"V_MPEGH/ISO/HEVC", "H.265/HEVC", "video"),
+        (b"V_AV1", "AV1", "video"),
+        (b"S_TEXT/UTF8", "SubRip/UTF-8", "subtitles"),
+        (b"S_TEXT/ASS", "ASS", "subtitles"),
+        (b"S_TEXT/SSA", "SSA", "subtitles"),
+        (b"S_HDMV/PGS", "PGS", "subtitles"),
+        (b"S_VOBSUB", "VobSub", "subtitles"),
+    ]
+    seen = set()
+    for marker_bytes, codec_hint, kind in codec_markers:
+        start_at = 0
+        while True:
+            hit = data.find(marker_bytes, start_at)
+            if hit < 0:
+                break
+            start_at = hit + len(marker_bytes)
+            # Search backwards for a plausible TrackEntry ID (0xAE).
+            entry = data.rfind(b"\xAE", max(0, hit - 8192), hit + 1)
+            if entry < 0 or entry in seen:
+                continue
+            element = _read_ebml_element(data, entry)
+            if not element:
+                continue
+            _, track_start, track_end = element
+            if track_start >= track_end:
+                continue
+            track_type = kind
+            name = language = codec = codec_name = None
+            default = forced = None
+            pos = track_start
+            while pos < track_end:
+                child = _read_ebml_element(data, pos)
+                if not child:
+                    break
+                child_id, child_start, child_end = child
+                payload = data[child_start:child_end]
+                if child_id == 0x83 and payload:
+                    raw = int.from_bytes(payload, "big")
+                    track_type = {1: "video", 2: "audio", 17: "subtitles"}.get(raw, track_type)
+                elif child_id == 0x53AE:
+                    name = payload.decode("utf-8", "replace").strip("\x00 \t\r\n")
+                elif child_id == 0x22B59C:
+                    language = payload.decode("ascii", "replace").strip("\x00 \t\r\n")
+                elif child_id == 0x86:
+                    codec = payload.decode("utf-8", "replace").strip("\x00 \t\r\n")
+                elif child_id == 0x258688:
+                    codec_name = payload.decode("utf-8", "replace").strip("\x00 \t\r\n")
+                elif child_id == 0x88:
+                    default = bool(int.from_bytes(payload, "big")) if payload else None
+                elif child_id == 0x55AA:
+                    forced = bool(int.from_bytes(payload, "big")) if payload else None
+                if child_end <= pos:
+                    break
+                pos = child_end
+            seen.add(entry)
+            if track_type not in {"audio", "video", "subtitles"}:
+                continue
+            item = {"type": track_type, "codec": codec or codec_hint}
+            if name:
+                item["name"] = name
+            if language:
+                item["language"] = language
+                friendly = _friendly_language(language)
+                if friendly:
+                    item["language_name"] = friendly
+            if codec_name:
+                item["codec_name"] = codec_name
+            if default is not None:
+                item["default"] = "yes" if default else "no"
+            if forced is not None:
+                item["forced"] = "yes" if forced else "no"
+            if track_type == "audio":
+                report.audio.setdefault("tracks", [])
+                report.audio["tracks"].append(item)
+            elif track_type == "subtitles":
+                report.subtitles.append(item)
+            elif track_type == "video":
+                report.video.setdefault("tracks", [])
+                report.video["tracks"].append(item)
+    # Build an AI-style human name only when the file does not contain TrackName.
+    for track in report.audio.get("tracks", []) if isinstance(report.audio.get("tracks"), list) else []:
+        if not track.get("name"):
+            lang_name = track.get("language_name")
+            track["name"] = lang_name or track.get("codec_name") or track.get("codec") or "Unnamed audio track"
+            track["name_source"] = "inferred from language/codec"
+    for track in report.subtitles:
+        if not track.get("name"):
+            lang_name = _friendly_language(track.get("language"))
+            track["name"] = lang_name or track.get("codec_name") or track.get("codec") or track.get("format") or "Unnamed subtitle track"
+            track["name_source"] = "inferred from language/format"
 def mkv_codec_hints(data: bytes, report: Report) -> None:
     # Fast hints for common Matroska audio/subtitle codecs inside the sampled bytes.
     audio_codes = [
@@ -586,9 +719,11 @@ def format_report(report: Report) -> str:
                 display = track.get("name") or track.get("language") or track.get("codec") or "Unnamed audio"
                 out.append(f" {index}. {display}")
                 out.append(f"    Name: {track.get('name') or 'Not specified'}")
-                for key in ("language", "codec", "default", "forced"):
+                for key in ("language", "language_name", "codec", "default", "forced"):
                     if track.get(key):
-                        out.append(f"    {key.title()}: {track[key]}")
+                        out.append(f"    {key.replace('_', ' ').title()}: {track[key]}")
+                if track.get("name_source"):
+                    out.append(f"    Name Source: {track['name_source']}")
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
         out += ["", "🔊 AUDIO", "No audio metadata detected in the sampled file data."]
     if report.subtitles:
