@@ -249,11 +249,32 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
 
 
 def status_text(filename: str, line: str) -> str:
+    low = line.lower()
+
+    if "stage 1/4" in low:
+        pct = 15
+    elif "stage 2/4" in low:
+        pct = 35
+    elif "stage 3/4" in low:
+        pct = 70
+    elif "stage 4/4" in low:
+        pct = 92
+    else:
+        pct = 50
+
+    filled = pct // 10
+    bar = "█" * filled + "░" * (10 - filled)
+
+    clean = line
+    for prefix in ("🧭 ", "🎯 ", "🔎 ", "🧩 "):
+        clean = clean.replace(prefix, "")
+    if "•" in clean:
+        clean = clean.split("•", 1)[1].strip()
+
     return (
-        "🔬 <b>AniToons File Intelligence</b>\n\n"
-        f"📄 <code>{html.escape(filename[:120])}</code>\n"
-        f"{line}\n\n"
-        "🛡️ Bounded byte-range scan • no complete large-file download"
+        "🔎 <b>SCANNING METADATA</b>\n\n"
+        f"<code>[{bar}] {pct}%</code>\n"
+        f"{html.escape(clean)}"
     )
 
 
