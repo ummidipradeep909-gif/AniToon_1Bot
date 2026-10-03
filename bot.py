@@ -650,7 +650,7 @@ h1 {{
 .subtitle {{ color:var(--muted); font-size:13px; }}
 .quick {{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(2,minmax(0,1fr));
   gap:10px;
   margin-top:16px;
 }}
@@ -745,7 +745,6 @@ h1 {{
     <div class="quick">
       <a href="/health">💚 Bot Status</a>
       <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open Bot</a>
-      <a href="/report/">🔬 File Intelligence</a>
     </div>
   </header>
 
@@ -1002,6 +1001,11 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
 </style>
 </head>
 <body>
+<div class="wrap">
+  <nav class="site-nav" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:rgba(15,20,34,.88);">
+    <a href="/" style="color:var(--text);text-decoration:none;font-weight:850;">⛩ AniToon's List ⛩</a>
+    <a href="/" style="color:var(--accent);text-decoration:none;font-size:12px;font-weight:750;">Home ↗</a>
+  </nav>
 <div class="wrap">
   <header class="hero">
     <div class="logo">AniToons File Intelligence</div>
