@@ -3,7 +3,7 @@ services:
     name: anitoons-1bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    startCommand: python file_bot.py
     envVars:
       - key: API_ID
         sync: false
@@ -17,3 +17,13 @@ services:
         sync: false
       - key: USER_SESSION
         sync: false
+      - key: FILE_CHECKER_ENABLED
+        value: "1"
+      - key: FILE_CHECKER_PRIVATE_ONLY
+        value: "1"
+      - key: FILE_CHECKER_OWNER_ONLY
+        value: "0"
+      - key: FILE_PROBE_BYTES
+        value: "2097152"
+      - key: FILE_PROBE_CHUNK_BYTES
+        value: "262144"
