@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: anitoons-file-checker
+    name: anitoons-1bot
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: python file_bot.py
