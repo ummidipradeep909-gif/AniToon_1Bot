@@ -46,8 +46,8 @@ class Report:
     sample_hash: str = ""
     partial_only: bool = True
     notes: list[str] = field(default_factory=list)
-    video: dict[str, str] = field(default_factory=dict)
-    audio: dict[str, str] = field(default_factory=dict)
+    video: dict[str, Any] = field(default_factory=dict)
+    audio: dict[str, Any] = field(default_factory=dict)
     subtitles: list[dict[str, str]] = field(default_factory=list)
     image: dict[str, str] = field(default_factory=dict)
     container: dict[str, str] = field(default_factory=dict)
@@ -509,7 +509,9 @@ def build_report(
     report.detected, kind = magic(sample, filename, mime)
 
     if kind == "mkv":
-        mkv_codec_hints(sample, report)
+        mkv_info(sample, report)
+        if not report.audio.get("tracks") and not report.subtitles:
+            mkv_codec_hints(sample, report)
     elif kind == "png":
         png_info(sample, report)
     elif kind == "jpeg":
@@ -524,8 +526,6 @@ def build_report(
         mp3_info(sample, report)
     elif kind == "mp4":
         mp4_info(sample, report)
-    elif kind == "mkv":
-        mkv_info(sample, report)
 
     if report.ext in AUDIO_EXT and not report.audio:
         report.audio["format_hint"] = AUDIO_EXT[report.ext]
@@ -579,13 +579,19 @@ def format_report(report: Report) -> str:
     if report.video:
         out += ["", "🎬 VIDEO"] + lines_dict(report.video)
     if report.audio:
-        out += ["", "🔊 AUDIO"] + lines_dict(report.audio)
+        out += ["", "🔊 AUDIO"]
         tracks = report.audio.get("tracks")
+        for key, value in lines_dict(report.audio):
+            out.append(f"{key}: {value}")
         if isinstance(tracks, list) and tracks:
-            out += ["", "🎵 AUDIO TRACKS"] + [
-                " • " + " | ".join(f"{k.title()}: {v}" for k, v in track.items())
-                for track in tracks
-            ]
+            out += ["", "🎵 AUDIO TRACKS"]
+            for index, track in enumerate(tracks, 1):
+                display = track.get("name") or track.get("language") or track.get("codec") or "Unnamed audio"
+                out.append(f" {index}. {display}")
+                out.append(f"    Name: {track.get('name') or 'Not specified'}")
+                for key in ("language", "codec", "default", "forced"):
+                    if track.get(key):
+                        out.append(f"    {key.title()}: {track[key]}")
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
         out += ["", "🔊 AUDIO", "No audio metadata detected in the sampled file data."]
     if report.subtitles:
@@ -593,8 +599,16 @@ def format_report(report: Report) -> str:
             "",
             "💬 SUBTITLE TRACKS",
             *[
-                " • " + " | ".join(f"{k.title()}: {v}" for k, v in item.items())
-                for item in report.subtitles
+                (
+                    f" {index}. {item.get('name') or item.get('language') or item.get('format') or 'Unnamed subtitle'}"
+                    f"\n    Name: {item.get('name') or 'Not specified'}"
+                    + "".join(
+                        f"\n    {key.title()}: {item[key]}"
+                        for key in ("language", "codec", "default", "forced")
+                        if item.get(key)
+                    )
+                )
+                for index, item in enumerate(report.subtitles, 1)
             ],
         ]
     elif report.media_kind == "Video" or (report.mime and report.mime.startswith("video/")):
