@@ -9,8 +9,8 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-MAX_INITIAL_PROBE = 8 * 1024 * 1024
-MAX_DEEP_PROBE = 12 * 1024 * 1024
+MAX_INITIAL_PROBE = 4 * 1024 * 1024
+MAX_DEEP_PROBE = 8 * 1024 * 1024
 DEFAULT_CHUNK = 256 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
