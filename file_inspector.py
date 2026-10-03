@@ -286,22 +286,40 @@ def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
     if not total or used>=budget:
         return
 
-    # Bandwidth-safe fallback: after the initial probe, only inspect a few
-    # small windows around likely metadata locations. This keeps each scan
-    # bounded to the configured budget instead of walking through the video.
-    windows=[
-        (initial,1*1024*1024,"metadata window 8-9 MiB"),
-        (9*1024*1024,1*1024*1024,"metadata window 9-10 MiB"),
-        (10*1024*1024,1*1024*1024,"metadata window 10-11 MiB"),
-        (11*1024*1024,1*1024*1024,"metadata window 11-12 MiB"),
+    # Sparse, bandwidth-safe search across the file. We inspect only small
+    # metadata windows at likely positions instead of downloading the payload.
+    # SeekHead is attempted first; these windows are the fallback when no usable
+    # index is visible in the initial range.
+    preferred_mib = [
+        8, 12, 16, 24, 32, 48, 64, 96,
+        128, 160, 192, 224, 256, 288, 320,
     ]
-    for off,n,label in windows:
-        if off>=total or used>=budget:
+    window = 256 * 1024
+    seen = set()
+
+    for mib in preferred_mib:
+        off=mib*1024*1024
+        if off>=total:
             continue
-        n=min(n,budget-used,total-off)
+        off=max(initial,off)
+        if off in seen:
+            continue
+        seen.add(off)
+        n=min(window,budget-used,total-off)
+        if n<=0:
+            break
+        yield off,n,f"metadata window {mib} MiB"
+        used+=n
+        if used>=budget:
+            return
+
+    # Always give the tail a chance because some Matroska files keep a second
+    # SeekHead/metadata area close to the end.
+    tail=max(initial,total-window)
+    if tail not in seen and used<budget and tail<total:
+        n=min(window,budget-used,total-tail)
         if n>0:
-            yield off,n,label
-            used+=n
+            yield tail,n,"tail metadata window"
 
 async def _read_range(client,media,total,offset,n):
     chunk=min(probe_chunk(),n);out=io.BytesIO()
