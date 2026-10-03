@@ -292,7 +292,7 @@ async def handle_callback(event):
                 report = await run_scan(state.source_message, source_message, deep=True)
             state.report = report
             state.created_at = time.monotonic()
-            await event.edit(clip(format_report(report)), buttons=report_buttons())
+            await event.edit(clip(format_report(report)), parse_mode="html", buttons=report_buttons())
         except asyncio.TimeoutError:
             await event.edit(
                 "⏰ <b>Deep scan reached the 5-minute limit.</b>\n\n"
