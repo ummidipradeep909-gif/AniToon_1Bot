@@ -127,9 +127,14 @@ def compact_scan_result(report: Report) -> str:
     def names(items):
         values = []
         for item in items:
-            name = item.get("name") or item.get("display_name") or item.get("language_name") or item.get("codec_name")
-            if name and name not in values:
-                values.append(str(name))
+            name = (
+                item.get("name")
+                or item.get("display_name")
+                or item.get("language_name")
+                or item.get("codec_name")
+                or "Unnamed track"
+            )
+            values.append(str(name))
         return values
 
     audio_names = names(audio_tracks) if isinstance(audio_tracks, list) else []
