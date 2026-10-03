@@ -19,10 +19,12 @@ services:
       - key: FILE_PROBE_BYTES
         value: "8388608"
       - key: FILE_DEEP_PROBE_BYTES
-        value: "25165824"
+        value: "67108864"
       - key: FILE_PROBE_CHUNK_BYTES
         value: "262144"
       - key: MAX_CONCURRENT_CHECKS
         value: "2"
       - key: SCAN_TIMEOUT_SECONDS
         value: "300"
+      - key: PUBLIC_WEB_URL
+        value: "https://anitoons-1bot-oa44.onrender.com"
