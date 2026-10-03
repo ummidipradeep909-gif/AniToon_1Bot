@@ -552,7 +552,7 @@ def web_section(report: Report, section: str) -> str:
     return format_section(report, section).replace("\n", "<br>")
 
 
-def home_page() -> bytes:
+def home_page(report_token: str | None = None) -> bytes:
     channels = [
         ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1", False),
         ("🍿", "All Animes Channel", "https://t.me/anitoons_ani", False),
@@ -584,6 +584,15 @@ def home_page() -> bytes:
     current_html = "".join(card(*item) for item in channels)
     completed_html = "".join(card(*item) for item in completed)
 
+    report_embed = ""
+    if report_token:
+        report_embed = f"""<section class="section">
+    <div class="section-title"><span>🔬 File Metadata</span><span class="line"></span></div>
+    <div style="border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--panel)">
+      <iframe src="/report/{html.escape(report_token)}?embed=1" title="AniToons File Metadata" style="display:block;width:100%;height:1800px;border:0;background:#070b14"></iframe>
+    </div>
+  </section>"""
+    
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -747,6 +756,8 @@ h1 {{
       <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open Bot</a>
     </div>
   </header>
+
+  {report_embed}
 
   <section class="section">
     <div class="section-title"><span>📡 Active Channels</span><span class="line"></span></div>
@@ -1093,7 +1104,9 @@ async def health_server():
             first = raw.split(b"\r\n", 1)[0].decode("latin1", "replace")
             parts = first.split(" ", 2)
             target = parts[1] if len(parts) > 1 else "/"
-            path = urlsplit(target).path
+            parsed_url = urlsplit(target)
+            path = parsed_url.path
+            query = parsed_url.query
             purge_probes()
 
             if path.startswith("/probe/"):
@@ -1261,6 +1274,20 @@ async def health_server():
             elif path.startswith("/report/"):
                 _purge_states()
                 token = path[len("/report/"):].strip("/")
+
+                if query != "embed=1":
+                    state = web_states.get(token)
+                    if state:
+                        writer.write(
+                            b"HTTP/1.1 302 Found\r\n"
+                            + f"Location: /?report={token}\r\n".encode("utf-8")
+                            + b"Cache-Control: no-store\r\n"
+                            + b"Content-Length: 0\r\n"
+                            + b"Connection: close\r\n\r\n"
+                        )
+                        await writer.drain()
+                        return
+
                 state = web_states.get(token)
 
                 if not state:
@@ -1279,7 +1306,12 @@ async def health_server():
                     code = b"200 OK"
 
             elif path == "/" or path == "":
-                body = home_page()
+                report_token = None
+                for part in query.split("&"):
+                    if part.startswith("report="):
+                        report_token = part.split("=", 1)[1].strip()
+                        break
+                body = home_page(report_token=report_token)
                 head = b"Content-Type: text/html; charset=utf-8\r\n"
                 code = b"200 OK"
 
