@@ -131,80 +131,24 @@ def purge_pending_scans() -> None:
 
 def compact_scan_result(report: Report) -> str:
     audio_tracks = report.audio.get("tracks", [])
-    video_tracks = report.video.get("tracks", [])
-    subtitle_tracks = report.subtitles or []
 
-    def track_name(track: dict[str, Any]) -> str:
+    def audio_name(track: dict[str, Any]) -> str:
         return str(
             track.get("name")
             or track.get("display_name")
             or track.get("language_name")
             or track.get("codec_name")
-            or "Unnamed track"
+            or "Unnamed audio track"
         )
 
-    def stream_line(track: dict[str, Any]) -> str:
-        name = html.escape(track_name(track))
-        language = track.get("language_name") or track.get("language")
-        codec = track.get("codec_name") or track.get("codec")
-
-        bits = []
-        if language:
-            bits.append(html.escape(str(language)))
-        if codec:
-            bits.append(html.escape(str(codec)))
-        if track.get("channels"):
-            bits.append(f"{html.escape(str(track['channels']))}ch")
-        if track.get("sample_rate"):
-            bits.append(html.escape(str(track["sample_rate"])))
-
-        suffix = f" <i>({', '.join(bits)})</i>" if bits else ""
-        flags = []
-        if track.get("default") == "yes":
-            flags.append("Default")
-        if track.get("forced") == "yes":
-            flags.append("Forced")
-        if track.get("original") == "yes":
-            flags.append("Original")
-        if track.get("commentary") == "yes":
-            flags.append("Commentary")
-        if flags:
-            suffix += f" — {' / '.join(flags)}"
-
-        return f"• <b>{name}</b>{suffix}"
-
-    lines = ["✅ <b>FILE SCAN COMPLETE</b>", ""]
-    lines.append(f"📄 <b>{html.escape(report.filename)}</b>")
-
-    if report.container.get("runtime"):
-        lines.append(f"⏱ Runtime: <b>{html.escape(report.container['runtime'])}</b>")
-
-    if video_tracks:
-        lines += ["", f"🎬 <b>VIDEO ({len(video_tracks)})</b>"]
-        for track in video_tracks:
-            lines.append(stream_line(track))
-    else:
-        lines += ["", "🎬 <b>VIDEO</b>", "• Not detected"]
-
+    lines = ["✅ <b>AUDIO METADATA READY</b>", ""]
     if audio_tracks:
-        lines += ["", f"🔊 <b>AUDIO ({len(audio_tracks)})</b>"]
-        for track in audio_tracks:
-            lines.append(stream_line(track))
+        for index, track in enumerate(audio_tracks, 1):
+            lines.append(f"<b>{index}.</b> {html.escape(audio_name(track))}")
     else:
-        lines += ["", "🔊 <b>AUDIO</b>", "• Not detected in the safe metadata range"]
+        lines.append("No audio track names were detected.")
 
-    if subtitle_tracks:
-        lines += ["", f"💬 <b>SUBTITLES ({len(subtitle_tracks)})</b>"]
-        for track in subtitle_tracks:
-            lines.append(stream_line(track))
-    else:
-        lines += ["", "💬 <b>SUBTITLES</b>", "• Not detected in the safe metadata range"]
-
-    lines += [
-        "",
-        "🌐 <b>Open the advanced complete report:</b>",
-    ]
-    return clip("\n".join(lines), 3900)
+    return "\n".join(lines)
 
 
 def is_checkable_message(event) -> bool:
