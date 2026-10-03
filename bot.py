@@ -46,6 +46,8 @@ PUBLIC_WEB_URL = (
     .strip()
     .rstrip("/")
 )
+CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,7 +109,16 @@ def main_buttons():
 
 
 def web_report_button(token: str):
-    return [[Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]]
+    buttons = [
+        Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}"),
+    ]
+    row = [buttons[0]]
+    if CLONE_BOT_USERNAME:
+        row.append(Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}"))
+    return [
+        row,
+        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+    ]
 
 
 def metadata_button(token: str):
