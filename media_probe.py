@@ -5,8 +5,12 @@ import html
 import time
 from dataclasses import dataclass, field
 from typing import Any
+import io
+import asyncio
 
 import av
+
+from file_inspector import inspect_telegram_message
 
 from file_inspector import Report
 
@@ -133,6 +137,90 @@ class RangeProbeSession:
             if right > left:
                 out.extend(data[left - offset:right - offset])
         return bytes(out)
+
+
+
+class TelegramSeekableFile(io.RawIOBase):
+    """
+    File-like object for FFmpeg/PyAV.
+
+    FFmpeg is allowed to seek anywhere, but every read is converted into a
+    bounded Telegram byte-range request. No local complete file is created.
+    The asyncio event loop performs Telegram I/O while FFmpeg runs in a worker
+    thread.
+    """
+    def __init__(self, session: RangeProbeSession, loop: asyncio.AbstractEventLoop):
+        self.session = session
+        self.loop = loop
+        self.position = 0
+        self.closed_flag = False
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def writable(self):
+        return False
+
+    def tell(self):
+        return self.position
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        if self.closed_flag:
+            raise ValueError("I/O operation on closed media")
+        total = self.session.total
+
+        if whence == io.SEEK_SET:
+            target = offset
+        elif whence == io.SEEK_CUR:
+            target = self.position + offset
+        elif whence == io.SEEK_END:
+            if total is None:
+                raise OSError("SEEK_END requires known Telegram file size")
+            target = total + offset
+        else:
+            raise ValueError("invalid whence")
+
+        if target < 0:
+            raise OSError("negative seek position")
+
+        self.position = target
+        return self.position
+
+    def _read_sync(self, size):
+        future = asyncio.run_coroutine_threadsafe(
+            self.session.read(self.position, size),
+            self.loop,
+        )
+        try:
+            data = future.result(timeout=45)
+        except Exception as exc:
+            raise OSError(str(exc)) from exc
+        self.position += len(data)
+        return data
+
+    def read(self, size=-1):
+        if self.closed_flag:
+            raise ValueError("I/O operation on closed media")
+        if size is None or size < 0:
+            if self.session.total is None:
+                raise OSError("unbounded read is not allowed")
+            size = self.session.total - self.position
+        if size <= 0:
+            return b""
+        return self._read_sync(size)
+
+    def readinto(self, buffer):
+        data = self.read(len(buffer))
+        n = len(data)
+        buffer[:n] = data
+        return n
+
+    def close(self):
+        self.closed_flag = True
+        return super().close()
 
 
 probe_sessions: dict[str, RangeProbeSession] = {}
@@ -368,23 +456,24 @@ def _build_report(message: Any, container: Any, session: RangeProbeSession) -> R
     return report
 
 
-def _open_with_ffmpeg(url: str) -> Any:
-    # FFmpeg handles Matroska/MP4/WebM/MOV/TS and many other containers.
-    # Keep probing focused on metadata and stream headers.
+def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
+    # PyAV accepts seekable Python file-like objects. This removes the fragile
+    # HTTP-proxy behavior and lets FFmpeg issue real seek/read operations.
     options = {
-        "seekable": "1",
         "probesize": str(2 * 1024 * 1024),
         "analyzeduration": "3000000",
-        "multiple_requests": "1",
+        "fflags": "+genpts",
     }
 
-    container = av.open(
-        url,
-        mode="r",
-        options=options,
-        timeout=(8.0, 30.0),
-    )
-    # Touch streams so all stream headers and metadata are initialized.
+    kwargs = {
+        "mode": "r",
+        "options": options,
+        "buffer_size": 256 * 1024,
+    }
+    if format_hint:
+        kwargs["format"] = format_hint
+
+    container = av.open(reader, **kwargs)
     _ = list(container.streams)
     return container
 
@@ -404,35 +493,89 @@ async def inspect_telegram_player(
         raise ValueError("Message has no media")
 
     total = getattr(f, "size", None)
-    session = register_probe(token, client, media, total, budget=budget)
-    url = f"http://127.0.0.1:{port}/probe/{token}"
+    name = str(getattr(f, "name", None) or "")
+    mime = str(getattr(f, "mime_type", None) or "").lower()
+    is_mkv = name.lower().endswith((".mkv", ".webm")) or "matroska" in mime
 
     async def say(value: str):
         if progress:
             await progress(value)
 
-    try:
-        await say("🧭 Stage 1/4 • player engine opening the remote media stream…")
-
-        # av.open is synchronous. Run it off the Telegram event loop so the
-        # local /probe endpoint can continue serving its ranged reads.
-        container = await asyncio.to_thread(_open_with_ffmpeg, url)
-
+    # For Matroska/WebM, use the targeted EBML parser first. Matroska requires
+    # the first Info/Tracks metadata to be before the first Cluster or indexed
+    # by an early SeekHead, so this path avoids making FFmpeg walk video data.
+    if is_mkv:
         try:
-            await say("🎯 Stage 2/4 • FFmpeg locating every media stream…")
-            await say("🔎 Stage 3/4 • reading track names, languages and player flags…")
-            # Accessing metadata/streams is enough; do not decode any packets.
-            report = _build_report(message, container, session)
-            await say("🧩 Stage 4/4 • building the final audio/subtitle list…")
-        finally:
-            container.close()
-
-        if not report.audio.get("tracks") and not report.subtitles:
-            report.notes.append(
-                "FFmpeg did not expose track metadata within the bounded range budget."
+            await say("🧭 Stage 1/4 • reading Matroska stream metadata…")
+            report, used = await inspect_telegram_message(
+                client,
+                message,
+                progress=progress,
+                deep=True,
             )
+            real_audio = report.audio.get("tracks", [])
+            real_video = report.video.get("tracks", [])
+            real_subs = report.subtitles or []
+            if real_audio or real_video or real_subs or report.container.get("runtime"):
+                await say("🧩 Stage 4/4 • building the final player-style track list…")
+                return report
+        except Exception as exc:
+            # Continue to the player engine for containers that the targeted
+            # parser cannot resolve.
+            await say(f"🔄 Stage 2/4 • switching to player engine ({type(exc).__name__})…")
 
+    await say("🎬 Stage 2/4 • opening the seekable player engine…")
+    session = register_probe(token, client, media, total, budget=budget)
+    loop = asyncio.get_running_loop()
+    reader = TelegramSeekableFile(session, loop)
+
+    format_hint = None
+    lower_name = name.lower()
+    if lower_name.endswith(".mkv") or "matroska" in mime:
+        format_hint = "matroska"
+    elif lower_name.endswith(".webm") or "webm" in mime:
+        format_hint = "webm"
+    elif lower_name.endswith((".mp4", ".m4v", ".mov")) or "mp4" in mime:
+        format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
+
+    try:
+        container = None
+        try:
+            container = await asyncio.to_thread(
+                _open_with_ffmpeg,
+                reader,
+                format_hint,
+            )
+            await say("🔎 Stage 3/4 • reading every exposed audio/subtitle/video stream…")
+            report = _build_report(message, container, session)
+        finally:
+            if container is not None:
+                container.close()
+
+        await say("🧩 Stage 4/4 • assembling the complete stream list…")
         return report
 
+    except (ProbeBudgetExceeded, ProbeCancelled) as exc:
+        raise exc
+    except Exception as exc:
+        # Normalize FFmpeg's immediate-exit condition into a useful scanner
+        # error so it is not presented as an opaque ExitError.
+        if isinstance(exc, av.error.ExitError):
+            try:
+                fallback, _ = await inspect_telegram_message(
+                    client,
+                    message,
+                    progress=progress,
+                    deep=True,
+                )
+                fallback.notes.insert(
+                    0,
+                    "FFmpeg requested beyond the safe range budget; returned targeted container metadata instead.",
+                )
+                return fallback
+            except Exception:
+                pass
+        raise
     finally:
+        reader.close()
         remove_probe(token)
