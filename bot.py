@@ -34,6 +34,10 @@ logging.basicConfig(
 log = logging.getLogger("anitoons-file-checker")
 
 bot = TelegramClient("file_checker_bot", API_ID, API_HASH)
+# Telegram can temporarily rate-limit repeated bot authorization requests.
+# Telethon normally auto-sleeps only for shorter flood waits; raise the threshold
+# so a startup FloodWait does not kill the Render service.
+bot.flood_sleep_threshold = 15 * 60
 check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 started_at = datetime.now(timezone.utc)
 checks_total = 0
@@ -211,7 +215,20 @@ async def main():
 
     health = await health_server()
     try:
-        await bot.start(bot_token=BOT_TOKEN)
+        # Keep the process alive during temporary Telegram auth flood waits.
+        # This prevents Render from treating the service as crashed and restarting it.
+        while True:
+            try:
+                await bot.start(bot_token=BOT_TOKEN)
+                break
+            except errors.FloodWaitError as exc:
+                wait_seconds = max(1, int(exc.seconds) + 5)
+                log.warning(
+                    "Telegram authorization rate-limited; waiting %s seconds before retry",
+                    wait_seconds,
+                )
+                await asyncio.sleep(wait_seconds)
+
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
         log.info(
