@@ -73,6 +73,7 @@ class PendingScan:
 scan_states: dict[tuple[int, int], ScanState] = {}
 web_states: dict[str, ScanState] = {}
 pending_scans: dict[str, PendingScan] = {}
+active_scans: dict[str, asyncio.Task] = {}
 
 HELP_TEXT = (
     "🔬 <b>AniToons File Intelligence</b>\n\n"
@@ -102,6 +103,10 @@ def web_report_button(token: str):
 
 def metadata_button(token: str):
     return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
+
+
+def cancel_button(token: str):
+    return [[Button.inline("❌ Cancel Scan", f"cancel:{token}".encode("ascii"))]]
 
 
 def purge_pending_scans() -> None:
@@ -252,11 +257,21 @@ def status_text(filename: str, line: str) -> str:
     )
 
 
-async def run_scan(source_message: Any, status_message: Any, *, deep: bool) -> Report:
+async def run_scan(
+    source_message: Any,
+    status_message: Any,
+    *,
+    deep: bool,
+    scan_token: str | None = None,
+) -> Report:
     filename = safe_filename(source_message)
 
     async def progress(line: str):
-        await edit_status(status_message, status_text(filename, line))
+        await edit_status(
+            status_message,
+            status_text(filename, line),
+            buttons=cancel_button(scan_token) if scan_token else None,
+        )
 
     report, sampled = await asyncio.wait_for(
         inspect_telegram_message(
@@ -274,54 +289,77 @@ async def run_scan(source_message: Any, status_message: Any, *, deep: bool) -> R
     return report
 
 
-async def analyze_source(source_message: Any, status_message: Any) -> None:
+async def analyze_source(
+    source_message: Any,
+    status_message: Any,
+    scan_token: str,
+) -> None:
     global checks_total, checks_ok, checks_failed
     checks_total += 1
-
     filename = safe_filename(source_message)
 
-    async with check_semaphore:
-        try:
-            report = await run_scan(source_message, status_message, deep=True)
-            state = cache_state(status_message, source_message, report)
+    try:
+        async with check_semaphore:
+            report = await run_scan(
+                source_message,
+                status_message,
+                deep=True,
+                scan_token=scan_token,
+            )
 
+            state = cache_state(status_message, source_message, report)
             if state is None:
                 raise RuntimeError("Could not create web report link")
+
+            # Reuse the private random scan token for the browser report URL.
+            state.web_token = scan_token
+            web_states[scan_token] = state
 
             result = compact_scan_result(report)
             await edit_status(
                 status_message,
                 result,
-                buttons=web_report_button(state.web_token),
+                buttons=web_report_button(scan_token),
             )
             checks_ok += 1
 
-        except asyncio.TimeoutError:
-            checks_failed += 1
-            await edit_status(
-                status_message,
-                "⏰ <b>Metadata scan reached the 5-minute limit.</b>\n\n"
-                "The scanner stopped safely without downloading the complete file.",
-                buttons=main_buttons(),
-            )
+    except asyncio.CancelledError:
+        checks_failed += 1
+        await edit_status(
+            status_message,
+            "❌ <b>Metadata scan cancelled.</b>",
+            buttons=main_buttons(),
+        )
+        raise
 
-        except errors.FloodWaitError as exc:
-            checks_failed += 1
-            await edit_status(
-                status_message,
-                f"⏳ Telegram temporarily rate-limited this scan. Try again in {int(exc.seconds)} seconds.",
-                buttons=main_buttons(),
-            )
+    except asyncio.TimeoutError:
+        checks_failed += 1
+        await edit_status(
+            status_message,
+            "⏰ <b>Metadata scan reached the 5-minute limit.</b>",
+            buttons=main_buttons(),
+        )
 
-        except Exception as exc:
-            checks_failed += 1
-            log.exception("File metadata scan failed for %s", filename)
-            await edit_status(
-                status_message,
-                "❌ <b>Metadata scan failed.</b>\n\n"
-                f"<code>{html.escape(type(exc).__name__)}</code>",
-                buttons=main_buttons(),
-            )
+    except errors.FloodWaitError as exc:
+        checks_failed += 1
+        await edit_status(
+            status_message,
+            f"⏳ Telegram temporarily rate-limited this scan for {int(exc.seconds)} seconds.",
+            buttons=main_buttons(),
+        )
+
+    except Exception as exc:
+        checks_failed += 1
+        log.exception("File metadata scan failed for %s", filename)
+        await edit_status(
+            status_message,
+            "❌ <b>Metadata scan failed.</b>\n\n"
+            f"<code>{html.escape(type(exc).__name__)}</code>",
+            buttons=main_buttons(),
+        )
+
+    finally:
+        active_scans.pop(scan_token, None)
 
 
 async def analyze(event) -> None:
@@ -411,37 +449,49 @@ async def handle_callback(event):
 
     if data.startswith("scan:"):
         token = data[5:].strip()
-        pending = pending_scans.get(token)
+        pending = pending_scans.pop(token, None)
 
         if pending is None:
-            await event.answer(
-                "This metadata request expired. Send the file again.",
-                alert=True,
-            )
+            if token in active_scans:
+                await event.answer("Metadata scan is already running.", alert=True)
+            else:
+                await event.answer(
+                    "This metadata request expired. Send the file again.",
+                    alert=True,
+                )
             return
-
-        if pending.busy:
-            await event.answer(
-                "Metadata scan is already running.",
-                alert=True,
-            )
-            return
-
-        pending.busy = True
-        pending.created_at = time.monotonic()
-        pending_scans.pop(token, None)
 
         await event.answer("Metadata scan started…")
 
         status_message = await event.get_message()
         await edit_status(
             status_message,
-            status_text(
-                safe_filename(pending.source_message),
-                "⏳ Starting metadata scan…",
-            ),
+            "🔎 <b>SCANNING METADATA</b>\n\n"
+            "<code>[░░░░░░░░░░] 0%</code>\n"
+            "Starting scan…",
+            buttons=cancel_button(token),
         )
-        await analyze_source(pending.source_message, status_message)
+
+        task = asyncio.create_task(
+            analyze_source(
+                pending.source_message,
+                status_message,
+                token,
+            )
+        )
+        active_scans[token] = task
+        return
+
+    if data.startswith("cancel:"):
+        token = data[7:].strip()
+        task = active_scans.get(token)
+
+        if not task:
+            await event.answer("This scan is no longer running.", alert=True)
+            return
+
+        await event.answer("Cancelling scan…")
+        task.cancel()
         return
 
     await event.answer()
