@@ -66,21 +66,21 @@ def _ext(name:str)->str:
 
 def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     h=data[:64]
-    if h.startswith(b"\\x1aE\\xdf\\xa3"): return "Matroska/WebM container","mkv"
+    if h.startswith(b"\x1aE\xdf\xa3"): return "Matroska/WebM container","mkv"
     if len(data)>=12 and data[4:8]==b"ftyp": return "ISO-BMFF media","mp4"
     if h.startswith(b"fLaC"): return "FLAC audio","flac"
     if h.startswith(b"OggS"): return "Ogg container","ogg"
     if h.startswith(b"ID3"): return "MP3 audio (ID3)","mp3"
     if h.startswith(b"RIFF") and len(h)>=12 and h[8:12]==b"WAVE": return "WAV audio","wav"
     if h.startswith(b"%PDF-"): return "PDF document","pdf"
-    if h.startswith(b"PK\\x03\\x04"): return "ZIP archive","zip"
-    if h.startswith(b"\\x89PNG\\r\\n\\x1a\\n"): return "PNG image","png"
-    if h.startswith(b"\\xff\\xd8\\xff"): return "JPEG image","jpeg"
-    txt=data[:8192].decode("utf-8","replace").lstrip("\\ufeff \\t\\r\\n")
+    if h.startswith(b"PK\x03\x04"): return "ZIP archive","zip"
+    if h.startswith(b"\x89PNG\r\n\x1a\n"): return "PNG image","png"
+    if h.startswith(b"\xff\xd8\xff"): return "JPEG image","jpeg"
+    txt=data[:8192].decode("utf-8","replace").lstrip("\ufeff \t\r\n")
     if txt.startswith("WEBVTT"):return "WebVTT subtitle","vtt"
-    if "[Events]" in txt and re.search(r"^\\s*\\[Script Info\\]",txt,re.I|re.M):return "ASS/SSA subtitle","ass"
-    if re.search(r"<tt(?:\\s|>)",txt,re.I):return "TTML subtitle","ttml"
-    if re.search(r"\\d{2}:\\d{2}:\\d{2}[,.]\\d{3}\\s*-->\\s*",txt):return "SubRip subtitle","srt"
+    if "[Events]" in txt and re.search(r"^\s*\[Script Info\]",txt,re.I|re.M):return "ASS/SSA subtitle","ass"
+    if re.search(r"<tt(?:\s|>)",txt,re.I):return "TTML subtitle","ttml"
+    if re.search(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*",txt):return "SubRip subtitle","srt"
     return mime or "Binary file","binary"
 
 def _vint(data:bytes,pos:int):
@@ -112,7 +112,7 @@ def _children(data:bytes,start:int,end:int):
         if x[2]<=p:break
         p=x[2]
 
-def _text(data:bytes,s:int,e:int)->str:return data[s:e].decode("utf-8","replace").strip("\\x00 \\t\\r\\n")
+def _text(data:bytes,s:int,e:int)->str:return data[s:e].decode("utf-8","replace").strip("\x00 \t\r\n")
 def _flt(data:bytes,s:int,e:int):
     try:return struct.unpack(">f" if e-s==4 else ">d",data[s:e])[0] if e-s in (4,8) else None
     except struct.error:return None
@@ -124,14 +124,14 @@ def _fmtsec(sec:float|None)->str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 def _segment_start(data:bytes):
-    p=data.find(b"\\x18\\x53\\x80\\x67")
+    p=data.find(b"\x18\x53\x80\x67")
     if p<0:return None
     x=_elem(data,p); return (p,x[1]) if x else None
 
 def _seek_targets(data:bytes)->dict[int,int]:
     seg=_segment_start(data)
     if not seg:return {}
-    _,seg_start=seg; p=data.find(b"\\x11\\x4D\\x9B\\x74",seg_start)
+    _,seg_start=seg; p=data.find(b"\x11\x4D\x9B\x74",seg_start)
     if p<0:return {}
     x=_elem(data,p)
     if not x:return {}
@@ -197,7 +197,7 @@ def _merge(report:Report,track:dict[str,Any]):
     if not any((x.get("type"),x.get("track"),x.get("language"),x.get("name"),x.get("codec"))==key for x in bucket):bucket.append(track)
 
 def _tracks(data:bytes,report:Report):
-    p=data.find(b"\\x16\\x54\\xAE\\x6B"); total=0
+    p=data.find(b"\x16\x54\xAE\x6B"); total=0
     while p>=0:
         x=_elem(data,p)
         if not x:break
@@ -205,11 +205,11 @@ def _tracks(data:bytes,report:Report):
             if eid==0xAE:
                 t=_track(data,s,e)
                 if t:_merge(report,t);total+=1
-        p=data.find(b"\\x16\\x54\\xAE\\x6B",x[2])
+        p=data.find(b"\x16\x54\xAE\x6B",x[2])
     return total
 
 def _info(data:bytes,report:Report):
-    p=data.find(b"\\x15\\x49\\xA9\\x66")
+    p=data.find(b"\x15\x49\xA9\x66")
     while p>=0:
         x=_elem(data,p)
         if not x:break
@@ -222,7 +222,7 @@ def _info(data:bytes,report:Report):
         if dur is not None and dur>=0:
             sec=dur*scale/1_000_000_000; report.container["runtime"]=_fmtsec(sec); report.container["runtime_seconds"]=f"{sec:.3f}"
         if title:report.container["title"]=title
-        p=data.find(b"\\x15\\x49\\xA9\\x66",x[2])
+        p=data.find(b"\x15\x49\xA9\x66",x[2])
 
 def _generic(data:bytes,kind:str,report:Report):
     if kind=="flac" and len(data)>=42:
@@ -331,7 +331,7 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
         for off,n,label in _probe_ranges(total,budget,initial,targets):
             x,e=await _read_range(client,media,total,off,n)
             if x:parts.append(ProbePiece(off,x,label));used+=len(x)
-        if not any(b"\\x16\\x54\\xAE\\x6B" in p.data for p in parts) and total:
+        if not any(b"\x16\x54\xAE\x6B" in p.data for p in parts) and total:
             await say("🔎 Stage 3/3 • checking sparse metadata windows without downloading the file…")
             for frac in (0.25,0.50,0.75,0.95):
                 if used>=budget:break
@@ -340,7 +340,7 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
                 n=min(1*1024*1024,budget-used,max(1,total-off))
                 x,_=await _read_range(client,media,total,off,n)
                 if x:parts.append(ProbePiece(off,x,f"sparse window {int(frac*100)}%"));used+=len(x)
-                if any(b"\\x16\\x54\\xAE\\x6B" in p.data for p in parts):break
+                if any(b"\x16\x54\xAE\x6B" in p.data for p in parts):break
     await say("🧩 Final stage • assembling track names, languages, codecs and flags…")
     return _report(message,parts),used
 
@@ -360,7 +360,7 @@ def format_report(r:Report)->str:
     if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
     lines += ["",f"🧪 Sampled: {human(r.sampled)} across {len(r.probe_ranges)} targeted range(s)","🛡️ No complete large-file download"]
     if r.notes:lines += ["",f"ℹ️ {_safe(r.notes[0])}"]
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 def format_section(r:Report,section:str)->str:
     if section=="audio":
@@ -370,23 +370,23 @@ def format_section(r:Report,section:str)->str:
         else:
             lines.append("No audio TrackEntry was detected in the sampled metadata.")
             if r.audio.get("sample_codecs"):lines += ["",f"Codec marker(s): {_safe(r.audio['sample_codecs'])}"]
-        return "\\n".join(lines).strip()
+        return "\n".join(lines).strip()
     if section=="subs":
         lines=["💬 <b>SUBTITLE TRACKS</b>",""]
         if r.subtitles:
             for i,t in enumerate(r.subtitles,1):lines += _rows(t,i)+[""]
         else:lines.append("No subtitle TrackEntry was detected in the sampled metadata.")
-        return "\\n".join(lines).strip()
+        return "\n".join(lines).strip()
     if section=="video":
         tracks=r.video.get("tracks",[]);lines=["🎬 <b>VIDEO TRACKS</b>",""]
         if tracks:
             for i,t in enumerate(tracks,1):lines += _rows(t,i)+[""]
         else:lines.append("Video track metadata was not fully visible in the sampled ranges.")
-        return "\\n".join(lines).strip()
+        return "\n".join(lines).strip()
     if section=="technical":
         lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','unknown'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'unknown')}",f"Sampled: {human(r.sampled)}",f"Ranges: {len(r.probe_ranges)}"]
         if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
         if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
         if r.probe_ranges:lines += ["","Probe map:"]+[f"• {_safe(x)}" for x in r.probe_ranges]
-        return "\\n".join(lines)
+        return "\n".join(lines)
     return format_report(r)
