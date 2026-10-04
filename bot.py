@@ -1161,6 +1161,22 @@ async def handle_new_message(
     if not is_checkable_message(event):
         return
 
+    sender_id = getattr(getattr(event, "sender", None), "id", None)
+    if sender_id is not None:
+        now = time.monotonic()
+        last = last_scan_by_user.get(int(sender_id), 0.0)
+        if now - last < SCAN_COOLDOWN_SECONDS:
+            remaining = max(1, int(SCAN_COOLDOWN_SECONDS - (now - last)))
+            await event.reply(f"⏳ Please wait {remaining}s before starting another scan.")
+            return
+
+        active_for_user = sum(1 for uid in active_scan_users.values() if uid == int(sender_id))
+        if active_for_user >= MAX_ACTIVE_SCANS_PER_USER:
+            await event.reply("⏳ You already have a scan running. Please wait for it to finish.")
+            return
+
+        last_scan_by_user[int(sender_id)] = now
+
     await record_user(event)
     await analyze(
         event,
