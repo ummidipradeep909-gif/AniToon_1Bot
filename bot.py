@@ -3837,7 +3837,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 }})();
 </script>
 </body>
-</html>"""    return document.encode("utf-8")
+</html>"""
+    return document.encode("utf-8")
 
 
 async def health_server():
