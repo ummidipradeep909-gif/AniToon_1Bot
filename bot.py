@@ -494,14 +494,17 @@ def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True
     return buttons
 
 
-def help_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
+def help_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True, user_id: int | None = None):
     if include_clone:
-        return [
+        buttons = [
             [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
             [Button.inline("🧬 Create Clone", b"home:clone"), Button.inline("ℹ️ About", b"home:about")],
             [Button.inline("⬅️ Home", b"home:back")],
-            [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
         ]
+        if _owner_allowed(user_id):
+            buttons.insert(2, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
+        buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
+        return buttons
     return [
         [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("ℹ️ About", b"home:about")],
         [Button.inline("⬅️ Home", b"home:back")],
