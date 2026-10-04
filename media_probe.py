@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import html
+import io
 import time
 from dataclasses import dataclass, field
 from typing import Any
-import io
-import asyncio
 
 import av
 
@@ -354,11 +353,7 @@ def _stream_track(stream: Any) -> dict[str, Any]:
         "track": str(getattr(stream, "index", "")),
         "name": display_name,
         "display_name": display_name,
-        "name_source": (
-            "embedded track title" if title
-            else "embedded language" if language_name
-            else "FFmpeg codec name"
-        ),
+        "name_source": display_source,
         "language": language,
         "language_name": language_name,
         "codec": str(getattr(stream.codec_context, "name", "") or ""),
