@@ -244,6 +244,13 @@ def cache_state(
     return state
 
 
+def purge_pending_scans() -> None:
+    now = time.monotonic()
+    for token, pending in list(pending_scans.items()):
+        if now - pending.created_at > PENDING_SCAN_TTL_SECONDS:
+            pending_scans.pop(token, None)
+
+
 def _purge_states() -> None:
     now = time.monotonic()
     expired = [
