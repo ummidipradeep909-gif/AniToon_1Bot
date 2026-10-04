@@ -26,7 +26,15 @@ from media_probe import (
     inspect_telegram_player,
     purge_probes,
 )
-from mongo_store import record_clone_request, record_scan, record_user
+from mongo_store import (
+    get_user_clone,
+    list_user_clones,
+    mark_clone_removed,
+    record_clone_request,
+    record_scan,
+    record_user,
+    update_clone_stats,
+)
 
 load_dotenv()
 
@@ -101,6 +109,9 @@ class PendingScan:
 # Live clone bot clients. Each clone runs on this same asyncio event loop.
 clone_clients: dict[int, TelegramClient] = {}
 clone_owners: dict[int, int] = {}
+clone_usernames: dict[int, str] = {}
+clone_client_ids: dict[int, int] = {}
+clone_stats: dict[int, dict[str, Any]] = {}
 active_scan_clients: dict[str, Any] = {}
 
 
@@ -112,11 +123,236 @@ active_scan_users: dict[str, int | None] = {}
 clone_setup_pending: dict[int, float] = {}
 CLONE_SETUP_TTL_SECONDS = 5 * 60
 
+def _new_clone_stats() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    return {
+        "messages_received": 0,
+        "scans_started": 0,
+        "scans_completed": 0,
+        "scans_failed": 0,
+        "scans_cancelled": 0,
+        "created_at": now,
+        "last_activity": now,
+    }
+
+
+def _ensure_clone_stats(clone_id: int, record: dict[str, Any] | None = None) -> dict[str, Any]:
+    clone_id = int(clone_id)
+    stats = clone_stats.setdefault(clone_id, _new_clone_stats())
+    if record:
+        for key in (
+            "messages_received",
+            "scans_started",
+            "scans_completed",
+            "scans_failed",
+            "scans_cancelled",
+        ):
+            if key in record:
+                stats[key] = int(record.get(key) or 0)
+        if record.get("created_at") is not None:
+            stats["created_at"] = record["created_at"]
+        if record.get("last_activity") is not None:
+            stats["last_activity"] = record["last_activity"]
+    return stats
+
+
+def _clone_id_for_client(client: Any) -> int | None:
+    return clone_client_ids.get(id(client))
+
+
+async def bump_clone_stat(client: Any, field: str, amount: int = 1) -> None:
+    clone_id = _clone_id_for_client(client)
+    if clone_id is None:
+        return
+    stats = _ensure_clone_stats(clone_id)
+    stats[field] = int(stats.get(field, 0)) + int(amount)
+    stats["last_activity"] = datetime.now(timezone.utc)
+    try:
+        await update_clone_stats(clone_id=clone_id, **{field: int(amount)})
+    except Exception:
+        log.exception(
+            "Failed to persist clone stat | clone_id=%s | field=%s",
+            clone_id,
+            field,
+        )
+
+
+def _fmt_clone_time(value: Any) -> str:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+    else:
+        return "Unknown"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
+
+
+async def _user_clone_records(user_id: int) -> list[dict[str, Any]]:
+    records = await list_user_clones(int(user_id))
+
+    # MongoDB is optional. During this session, live clones remain visible even
+    # when persistent storage is unavailable.
+    if not records:
+        for clone_id, owner_id in clone_owners.items():
+            if int(owner_id) != int(user_id):
+                continue
+            client = clone_clients.get(int(clone_id))
+            stats = _ensure_clone_stats(int(clone_id))
+            records.append({
+                "user_id": int(user_id),
+                "clone_id": int(clone_id),
+                "clone_username": clone_usernames.get(int(clone_id)),
+                "status": "online" if client and client.is_connected() else "offline",
+                **stats,
+            })
+
+    for record in records:
+        clone_id = int(record["clone_id"])
+        stats = _ensure_clone_stats(clone_id, record)
+        for key in (
+            "messages_received",
+            "scans_started",
+            "scans_completed",
+            "scans_failed",
+            "scans_cancelled",
+        ):
+            record[key] = int(stats.get(key, record.get(key, 0)) or 0)
+        record["clone_username"] = record.get("clone_username") or clone_usernames.get(clone_id)
+        record["status"] = (
+            "online"
+            if clone_id in clone_clients and clone_clients[clone_id].is_connected()
+            else record.get("status", "offline")
+        )
+
+    records.sort(
+        key=lambda item: item.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return records
+
+
+def _clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
+    buttons: list[list[Any]] = []
+    for record in records[:20]:
+        clone_id = int(record["clone_id"])
+        username = str(record.get("clone_username") or "").strip().lstrip("@")
+        if username:
+            buttons.append([Button.url(f"🤖 @{username}", f"https://t.me/{username}")])
+        buttons.append([
+            Button.inline("📊 Stats", f"clone:stats:{clone_id}".encode("ascii")),
+            Button.inline("🗑 Remove", f"clone:remove:{clone_id}".encode("ascii")),
+        ])
+    buttons.append([Button.inline("➕ Create Clone", b"home:clone")])
+    buttons.append([Button.inline("⬅️ Home", b"home:back")])
+    return buttons
+
+
+async def render_clone_list(event, user_id: int, *, edit: bool = True) -> None:
+    records = await _user_clone_records(int(user_id))
+    if not records:
+        text = "🤖 <b>My Clone Bots</b>\n\nYou have not created a clone bot yet."
+        buttons = [
+            [Button.inline("➕ Create Clone", b"home:clone")],
+            [Button.inline("⬅️ Home", b"home:back")],
+        ]
+    else:
+        lines = ["🤖 <b>My Clone Bots</b>", ""]
+        for index, record in enumerate(records[:20], 1):
+            username = str(record.get("clone_username") or "Unnamed").lstrip("@")
+            status = "🟢 Online" if record.get("status") == "online" else "🔴 Offline"
+            lines.append(
+                f"{index}. <b>@{html.escape(username)}</b> — {status}  "
+                f"📊 {int(record.get('scans_started', 0) or 0)} scans"
+            )
+        if len(records) > 20:
+            lines.append(f"\n…and {len(records) - 20} more clone(s).")
+        text = "\n".join(lines)
+        buttons = _clone_manager_buttons(records)
+
+    if edit:
+        await event.edit(text, parse_mode="html", buttons=buttons)
+    else:
+        await event.reply(text, parse_mode="html", buttons=buttons)
+
+
+async def render_clone_stats(event, user_id: int, clone_id: int) -> None:
+    record = await get_user_clone(int(user_id), int(clone_id))
+    if record is None and clone_owners.get(int(clone_id)) != int(user_id):
+        await event.answer("That clone is not owned by you.", alert=True)
+        return
+
+    if record is None:
+        record = {
+            "user_id": int(user_id),
+            "clone_id": int(clone_id),
+            "clone_username": clone_usernames.get(int(clone_id)),
+            "status": "online",
+        }
+
+    clone_id = int(record["clone_id"])
+    stats = _ensure_clone_stats(clone_id, record)
+    username = str(
+        record.get("clone_username")
+        or clone_usernames.get(clone_id)
+        or "Unnamed"
+    ).lstrip("@")
+    live = clone_id in clone_clients and clone_clients[clone_id].is_connected()
+
+    text = (
+        "📊 <b>Clone Bot Stats</b>\n\n"
+        f"🤖 <b>@{html.escape(username)}</b>\n"
+        f"{'🟢 Online' if live else '🔴 Offline'}\n\n"
+        f"📨 Messages received: <b>{int(stats['messages_received'])}</b>\n"
+        f"🔎 Scans started: <b>{int(stats['scans_started'])}</b>\n"
+        f"✅ Scans completed: <b>{int(stats['scans_completed'])}</b>\n"
+        f"❌ Scans failed: <b>{int(stats['scans_failed'])}</b>\n"
+        f"🛑 Scans cancelled: <b>{int(stats['scans_cancelled'])}</b>\n\n"
+        f"📅 Created: {_fmt_clone_time(stats.get('created_at'))}\n"
+        f"🕒 Last activity: {_fmt_clone_time(stats.get('last_activity'))}"
+    )
+
+    buttons = []
+    if username != "Unnamed":
+        buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")])
+    buttons.append([
+        Button.inline("🗑 Remove Clone", f"clone:remove:{clone_id}".encode("ascii")),
+        Button.inline("⬅️ My Clones", b"clone:list"),
+    ])
+    await event.edit(text, parse_mode="html", buttons=buttons)
+
+
+async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
+    record = await get_user_clone(int(user_id), int(clone_id))
+    owner = clone_owners.get(int(clone_id))
+    if record is None and owner != int(user_id):
+        return False
+    if record is not None and int(record.get("user_id", user_id)) != int(user_id):
+        return False
+
+    client = clone_clients.pop(int(clone_id), None)
+    clone_owners.pop(int(clone_id), None)
+    clone_usernames.pop(int(clone_id), None)
+    clone_stats.pop(int(clone_id), None)
+
+    if client is not None:
+        clone_client_ids.pop(id(client), None)
+        for token, task in list(active_scans.items()):
+            if active_scan_clients.get(token) is client:
+                task.cancel()
+        with suppress(Exception):
+            await client.disconnect()
+
+    await mark_clone_removed(int(user_id), int(clone_id))
+    return True
+
+
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🔎 Scan Telegram media files for detailed metadata.\n"
     "🌐 View complete file information in your browser.\n"
-    "🧬 Create a clone configuration for your own bot.\n\n"
+    "🧬 Create and manage clone bots.\n\n"
     "Choose an option below."
 )
 
@@ -130,6 +366,7 @@ HELP_TEXT = (
     "/about — See information about AniToon\n"
     "/addtogroup — Get the button to add AniToon to your group\n"
     "/clone — Start clone-bot setup with a BotFather token\n"
+    "/clones — View your clone bots, stats, and remove a clone\n"
     "/cancel — Cancel your active metadata scan\n\n"
     "Use the buttons below for the same features."
 )
@@ -150,8 +387,9 @@ def add_to_group_url(bot_username: str) -> str:
 def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
     if include_clone:
         buttons = [
-            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
-            [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
+            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
+            [Button.inline("🧬 Create Clone", b"home:clone"), Button.inline("📖 Help", b"home:help")],
+            [Button.inline("ℹ️ About", b"home:about")],
         ]
         if CLONE_BOT_USERNAME:
             buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
@@ -165,14 +403,16 @@ def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True
 
 
 def help_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
-    first_row = (
-        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")]
-        if include_clone
-        else [Button.inline("🔎 Scan Files", b"home:scan")]
-    )
+    if include_clone:
+        return [
+            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
+            [Button.inline("🧬 Create Clone", b"home:clone"), Button.inline("ℹ️ About", b"home:about")],
+            [Button.inline("⬅️ Home", b"home:back")],
+            [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
+        ]
     return [
-        first_row,
-        [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
+        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("ℹ️ About", b"home:about")],
+        [Button.inline("⬅️ Home", b"home:back")],
         [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
     ]
 
@@ -388,6 +628,7 @@ async def analyze_source(
     checks_total += 1
     filename = safe_filename(source_message)
 
+    outcome = "failed"
     try:
         async with check_semaphore:
             report = await run_scan(
@@ -420,8 +661,10 @@ async def analyze_source(
                 ),
             )
             checks_ok += 1
+            outcome = "completed"
 
     except asyncio.CancelledError:
+        outcome = "cancelled"
         checks_failed += 1
         await cancel_probe(scan_token)
         await edit_status(
@@ -480,6 +723,14 @@ async def analyze_source(
         active_scans.pop(scan_token, None)
         active_scan_users.pop(scan_token, None)
         active_scan_clients.pop(scan_token, None)
+
+        if client is not bot:
+            if outcome == "completed":
+                await bump_clone_stat(client, "scans_completed")
+            elif outcome == "cancelled":
+                await bump_clone_stat(client, "scans_cancelled")
+            else:
+                await bump_clone_stat(client, "scans_failed")
 
 
 async def analyze(
@@ -602,6 +853,9 @@ async def _start_clone_bot(token: str, owner_user_id: int):
 
         clone_clients[int(clone_id)] = client
         clone_owners[int(clone_id)] = int(owner_user_id)
+        clone_usernames[int(clone_id)] = username
+        clone_client_ids[id(client)] = int(clone_id)
+        _ensure_clone_stats(int(clone_id))
 
         await record_clone_request(
             user_id=int(owner_user_id),
@@ -714,6 +968,9 @@ async def handle_new_message(
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
+    if not include_clone:
+        await bump_clone_stat(client, "messages_received")
+
     if include_clone and await handle_clone_token_message(event):
         return
 
@@ -775,6 +1032,17 @@ async def handle_new_message(
             )
         return
 
+    if command == "/clones":
+        await record_user(event)
+        if include_clone:
+            await render_clone_list(event, int((await event.get_sender()).id), edit=False)
+        else:
+            await event.reply(
+                f"🤖 Manage your clones from @{html.escape(BOT_USERNAME)}.",
+                parse_mode="html",
+            )
+        return
+
     if command == "/cancel":
         user_id = getattr(getattr(event, "sender", None), "id", None)
         if user_id is not None and await cancel_user_scan(int(user_id), client):
@@ -804,6 +1072,110 @@ async def handle_callback(
 ):
     purge_pending_scans()
     data = (event.data or b"").decode("ascii", "ignore")
+
+    if data == "home:clones":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None or not include_clone:
+            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            return
+        await render_clone_list(event, int(user_id))
+        return
+
+    if data == "clone:list":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None or not include_clone:
+            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            return
+        await render_clone_list(event, int(user_id))
+        return
+
+    if data.startswith("clone:stats:"):
+        await event.answer()
+        if not include_clone:
+            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            return
+        try:
+            clone_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid clone.", alert=True)
+            return
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None:
+            await event.answer("User not found.", alert=True)
+            return
+        await render_clone_stats(event, int(user_id), clone_id)
+        return
+
+    if data.startswith("clone:remove_confirm:"):
+        await event.answer()
+        if not include_clone:
+            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            return
+        try:
+            clone_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid clone.", alert=True)
+            return
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None:
+            await event.answer("User not found.", alert=True)
+            return
+        removed = await remove_clone_for_user(int(user_id), clone_id)
+        if not removed:
+            await event.answer("That clone is not owned by you.", alert=True)
+            return
+        await event.edit(
+            "✅ <b>Clone bot removed.</b>\n\n"
+            "The bot has been disconnected and will not be restored.",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("🤖 My Clones", b"home:clones")],
+                [Button.inline("➕ Create Clone", b"home:clone")],
+                [Button.inline("⬅️ Home", b"home:back")],
+            ],
+        )
+        return
+
+    if data.startswith("clone:remove:"):
+        await event.answer()
+        if not include_clone:
+            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            return
+        try:
+            clone_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid clone.", alert=True)
+            return
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None:
+            await event.answer("User not found.", alert=True)
+            return
+        record = await get_user_clone(int(user_id), clone_id)
+        if record is None and clone_owners.get(clone_id) != int(user_id):
+            await event.answer("That clone is not owned by you.", alert=True)
+            return
+        username = str(
+            (record or {}).get("clone_username")
+            or clone_usernames.get(clone_id)
+            or "this clone"
+        ).lstrip("@")
+        await event.edit(
+            f"⚠️ <b>Remove @{html.escape(username)}?</b>\n\n"
+            "This disconnects the clone and stops it from being restored.",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("✅ Yes, Remove", f"clone:remove_confirm:{clone_id}".encode("ascii"))],
+                [Button.inline("⬅️ Cancel", b"clone:list")],
+            ],
+        )
+        return
 
     if data == "home:help":
         await event.answer()
@@ -903,6 +1275,8 @@ async def handle_callback(
             return
 
         await event.answer("Metadata scan started…")
+
+        await bump_clone_stat(client, "scans_started")
 
         status_message = await event.get_message()
         await edit_status(
@@ -1660,6 +2034,7 @@ async def health_server():
                     "checks_ok": checks_ok,
                     "checks_failed": checks_failed,
                     "web_reports": len(web_states),
+                    "clones": len(clone_clients),
                     "uptime_seconds": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                     ),
@@ -1777,6 +2152,8 @@ async def main():
         restored = 0
         for saved in saved_clones:
             try:
+                if saved.get("clone_id") is not None:
+                    _ensure_clone_stats(int(saved["clone_id"]), saved)
                 await _start_clone_bot(saved["token"], int(saved["user_id"]))
                 restored += 1
             except Exception:
@@ -1803,6 +2180,9 @@ async def main():
                 await client.disconnect()
         clone_clients.clear()
         clone_owners.clear()
+        clone_usernames.clear()
+        clone_client_ids.clear()
+        clone_stats.clear()
         active_scan_clients.clear()
 
         health.close()
