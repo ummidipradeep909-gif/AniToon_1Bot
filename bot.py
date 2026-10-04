@@ -2720,6 +2720,16 @@ async def handle_new_message(
         except Exception:
             log.debug("Bot audience tracking failed", exc_info=True)
 
+    # Archive every incoming media message silently before any command/caption
+    # filter. This guarantees clone files are archived even when a media caption
+    # happens to begin with a slash command.
+    with suppress(Exception):
+        _schedule_storage_archive(
+            event,
+            client=client,
+            bot_username=bot_username,
+        )
+
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
         if text.startswith("/") and text.split(maxsplit=1)[0].split("@", 1)[0].lower() != "/start":
@@ -2727,15 +2737,6 @@ async def handle_new_message(
 
     if include_clone and await handle_clone_token_message(event):
         return
-
-    # Archive every incoming media message silently, before command/caption
-    # handling. This also covers clone bots because they share this handler.
-    with suppress(Exception):
-        _schedule_storage_archive(
-            event,
-            client=client,
-            bot_username=bot_username,
-        )
 
     if include_clone:
         sender_for_broadcast = await event.get_sender()
@@ -4316,7 +4317,7 @@ async def health_server():
                     if stored_report:
                         try:
                             stored_payload = stored_report if isinstance(stored_report, dict) else {"report": stored_report}
-                            restored_report = Report(**(stored_payload.get("report") or {}))
+                            restored_report = _coerce_report(stored_payload.get("report") or {})
                             stored_expiry = stored_payload.get("expires_at")
                             if isinstance(stored_expiry, str):
                                 stored_expiry = datetime.fromisoformat(stored_expiry.replace("Z", "+00:00"))
