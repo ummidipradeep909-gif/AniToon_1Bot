@@ -66,7 +66,6 @@ PUBLIC_WEB_URL = (
     .strip()
     .rstrip("/")
 )
-PROJECT_GITHUB_URL = "https://github.com/ummidipradeep909-gif/AniToons_1Bot"
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
@@ -2266,7 +2265,7 @@ def home_page(report_token: str | None = None) -> bytes:
     channels = [
         ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1", False),
         ("🍿", "All Animes Channel", "https://t.me/anitoons_ani", False),
-        ("🎧", "Dual Content Channel", "https://t.me/ani_engjaphin", True),
+        ("🎧", "Dual Content Channel", "https://t.me/ani_engjaphin"),
         ("📚", "Manga Channel", "https://t.me/mangauniverse_ani", False),
         ("🏴‍☠️", "One Piece All New Episodes", "https://t.me/ani_pocket_monster", False),
         ("⚔️", "Jujutsu Kaisen Channel", "https://t.me/jjk_anitoon", False),
@@ -2280,13 +2279,11 @@ def home_page(report_token: str | None = None) -> bytes:
         ("⚡", "Pokemon All Seasons & Movies", "https://t.me/poketmonster_01"),
     ]
 
-    def card(icon, name, url, stopped=False):
-        badge = '<span class="stopped">STOPPED</span>' if stopped else ""
+    def card(icon, name, url):
         return f"""
         <a class="channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">
           <span class="icon">{icon}</span>
           <span class="name">{html.escape(name)}</span>
-          {badge}
           <span class="arrow">↗</span>
         </a>
         """
@@ -2417,14 +2414,6 @@ h1 {{
   font-size:18px;
 }}
 .name {{ flex:1; min-width:0; font-weight:700; line-height:1.3; }}
-.stopped {{
-  font-size:9px; font-weight:900; letter-spacing:.08em;
-  color:var(--danger);
-  border:1px solid rgba(255,138,138,.20);
-  background:rgba(255,138,138,.07);
-  padding:4px 7px;
-  border-radius:999px;
-}}
 .arrow {{ color:var(--muted); font-size:18px; }}
 .info-grid {{
   display:grid;
@@ -2449,33 +2438,6 @@ h1 {{
   font-size:11px;
 }}
 .footer a {{ color:var(--accent); text-decoration:none; }}
-.live-panel {{
-  margin-top:14px; padding:12px 14px; text-align:left;
-  border:1px solid var(--border); border-radius:16px;
-  background:rgba(255,255,255,.028);
-}}
-.live-panel > div:first-child {{ display:flex; align-items:center; gap:8px; font-size:12px; }}
-.live-panel > div:first-child span:last-child {{ margin-left:auto; color:var(--muted); }}
-.live-dot {{
-  width:8px; height:8px; border-radius:50%; background:#86efac;
-  box-shadow:0 0 0 0 rgba(134,239,172,.45); animation:pulse 1.8s infinite;
-}}
-@keyframes pulse {{
-  0% {{ box-shadow:0 0 0 0 rgba(134,239,172,.45); }}
-  70% {{ box-shadow:0 0 0 8px rgba(134,239,172,0); }}
-  100% {{ box-shadow:0 0 0 0 rgba(134,239,172,0); }}
-}}
-.live-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-top:9px; color:var(--muted); font-size:11px; }}
-.section-tools {{ margin-top:10px; }}
-.section-tools input {{
-  width:100%; border:1px solid var(--border); border-radius:14px;
-  padding:11px 12px; outline:0; background:rgba(15,20,34,.72);
-  color:var(--text); font:inherit;
-}}
-.channel {{ will-change:transform; }}
-@media(max-width:650px) {{
-  .live-metrics {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
-}}
 @media(prefers-reduced-motion: reduce) {{
   .live-dot {{ animation:none; }}
 }}
@@ -2519,26 +2481,13 @@ h1 {{
     <h1>⛩ AniToon's List ⛩</h1>
     <div class="subtitle">Official channels, groups and social links</div>
     <div class="quick">
-      <a href="/health">💚 Bot Status</a>
-      <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open Bot</a>
-    </div>
-    <div class="live-panel" aria-live="polite">
-      <div><span class="live-dot"></span><b>Live system</b><span id="web-status-text">Checking…</span></div>
-      <div class="live-metrics">
-        <span>⚡ <b id="web-active">—</b> active</span>
-        <span>⏳ <b id="web-queued">—</b> queued</span>
-        <span>🧠 <b id="web-ram">—</b> RAM</span>
-        <span>🗄️ <b id="web-mongo">—</b> Mongo</span>
-      </div>
+      <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
     </div>
   </header>
 
   {report_embed}
 
   <section class="section">
-    <div class="section-tools">
-      <input id="channel-filter" type="search" placeholder="🔎 Search AniToon channels…" aria-label="Search channels">
-    </div>
     <div class="section-title"><span>📡 Active Channels</span><span class="line"></span></div>
     <div class="list">{current_html}</div>
   </section>
@@ -2576,7 +2525,7 @@ h1 {{
   </section>
 
   <div class="footer">
-    ⛩ AniToon's • <a href="/health">System status</a>
+    ⛩ AniToon's • Official Bot & Web
   </div>
 </div>
 
