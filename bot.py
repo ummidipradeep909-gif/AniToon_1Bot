@@ -44,6 +44,9 @@ from mongo_store import (
     record_user,
     save_web_report,
     update_clone_stats,
+    record_group_chat,
+    list_group_chats,
+    update_group_onboarding,
 )
 
 load_dotenv()
@@ -136,6 +139,11 @@ clone_stats: dict[int, dict[str, Any]] = {}
 clone_message_pending: dict[int, int] = {}
 clone_monitor_task: asyncio.Task | None = None
 active_scan_clients: dict[str, Any] = {}
+bot_identity_ids: dict[int, int] = {}
+known_group_chats: dict[tuple[int, int], dict[str, Any]] = {}
+group_touch_cache: dict[tuple[int, int], float] = {}
+owner_broadcast_pending: dict[int, float] = {}
+group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
 
 
 scan_states: dict[tuple[int, int], ScanState] = {}
@@ -146,6 +154,10 @@ active_scan_users: dict[str, int | None] = {}
 clone_setup_pending: dict[int, float] = {}
 last_scan_by_user: dict[int, float] = {}
 CLONE_SETUP_TTL_SECONDS = 5 * 60
+OWNER_BROADCAST_TTL_SECONDS = 10 * 60
+GROUP_TOUCH_INTERVAL_SECONDS = 15 * 60
+GROUP_ONBOARDING_LOOP_SECONDS = 300
+GROUP_ONBOARDING_DAYS = 7
 
 def add_to_group_url(bot_username: str = BOT_USERNAME) -> str:
     permissions = GROUP_ADMIN_PERMISSIONS
@@ -166,11 +178,10 @@ def cancel_button(token: str):
 
 
 def clone_setup_buttons():
-    return [
-        [Button.inline("🔐 Enter Clone Token", b"clone:token")],
-        [Button.url("🤖 Open @BotFather", "https://t.me/BotFather")],
-        [Button.inline("⬅️ Cancel", b"clone:cancel")],
-    ]
+    return [[
+        Button.url("🤖 Open @BotFather", "https://t.me/BotFather"),
+        Button.inline("⬅️ Cancel", b"clone:cancel"),
+    ]]
 
 def clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
     buttons: list[list[Any]] = []
@@ -219,11 +230,30 @@ HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
     "⚡ Fast, bounded media inspection with a clean web report.\n\n"
-    "✨ Choose a feature below."
+    "✨ Simple, fast and easy to use."
+)
+
+CLONE_HOME_TEXT = (
+    "⛩ <b>AniToon Media Info Clone</b> ⛩
+
+"
+    "🔎 Scan Telegram videos and documents for detailed media information.
+"
+    "🌐 Open the complete file report in your browser."
+)
+
+CLONE_HELP_TEXT = (
+    "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
+    "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
+    "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
+    "3️⃣ Wait for the metadata scan to finish.\n"
+    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
+    "📋 <b>Command</b>\n"
+    "/start — Open Home"
 )
 
 HELP_TEXT = (
-    "📖 <b>How to Use AniToon</b>\n\n"
+    "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Wait for the metadata scan to finish.\n"
@@ -1301,19 +1331,344 @@ def _clean_bot_token(value: str) -> str:
     return value
 
 
+GROUP_ONBOARDING_MESSAGES = (
+    "👋 <b>Hi everyone! I’m AniToon Media Info Bot.</b>\n\n"
+    "🤖 I help you check what is inside your Telegram video and document files.\n"
+    "🎞️ See video quality, resolution, codec and more.\n"
+    "🎧 Check audio tracks and languages.\n"
+    "💬 Find subtitle tracks and formats.\n"
+    "🌐 Open a clean web report with the complete file information.\n\n"
+    "📤 Send a media file here and tap <b>🔎 Scan File Info</b>.\n"
+    f"🧬 You can also create your own clone bot for personal use from @{html.escape(BOT_USERNAME)}.",
+    "🎞️ <b>Check Video Quality</b>\n\n"
+    "AniToon can show the important video details inside a file — resolution, codec, frame rate, bitrate and duration.\n\n"
+    "📤 Send a video and tap <b>🔎 Scan File Info</b> to inspect it.",
+    "🎧 <b>Check Audio Tracks</b>\n\n"
+    "See how many audio tracks a file has, plus available language, codec, channels, sample rate and bitrate information.\n\n"
+    "📤 Send the video or document and scan the file.",
+    "💬 <b>Check Subtitles</b>\n\n"
+    "Find subtitle tracks and their available language and format information before downloading or sharing a file.\n\n"
+    "📤 Send the media file here and use <b>🔎 Scan File Info</b>.",
+    "📦 <b>Check the File Container</b>\n\n"
+    "See the file/container format, duration and other technical information in one place.\n\n"
+    "🌐 The complete report opens in the AniToon web page.",
+    "🌐 <b>Open the Complete Web Report</b>\n\n"
+    "After scanning, tap <b>🌐 Open File Info</b> to view the complete report in a clean browser page.\n\n"
+    "🔎 Video • 🎧 Audio • 💬 Subtitles • 📦 Container • ⚙️ Technical details",
+    "✨ <b>One Bot, Many Uses</b>\n\n"
+    "Use AniToon for quick file checks, media quality details, audio and subtitle inspection, and a complete web report.\n\n"
+    f"🧬 You can also create your own clone bot for personal use from @{html.escape(BOT_USERNAME)}.\n"
+    "📤 Send a file anytime and tap <b>🔎 Scan File Info</b>.",
+)
+
+def _bot_id_for_client(client: Any) -> int | None:
+    return bot_identity_ids.get(id(client))
+
+async def _ensure_bot_identity(client: Any) -> int | None:
+    existing = _bot_id_for_client(client)
+    if existing is not None:
+        return int(existing)
+    try:
+        me = await client.get_me()
+        bot_id = getattr(me, "id", None)
+        if bot_id is not None:
+            bot_identity_ids[id(client)] = int(bot_id)
+            return int(bot_id)
+    except Exception:
+        log.debug("Unable to resolve bot identity", exc_info=True)
+    return None
+
+async def _touch_group_chat(
+    event,
+    *,
+    client: Any,
+    bot_username: str,
+) -> None:
+    if not getattr(event, "is_group", False):
+        return
+    chat_id = getattr(event, "chat_id", None)
+    if chat_id is None:
+        return
+    bot_id = await _ensure_bot_identity(client)
+    if bot_id is None:
+        return
+    clone_id = _clone_id_for_client(client) or 0
+    key = (int(bot_id), int(chat_id))
+    now_mono = time.monotonic()
+    if now_mono - group_touch_cache.get(key, 0.0) < GROUP_TOUCH_INTERVAL_SECONDS:
+        return
+    group_touch_cache[key] = now_mono
+
+    title = "Telegram group"
+    try:
+        chat = await event.get_chat()
+        title = str(
+            getattr(chat, "title", None)
+            or getattr(chat, "first_name", None)
+            or "Telegram group"
+        )[:200]
+    except Exception:
+        pass
+
+    record = {
+        "bot_id": int(bot_id),
+        "bot_username": str(bot_username).lstrip("@"),
+        "chat_id": int(chat_id),
+        "title": title,
+        "clone_id": int(clone_id),
+        "last_seen": datetime.now(timezone.utc),
+    }
+    known_group_chats[key] = record
+    with suppress(Exception):
+        await record_group_chat(
+            bot_id=int(bot_id),
+            bot_username=bot_username,
+            chat_id=int(chat_id),
+            title=title,
+            clone_id=int(clone_id),
+        )
+
+async def _send_group_onboarding_day(
+    client: Any,
+    group: dict[str, Any],
+    day: int,
+) -> bool:
+    if not 1 <= int(day) <= GROUP_ONBOARDING_DAYS:
+        return False
+
+    chat_id = int(group["chat_id"])
+    bot_id = int(group["bot_id"])
+    try:
+        message = await client.send_message(
+            chat_id,
+            GROUP_ONBOARDING_MESSAGES[int(day) - 1],
+            parse_mode="html",
+        )
+    except Exception:
+        log.warning(
+            "Group onboarding send failed | bot_id=%s | chat_id=%s | day=%s",
+            bot_id,
+            chat_id,
+            day,
+            exc_info=True,
+        )
+        return False
+
+    old_message_id = group.get("last_onboarding_message_id")
+    if old_message_id and int(old_message_id) != int(getattr(message, "id", 0) or 0):
+        with suppress(Exception):
+            await client.delete_messages(chat_id, int(old_message_id))
+
+    message_id = getattr(message, "id", None)
+    active = int(day) < GROUP_ONBOARDING_DAYS
+    with suppress(Exception):
+        await update_group_onboarding(
+            bot_id=bot_id,
+            chat_id=chat_id,
+            day=int(day),
+            message_id=int(message_id) if message_id is not None else None,
+            active=active,
+        )
+
+    current = known_group_chats.setdefault((bot_id, chat_id), dict(group))
+    current.update({
+        "onboarding_day": int(day),
+        "last_onboarding_message_id": int(message_id) if message_id is not None else None,
+        "onboarding_active": active,
+    })
+    return True
+
+async def _handle_bot_added_to_group(
+    event,
+    *,
+    client: Any,
+    bot_username: str,
+) -> None:
+    if not getattr(event, "is_group", False):
+        return
+    if not (getattr(event, "user_added", False) or getattr(event, "user_joined", False)):
+        return
+
+    bot_id = await _ensure_bot_identity(client)
+    if bot_id is None:
+        return
+    added_user_id = getattr(event, "user_id", None)
+    if added_user_id is None or int(added_user_id) != int(bot_id):
+        return
+
+    chat_id = getattr(event, "chat_id", None)
+    if chat_id is None:
+        return
+    key = (int(bot_id), int(chat_id))
+    if time.monotonic() - group_onboarding_bootstrap.get(key, 0.0) < 30:
+        return
+    group_onboarding_bootstrap[key] = time.monotonic()
+
+    title = "Telegram group"
+    try:
+        chat = await event.get_chat()
+        title = str(
+            getattr(chat, "title", None)
+            or getattr(chat, "first_name", None)
+            or "Telegram group"
+        )[:200]
+    except Exception:
+        pass
+
+    clone_id = _clone_id_for_client(client) or 0
+    saved = await record_group_chat(
+        bot_id=int(bot_id),
+        bot_username=bot_username,
+        chat_id=int(chat_id),
+        title=title,
+        clone_id=int(clone_id),
+        joined_at=datetime.now(timezone.utc),
+        reset_onboarding=True,
+    )
+    group = {
+        "bot_id": int(bot_id),
+        "bot_username": str(bot_username).lstrip("@"),
+        "chat_id": int(chat_id),
+        "title": title,
+        "clone_id": int(clone_id),
+        "joined_at": datetime.now(timezone.utc),
+        "onboarding_day": 0,
+        "last_onboarding_message_id": None,
+    }
+    if saved:
+        group.update(saved)
+    known_group_chats[key] = group
+    await _send_group_onboarding_day(client, group, 1)
+
+async def _group_onboarding_loop() -> None:
+    while True:
+        try:
+            groups = await list_group_chats()
+            merged: dict[tuple[int, int], dict[str, Any]] = {}
+            for group in groups:
+                try:
+                    key = (int(group["bot_id"]), int(group["chat_id"]))
+                    merged[key] = dict(group)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            for key, group in known_group_chats.items():
+                merged.setdefault(key, dict(group))
+
+            now = datetime.now(timezone.utc)
+            for key, group in merged.items():
+                joined_at = group.get("joined_at")
+                if not isinstance(joined_at, datetime):
+                    continue
+                if joined_at.tzinfo is None:
+                    joined_at = joined_at.replace(tzinfo=timezone.utc)
+                age_seconds = max(0.0, (now - joined_at).total_seconds())
+                day = int(age_seconds // 86400) + 1
+                last_day = int(group.get("onboarding_day", 0) or 0)
+
+                if day > GROUP_ONBOARDING_DAYS:
+                    if last_day and bool(group.get("onboarding_active", True)):
+                        with suppress(Exception):
+                            await update_group_onboarding(
+                                bot_id=key[0],
+                                chat_id=key[1],
+                                day=last_day,
+                                message_id=group.get("last_onboarding_message_id"),
+                                active=False,
+                            )
+                    continue
+
+                if last_day >= day:
+                    continue
+
+                bot_id, chat_id = key
+                clone_id = int(group.get("clone_id") or 0)
+                target = bot if bot_id == _bot_id_for_client(bot) else clone_clients.get(clone_id)
+                if target is None:
+                    continue
+                await _send_group_onboarding_day(target, group, day)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Group onboarding loop failed")
+        await asyncio.sleep(GROUP_ONBOARDING_LOOP_SECONDS)
+
+async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
+    clean = (message_text or "").strip()
+    if not clean:
+        return {"groups": 0, "sent": 0, "failed": 0, "clones": 0}
+
+    groups = await list_group_chats()
+    merged: dict[tuple[int, int], dict[str, Any]] = {}
+    for group in groups:
+        try:
+            key = (int(group["bot_id"]), int(group["chat_id"]))
+            merged[key] = dict(group)
+        except (KeyError, TypeError, ValueError):
+            continue
+    for key, group in known_group_chats.items():
+        merged.setdefault(key, dict(group))
+
+    active_clone_ids = set()
+    sent = 0
+    failed = 0
+    for (bot_id, chat_id), group in merged.items():
+        clone_id = int(group.get("clone_id") or 0)
+        target = bot if bot_id == _bot_id_for_client(bot) else clone_clients.get(clone_id)
+        if clone_id:
+            active_clone_ids.add(clone_id)
+        if target is None:
+            failed += 1
+            continue
+        try:
+            await target.send_message(
+                chat_id,
+                "📢 <b>AniToon Announcement</b>\n\n" + html.escape(clean),
+                parse_mode="html",
+            )
+            sent += 1
+        except Exception:
+            failed += 1
+            log.warning(
+                "Owner broadcast failed | bot_id=%s | chat_id=%s | clone_id=%s",
+                bot_id,
+                chat_id,
+                clone_id,
+                exc_info=True,
+            )
+
+    return {
+        "groups": len(merged),
+        "sent": sent,
+        "failed": failed,
+        "clones": len(active_clone_ids),
+    }
+
+def _owner_broadcast_pending(user_id: int) -> bool:
+    created = owner_broadcast_pending.get(int(user_id))
+    if created is None:
+        return False
+    if time.monotonic() - created > OWNER_BROADCAST_TTL_SECONDS:
+        owner_broadcast_pending.pop(int(user_id), None)
+        return False
+    return True
+
 async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
-    commands = [
-        types.BotCommand(command="start", description="Open Home"),
-        types.BotCommand(command="help", description="How to use AniToon"),
-        types.BotCommand(command="stats", description="View your 7-day stats"),
-        types.BotCommand(command="about", description="About AniToons"),
-        types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-        types.BotCommand(command="clones", description="View your clone bots"),
-        types.BotCommand(command="myclones", description="View your clone bots"),
-        types.BotCommand(command="cancel", description="Cancel your scan"),
-    ]
-    if include_clone:
-        commands.insert(8, types.BotCommand(command="clone", description="Create a clone bot"))
+    if not include_clone:
+        commands = [
+            types.BotCommand(command="start", description="Open Home"),
+        ]
+    else:
+        commands = [
+            types.BotCommand(command="start", description="Open Home"),
+            types.BotCommand(command="help", description="How to use AniToon Media Info Bot"),
+            types.BotCommand(command="stats", description="View your 7-day stats"),
+            types.BotCommand(command="about", description="About AniToons"),
+            types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+            types.BotCommand(command="clones", description="View your clone bots"),
+            types.BotCommand(command="myclones", description="View your clone bots"),
+            types.BotCommand(command="cancel", description="Cancel your scan"),
+            types.BotCommand(command="clone", description="Create a clone bot"),
+        ]
 
     await client(functions.bots.SetBotCommandsRequest(
         scope=types.BotCommandScopeDefault(),
