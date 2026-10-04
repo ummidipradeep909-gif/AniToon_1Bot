@@ -822,6 +822,10 @@ async def inspect_telegram_player(
         raise
     except Exception as exc:
         if isinstance(exc, av.error.ExitError):
+            # Never run a second multi-range parser after the main player probe.
+            # For MKV, the container parser already populated custom_report.
+            if custom_report is not None:
+                return custom_report
             try:
                 fallback, _ = await inspect_telegram_message(
                     client,
@@ -831,14 +835,11 @@ async def inspect_telegram_player(
                 )
                 fallback.notes.insert(
                     0,
-                    "FFmpeg could not expose all streams; returned the deepest metadata the range scanner could resolve.",
+                    "FFmpeg could not expose all streams; returned the bounded metadata scan.",
                 )
-                if custom_report is not None:
-                    return _merge_reports(custom_report, fallback)
                 return fallback
             except Exception:
-                if custom_report is not None:
-                    return custom_report
+                raise
         raise
     finally:
         reader.close()
