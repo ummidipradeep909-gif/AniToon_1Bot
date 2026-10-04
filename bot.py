@@ -234,7 +234,6 @@ def web_report_button(
 ):
     buttons = [
         [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
-        [Button.inline("💾 Save to private storage", f"archive:{token}".encode("ascii"))],
     ]
     if include_clone and CLONE_BOT_USERNAME:
         buttons.append([
@@ -1463,7 +1462,7 @@ async def analyze_source(
         with suppress(Exception):
             await status_message.delete()
 
-        if report.video.get("tracks"):
+        if getattr(source_message, "media", None):
             _schedule_preview_generation(
                 client,
                 source_message,
@@ -3170,59 +3169,6 @@ async def handle_callback(
         )
         return
 
-    if data.startswith("archive:"):
-        token = data[8:].strip()
-        state = web_states.get(token)
-        if state is None:
-            try:
-                stored = await load_web_report(token)
-                if stored:
-                    payload = stored.get("report") if isinstance(stored, dict) else {}
-                    state = ScanState(
-                        source_message=None,
-                        report=_coerce_report(payload or {}),
-                        created_at=time.monotonic(),
-                        web_token=token,
-                        expires_at=stored.get("expires_at"),
-                    )
-                    web_states[token] = state
-            except Exception:
-                log.exception("Failed to restore report for archive action | token=%s", token)
-
-        if state is None or state.source_message is None:
-            await event.answer(
-                "This file is no longer available for storage. Send the file again.",
-                alert=True,
-            )
-            return
-        if getattr(state.source_message, "media", None) is None:
-            await event.answer("This report has no Telegram media to store.", alert=True)
-            return
-
-        await event.answer("Saving the file to private storage…")
-        ok = await archive_scanned_file(
-            client,
-            state.source_message,
-            user_id=getattr(state.source_message, "sender_id", None),
-            bot_username=bot_username,
-        )
-        if ok:
-            await event.edit(
-                compact_scan_result(state.report) + "\n\n💾 <b>Saved to private storage.</b>",
-                parse_mode="html",
-                buttons=web_report_button(
-                    token,
-                    bot_username,
-                    include_clone=include_clone,
-                ),
-            )
-        else:
-            await event.answer(
-                "Storage is unavailable. Make sure this bot is a member of the private channel and can post there.",
-                alert=True,
-            )
-        return
-
     if data.startswith("scan:"):
         token = data[5:].strip()
         pending = pending_scans.pop(token, None)
@@ -3584,24 +3530,46 @@ def web_page(
             if codec:
                 details.append(("Codec", codec))
 
-            if kind == "Audio":
-                details.extend([
-                    ("Channels", track.get("channels")),
-                    ("Layout", track.get("layout")),
-                    ("Sample rate", track.get("sample_rate")),
-                    ("Bitrate", track.get("bitrate")),
-                ])
-            elif kind == "Video":
-                details.extend([
-                    ("Resolution", track.get("dimensions")),
-                    ("Pixel format", track.get("pixel_format")),
-                    ("Profile", track.get("profile")),
-                    ("Frame rate", track.get("frame_rate")),
-                ])
-            else:
-                details.append(("Format", track.get("subtitle_format") or codec))
-
-            details = [(label, value) for label, value in details if value]
+            priority_details = [
+                ("Language", track.get("language_name") or track.get("language")),
+                ("Codec", track.get("codec_name") or track.get("codec")),
+                ("Resolution / pixels", track.get("dimensions")),
+                ("Display size", track.get("display_dimensions")),
+                ("Frame rate", track.get("frame_rate")),
+                ("Scan type", track.get("scan_type")),
+                ("Pixel format", track.get("pixel_format")),
+                ("Profile", track.get("profile")),
+                ("Level", track.get("level")),
+                ("Channels", track.get("channels")),
+                ("Channel layout", track.get("layout")),
+                ("Sample rate", track.get("sample_rate")),
+                ("Bit depth", track.get("bit_depth")),
+                ("Bitrate", track.get("bitrate")),
+                ("Default", track.get("default")),
+                ("Enabled", track.get("enabled")),
+                ("Forced", track.get("forced")),
+                ("Original", track.get("original")),
+                ("Commentary", track.get("commentary")),
+                ("Hearing impaired", track.get("hearing_impaired")),
+                ("Visual impaired", track.get("visual_impaired")),
+                ("Stereo mode", track.get("stereo_mode")),
+                ("Codec delay", track.get("codec_delay")),
+                ("Seek preroll", track.get("seek_preroll")),
+                ("Format", track.get("subtitle_format") or track.get("format")),
+            ]
+            details.extend((label, value) for label, value in priority_details if value not in (None, "", []))
+            known_keys = {
+                "language","language_name","codec","codec_name","dimensions","display_dimensions",
+                "frame_rate","scan_type","pixel_format","profile","level","channels","layout",
+                "sample_rate","bit_depth","bitrate","default","enabled","forced","original",
+                "commentary","hearing_impaired","visual_impaired","stereo_mode","codec_delay",
+                "seek_preroll","subtitle_format","format"
+            }
+            for key, value in track.items():
+                if key in known_keys or key in {"type","track","name","display_name","name_source"}:
+                    continue
+                if value not in (None, "", []):
+                    details.append((key.replace("_", " ").title(), value))
             rows = "".join(
                 f'<div class="spec"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
                 for label, value in details
@@ -3650,7 +3618,7 @@ def web_page(
     preview_cards = ""
     if previews:
         cards = []
-        for index, preview in enumerate(previews[:5], 1):
+        for index, preview in enumerate(previews[:1], 1):
             data = str(preview.get("data") or "")
             if not data:
                 continue
@@ -3666,7 +3634,7 @@ def web_page(
             cards.append(
                 f'<article class="preview-card">'
                 f'<div class="preview-frame"><img src="data:image/jpeg;base64,{data}" alt="Video preview {index}" loading="lazy"></div>'
-                f'<div class="preview-meta"><b>Preview {index}</b><span>{html.escape(preview_label or (str(ratio) + "%"))} • {stamp}</span></div>'
+                f'<div class="preview-meta"><b>Telegram thumbnail</b><span>{html.escape(preview_label or "Telegram thumbnail")}</span></div>'
                 f'</article>'
             )
         preview_cards = "".join(cards)
@@ -3825,17 +3793,17 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 
   <nav class="quick" aria-label="Quick navigation">
     <a href="#overview">Overview</a>
-    {f'<a href="#preview-section" id="preview-nav">Thumbnail</a>' if video else ''}
+    <a href="#preview-section" id="preview-nav" style="display:none">Thumbnail</a>
     <a href="#video-section">Video</a>
     <a href="#audio-section">Audio</a>
     <a href="#subs-section">Subtitles</a>
     <a href="#technical-section">Technical</a>
   </nav>
 
-  {f'''<section id="preview-section" class="section preview-section{' visible' if preview_cards else ''}">
+  <section id="preview-section" class="section preview-section{' visible' if preview_cards else ''}">
     <div class="section-head"><h2>🎞️ Thumbnail preview</h2><span class="pill">1 image</span></div>
     <div class="section-body" id="preview-grid">{preview_cards}</div>
-  </section>''' if video else ""}
+  </section>
 
   <details id="video-section" class="section" open>
     <summary class="section-head"><h2>🎬 Video</h2><span class="pill">{len(video)} track{'s' if len(video)!=1 else ''} <span class="chev">⌄</span></span></summary>
@@ -3925,6 +3893,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     const label=String(item.label||"").trim()||"Telegram thumbnail";
     grid.innerHTML='<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,'+String(item.data)+'" alt="Telegram thumbnail" loading="lazy"></div><div class="preview-meta"><b>Thumbnail</b><span>'+label+'</span></div></article>';
     section.classList.add("visible");
+    const nav=document.getElementById("preview-nav");
+    if(nav)nav.style.display="inline-flex";
     if(!document.getElementById("hero-media")){{
       const hero=document.querySelector(".hero");
       if(hero){{
