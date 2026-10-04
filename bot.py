@@ -3328,7 +3328,8 @@ def web_page(
             data = str(preview.get("data") or "")
             if not data:
                 continue
-            ratio = int(preview.get("ratio") or ((index * 20) - 10))
+            ratio = int(preview.get("ratio") or 0)
+            preview_label = str(preview.get("label") or "").strip()
             try:
                 seconds = int(float(preview.get("seconds") or 0))
             except Exception:
@@ -3339,7 +3340,7 @@ def web_page(
             cards.append(
                 f'<article class="preview-card">'
                 f'<div class="preview-frame"><img src="data:image/jpeg;base64,{data}" alt="Video preview {index}" loading="lazy"></div>'
-                f'<div class="preview-meta"><b>Preview {index}</b><span>{ratio}% • {stamp}</span></div>'
+                f'<div class="preview-meta"><b>Preview {index}</b><span>{html.escape(preview_label or (str(ratio) + "%"))} • {stamp}</span></div>'
                 f'</article>'
             )
         preview_cards = "".join(cards)
@@ -3652,7 +3653,7 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
   {f'''<section class="section">
     <div class="section-head">
       <h2>🎞️ Video previews</h2>
-      <span id="preview-status" class="pill">50% snapshot</span>
+      <span id="preview-status" class="pill">1 preview</span>
     </div>
     <div id="preview-grid" class="preview-grid">{preview_cards or '<div class="preview-loading"><span></span></div>'}</div>
   </section>''' if video else ""}
@@ -3708,7 +3709,8 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
 
   const render = (items) => {{
     const cards = items.slice(0,1).map((p, i) => {{
-      const ratio = Number(p.ratio || 50);
+      const ratio = Number(p.ratio || 0);
+      const previewLabel = String(p.label || "").trim() || (ratio ? ratio + "%" : "Telegram thumbnail");
       const seconds = Math.max(0, Math.floor(Number(p.seconds || 0)));
       const mm = Math.floor(seconds / 60);
       const ss = seconds % 60;
@@ -3717,7 +3719,7 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
         : mm + ":" + String(ss).padStart(2,"0");
       return '<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,' +
         String(p.data || '') + '" alt="Video preview ' + (i + 1) + '" loading="lazy"></div>' +
-        '<div class="preview-meta"><b>Preview ' + (i + 1) + '</b><span>' + ratio + '% • ' + stamp + '</span></div></article>';
+        '<div class="preview-meta"><b>Preview ' + (i + 1) + '</b><span>' + previewLabel + ' • ' + stamp + '</span></div></article>';
     }}).join("");
     if (cards) {{
       grid.innerHTML = cards;
