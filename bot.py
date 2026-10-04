@@ -4076,19 +4076,9 @@ async def health_server():
                 _purge_states()
                 token = path[len("/report/"):].strip("/")
 
-                if query != "embed=1":
-                    state = web_states.get(token)
-                    if state:
-                        writer.write(
-                            b"HTTP/1.1 302 Found\r\n"
-                            + f"Location: /?report={token}\r\n".encode("utf-8")
-                            + b"Cache-Control: no-store\r\n"
-                            + b"Content-Length: 0\r\n"
-                            + b"Connection: close\r\n\r\n"
-                        )
-                        await writer.drain()
-                        return
-
+                # A report URL is a standalone page. Do not redirect it through
+                # the home page; this keeps the Telegram button reliable on all
+                # browsers and makes the report route independent of embed mode.
                 state = web_states.get(token)
 
                 if not state:
