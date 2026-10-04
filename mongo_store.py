@@ -409,3 +409,149 @@ async def load_clone_requests() -> list[dict[str, Any]]:
     except Exception:
         log.exception("Failed to load saved clone configurations")
         return []
+
+
+
+async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
+    db = await _get_db()
+    if db is None:
+        return {
+            "available": False,
+            "users": [],
+            "total_users": 0,
+            "total_scans": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 0,
+        }
+
+    try:
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=int(days))
+        pipeline = [
+            {"$match": {"created_at": {"$gte": cutoff}}},
+            {"$group": {
+                "_id": "$user_id",
+                "scans": {"$sum": 1},
+                "completed": {
+                    "$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}
+                },
+                "failed": {
+                    "$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}
+                },
+                "cancelled": {
+                    "$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}
+                },
+                "last_scan": {"$max": "$created_at"},
+            }},
+            {"$sort": {"last_scan": -1}},
+        ]
+
+        grouped = await asyncio.to_thread(lambda: list(db.scans.aggregate(pipeline)))
+        total_scans = sum(int(row.get("scans", 0) or 0) for row in grouped)
+        completed = sum(int(row.get("completed", 0) or 0) for row in grouped)
+        failed = sum(int(row.get("failed", 0) or 0) for row in grouped)
+        cancelled = sum(int(row.get("cancelled", 0) or 0) for row in grouped)
+
+        users = []
+        user_ids = [int(row["_id"]) for row in grouped if row.get("_id") is not None]
+        profiles = {}
+        if user_ids:
+            profile_rows = await asyncio.to_thread(
+                lambda: list(
+                    db.users.find(
+                        {"_id": {"$in": user_ids}},
+                        {"username": 1, "first_name": 1, "last_name": 1, "last_seen": 1},
+                    )
+                )
+            )
+            profiles = {int(row["_id"]): row for row in profile_rows}
+
+        for row in grouped:
+            uid = row.get("_id")
+            if uid is None:
+                continue
+            uid = int(uid)
+            profile = profiles.get(uid, {})
+            users.append({
+                "user_id": uid,
+                "username": profile.get("username"),
+                "first_name": profile.get("first_name"),
+                "last_name": profile.get("last_name"),
+                "last_seen": profile.get("last_seen"),
+                "scans": int(row.get("scans", 0) or 0),
+                "completed": int(row.get("completed", 0) or 0),
+                "failed": int(row.get("failed", 0) or 0),
+                "cancelled": int(row.get("cancelled", 0) or 0),
+                "last_scan": row.get("last_scan"),
+            })
+
+        return {
+            "available": True,
+            "users": users,
+            "total_users": len(users),
+            "total_scans": total_scans,
+            "completed": completed,
+            "failed": failed,
+            "cancelled": cancelled,
+        }
+    except Exception:
+        log.exception("Failed to build owner 7-day summary")
+        return {
+            "available": False,
+            "users": [],
+            "total_users": 0,
+            "total_scans": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 0,
+        }
+
+
+async def owner_user_scans(user_id: int, days: int = 7, limit: int = 50) -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+
+    try:
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=int(days))
+        return await asyncio.to_thread(
+            lambda: list(
+                db.scans.find(
+                    {
+                        "user_id": int(user_id),
+                        "created_at": {"$gte": cutoff},
+                    },
+                    {
+                        "filename": 1,
+                        "status": 1,
+                        "created_at": 1,
+                        "chat_id": 1,
+                        "message_id": 1,
+                        "source_bot": 1,
+                    },
+                ).sort("created_at", -1).limit(int(limit))
+            )
+        )
+    except Exception:
+        log.exception("Failed to load owner user scans")
+        return []
+
+
+async def owner_recent_users(days: int = 7, limit: int = 100) -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+
+    try:
+        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=int(days))
+        return await asyncio.to_thread(
+            lambda: list(
+                db.users.find(
+                    {"last_seen": {"$gte": cutoff}},
+                    {"username": 1, "first_name": 1, "last_name": 1, "last_seen": 1},
+                ).sort("last_seen", -1).limit(int(limit))
+            )
+        )
+    except Exception:
+        log.exception("Failed to load owner recent users")
+        return []
