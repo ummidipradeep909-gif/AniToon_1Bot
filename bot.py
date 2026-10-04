@@ -1719,6 +1719,14 @@ def _bind_bot_handlers(
             include_clone=include_clone,
         )
 
+    async def on_callback(event):
+        await handle_callback(
+            event,
+            client=client,
+            bot_username=bot_username,
+            include_clone=include_clone,
+        )
+
     async def on_chat_action(event):
         try:
             await _handle_bot_added_to_group(
@@ -1732,9 +1740,6 @@ def _bind_bot_handlers(
     client.add_event_handler(on_message, events.NewMessage(incoming=True))
     client.add_event_handler(on_callback, events.CallbackQuery)
     client.add_event_handler(on_chat_action, events.ChatAction())
-
-    client.add_event_handler(on_message, events.NewMessage(incoming=True))
-    client.add_event_handler(on_callback, events.CallbackQuery)
 
 
 async def _start_clone_bot(
