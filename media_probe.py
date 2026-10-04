@@ -19,16 +19,31 @@ from file_inspector import Report
 log = logging.getLogger("anitoons-media-probe")
 
 LANG_NAMES = {
-    "eng": "English", "en": "English", "jpn": "Japanese", "ja": "Japanese",
-    "hin": "Hindi", "hi": "Hindi", "tel": "Telugu", "te": "Telugu",
-    "tam": "Tamil", "ta": "Tamil", "mal": "Malayalam", "ml": "Malayalam",
-    "kan": "Kannada", "kn": "Kannada", "kor": "Korean", "ko": "Korean",
-    "zho": "Chinese", "chi": "Chinese", "zh": "Chinese", "spa": "Spanish",
-    "es": "Spanish", "fra": "French", "fre": "French", "fr": "French",
-    "deu": "German", "ger": "German", "de": "German", "ita": "Italian",
-    "it": "Italian", "rus": "Russian", "ru": "Russian", "ara": "Arabic",
-    "ar": "Arabic", "por": "Portuguese", "pt": "Portuguese",
-    "und": "Undetermined",
+    "eng":"English","en":"English","jpn":"Japanese","ja":"Japanese","hin":"Hindi","hi":"Hindi",
+    "tel":"Telugu","te":"Telugu","tam":"Tamil","ta":"Tamil","mal":"Malayalam","ml":"Malayalam",
+    "kan":"Kannada","kn":"Kannada","mar":"Marathi","mr":"Marathi","ben":"Bengali","bn":"Bengali",
+    "guj":"Gujarati","gu":"Gujarati","pan":"Punjabi","pa":"Punjabi","urd":"Urdu","ur":"Urdu",
+    "nep":"Nepali","ne":"Nepali","sin":"Sinhala","si":"Sinhala","asm":"Assamese","as":"Assamese",
+    "ori":"Odia","ory":"Odia","odia":"Odia","san":"Sanskrit","sa":"Sanskrit",
+    "kor":"Korean","ko":"Korean","zho":"Chinese","chi":"Chinese","zh":"Chinese",
+    "vie":"Vietnamese","vi":"Vietnamese","tha":"Thai","th":"Thai","ind":"Indonesian","id":"Indonesian",
+    "msa":"Malay","may":"Malay","ms":"Malay","fil":"Filipino","tl":"Filipino",
+    "spa":"Spanish","es":"Spanish","fra":"French","fre":"French","fr":"French",
+    "deu":"German","ger":"German","de":"German","ita":"Italian","it":"Italian","rus":"Russian","ru":"Russian",
+    "ara":"Arabic","ar":"Arabic","fas":"Persian","per":"Persian","fa":"Persian",
+    "por":"Portuguese","pt":"Portuguese","nld":"Dutch","dut":"Dutch","nl":"Dutch",
+    "pol":"Polish","pl":"Polish","tur":"Turkish","tr":"Turkish","ell":"Greek","gre":"Greek","el":"Greek",
+    "heb":"Hebrew","he":"Hebrew","ukr":"Ukrainian","uk":"Ukrainian","ron":"Romanian","rum":"Romanian","ro":"Romanian",
+    "hun":"Hungarian","hu":"Hungarian","ces":"Czech","cze":"Czech","cs":"Czech","slk":"Slovak","slo":"Slovak","sk":"Slovak",
+    "hrv":"Croatian","hr":"Croatian","srp":"Serbian","sr":"Serbian","slv":"Slovenian","sl":"Slovenian",
+    "bul":"Bulgarian","bg":"Bulgarian","swe":"Swedish","sv":"Swedish","dan":"Danish","da":"Danish",
+    "fin":"Finnish","fi":"Finnish","nor":"Norwegian","no":"Norwegian","isl":"Icelandic","ice":"Icelandic","is":"Icelandic",
+    "est":"Estonian","et":"Estonian","lav":"Latvian","lv":"Latvian","lit":"Lithuanian","lt":"Lithuanian",
+    "kat":"Georgian","ka":"Georgian","aze":"Azerbaijani","az":"Azerbaijani","kaz":"Kazakh","kk":"Kazakh",
+    "uzb":"Uzbek","uz":"Uzbek","mong":"Mongolian","mn":"Mongolian","khm":"Khmer","km":"Khmer",
+    "mya":"Burmese","bur":"Burmese","my":"Burmese","lao":"Lao","lo":"Lao",
+    "swa":"Swahili","sw":"Swahili","amh":"Amharic","am":"Amharic","afr":"Afrikaans","af":"Afrikaans",
+    "zul":"Zulu","zu":"Zulu","som":"Somali","so":"Somali","und":"Undetermined",
 }
 
 CODEC_NAMES = {
@@ -298,7 +313,7 @@ def _language_name(code: str | None) -> str | None:
     value = code.strip().lower().replace("_", "-")
     if value in {"und", "unknown", "unk"}:
         return None
-    return LANG_NAMES.get(value) or LANG_NAMES.get(value.split("-")[0])
+    return LANG_NAMES.get(value) or LANG_NAMES.get(value.split("-")[0]) or f"Unknown ({value})"
 
 
 def _codec_name(stream: Any) -> str:
@@ -424,6 +439,9 @@ def _stream_track(stream: Any) -> dict[str, Any]:
         if pix_fmt: track["pixel_format"] = str(pix_fmt)
         profile = getattr(stream, "profile", None)
         if profile: track["profile"] = str(profile)
+        level = getattr(stream.codec_context, "level", None)
+        if level not in (None, -99, -1):
+            track["level"] = str(level)
         fps = getattr(stream, "average_rate", None)
         if fps:
             try: track["frame_rate"] = f"{float(fps):.3f} fps"
