@@ -3821,8 +3821,11 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .hero-media img{{display:block;width:100%;height:100%;min-height:230px;object-fit:cover}}
 .media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
-.stat{{padding:12px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.03);transition:.2s ease}}
-.stat:hover{{transform:translateY(-2px);border-color:var(--line2)}}
+.stat{{position:relative;overflow:hidden;padding:12px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.018));transition:.25s ease;animation:cardIn .65s cubic-bezier(.2,1,.2,1) both}}
+.stat::before{{content:"";position:absolute;inset:-40%;background:conic-gradient(from 180deg,transparent,rgba(155,140,255,.14),rgba(94,231,255,.12),transparent 55%);animation:statSpin 7s linear infinite;pointer-events:none}}
+.stat b,.stat span{{position:relative;z-index:1}}
+.stat:nth-child(1){{animation-delay:.05s}}.stat:nth-child(2){{animation-delay:.10s}}.stat:nth-child(3){{animation-delay:.15s}}.stat:nth-child(4){{animation-delay:.20s}}.stat:nth-child(5){{animation-delay:.25s}}
+.stat:hover{{transform:translateY(-3px) scale(1.012);border-color:var(--line2);box-shadow:0 14px 32px rgba(0,0,0,.16)}}
 .stat b{{display:block;font-size:18px;letter-spacing:-.02em;overflow-wrap:anywhere}}
 .stat span{{color:var(--muted);font-size:10px}}
 .quick{{position:sticky;top:78px;z-index:20;display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:7px;border:1px solid var(--line);border-radius:15px;background:rgba(7,9,21,.60);backdrop-filter:blur(16px)}}
@@ -3839,9 +3842,11 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .toolbar{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
 .search{{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.035);color:var(--text);outline:none;font:700 11px system-ui}}
 .search:focus{{border-color:var(--line2);box-shadow:0 0 0 3px rgba(155,140,255,.08)}}
-.track-card{{display:flex;gap:12px;padding:13px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.032),rgba(255,255,255,.012));margin-bottom:8px;transition:.18s ease}}
+.track-card{{position:relative;overflow:hidden;display:flex;gap:12px;padding:13px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.032),rgba(255,255,255,.012));margin-bottom:8px;transition:.22s ease;animation:cardIn .55s cubic-bezier(.2,1,.2,1) both}}
+.track-card::after{{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 0 0,rgba(155,140,255,.10),transparent 36%);opacity:0;transition:.25s ease;pointer-events:none}}
 .track-card:last-child{{margin-bottom:0}}
-.track-card:hover{{transform:translateY(-1px);border-color:rgba(155,140,255,.28)}}
+.track-card:hover{{transform:translateY(-2px);border-color:rgba(155,140,255,.28);box-shadow:0 16px 34px rgba(0,0,0,.15)}}
+.track-card:hover::after{{opacity:1}}
 .track-orb{{width:42px;height:42px;flex:0 0 auto;border-radius:13px;display:grid;place-items:center;background:radial-gradient(circle at 30% 20%,rgba(155,140,255,.22),rgba(94,231,255,.07));border:1px solid rgba(155,140,255,.18);font-size:18px}}
 .track-content{{min-width:0;flex:1}}
 .track-heading{{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}}
@@ -3857,9 +3862,11 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .empty{{padding:14px;border:1px dashed rgba(255,255,255,.11);border-radius:14px;color:var(--muted);font-size:11px}}
 .preview-section{{display:none}}
 .preview-section.visible{{display:block}}
-.preview-card{{overflow:hidden;border:1px solid var(--line2);border-radius:18px;background:rgba(255,255,255,.025)}}
+.preview-card{{position:relative;overflow:hidden;border:1px solid var(--line2);border-radius:18px;background:rgba(255,255,255,.025);box-shadow:0 20px 48px rgba(0,0,0,.18);animation:cardIn .7s cubic-bezier(.2,1,.2,1) both}}
+.preview-card::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.11) 50%,transparent 80%);transform:translateX(-120%);animation:shimmer 5.5s ease-in-out infinite;pointer-events:none}}
 .preview-frame{{aspect-ratio:16/9;background:#070816;overflow:hidden}}
-.preview-frame img{{display:block;width:100%;height:100%;object-fit:cover}}
+.preview-frame img{{display:block;width:100%;height:100%;object-fit:cover;transform:scale(1.015);transition:transform .45s ease}}
+.preview-card:hover .preview-frame img{{transform:scale(1.045)}}
 .preview-meta{{display:flex;justify-content:space-between;gap:8px;padding:9px 11px;font-size:10px}}
 .preview-meta span{{color:var(--muted);text-align:right}}
 .tech-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
@@ -3874,9 +3881,12 @@ html[data-theme="light"] .anime-wallpaper{{opacity:.12}}
 html[data-theme="light"] .nav,html[data-theme="light"] .quick,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.78)}}
 html[data-theme="light"] .file{{color:#4e5878}}
 html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
-@keyframes wall{{from{{transform:scale(1.04)}}to{{transform:scale(1.08)}}}}
+@keyframes wall{{from{{transform:scale(1.04)}}to{{transform:scale(1.09)}}}}
 @keyframes scan{{0%{{background-position:0%}}100%{{background-position:200%}}}}
 @keyframes pulse{{0%,100%{{transform:scale(.86);opacity:.78}}50%{{transform:scale(1.16);opacity:1}}}}
+@keyframes statSpin{{to{{transform:rotate(360deg)}}}}
+@keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
+@keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media,.hero-media img{{min-height:210px}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media,.hero-media img{{min-height:180px}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
