@@ -197,6 +197,9 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     typ=num=name=lang=lang_i=cid=cname=None
     default=forced=enabled=sdh=vi=original=commentary=None
     channels=depth=width=height=None
+    display_width=display_height=None
+    interlaced=stereo_mode=None
+    default_duration=codec_delay=seek_preroll=None
     rate=None
 
     for eid,cs,ce in _children(data,s,e):
@@ -218,6 +221,9 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
         elif eid==0x9F and b:channels=int.from_bytes(b,"big")
         elif eid==0xB5:rate=_flt(data,cs,ce)
         elif eid==0x6264 and b:depth=int.from_bytes(b,"big")
+        elif eid==0x23E383 and b:default_duration=int.from_bytes(b,"big")
+        elif eid==0x56AA and b:codec_delay=int.from_bytes(b,"big")
+        elif eid==0x56BB and b:seek_preroll=int.from_bytes(b,"big")
         elif eid==0xE1:
             for nid,ns,ne in _children(data,cs,ce):
                 nb=data[ns:ne]
@@ -229,6 +235,10 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
                 nb=data[ns:ne]
                 if nid==0xB0 and nb:width=int.from_bytes(nb,"big")
                 elif nid==0xBA and nb:height=int.from_bytes(nb,"big")
+                elif nid==0x54B0 and nb:display_width=int.from_bytes(nb,"big")
+                elif nid==0x54BA and nb:display_height=int.from_bytes(nb,"big")
+                elif nid==0x9A and nb:interlaced=bool(int.from_bytes(nb,"big"))
+                elif nid==0x53B8 and nb:stereo_mode=int.from_bytes(nb,"big")
 
     if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
@@ -254,23 +264,29 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     else:
         display_name=f"{base_type} Track{track_label}"; name_source="stream type fallback"
 
-    d={
-        "type":typ,"track":str(num) if num is not None else None,
-        "name":display_name,"display_name":display_name,"name_source":name_source,
-        "language":use_lang,"language_name":lname,"codec":cid,"codec_name":codec_display,
-    }
-    for k,v in (
-        ("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),
-        ("hearing_impaired",sdh if typ=="subtitles" else None),
-        ("visual_impaired",vi if typ=="subtitles" else None),
-        ("original",original),("commentary",commentary)
-    ):
+    d={"type":typ,"track":str(num) if num is not None else None,
+       "name":display_name,"display_name":display_name,"name_source":name_source,
+       "language":use_lang,"language_name":lname,"codec":cid,"codec_name":codec_display}
+    for k,v in (("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),
+                ("hearing_impaired",sdh if typ=="subtitles" else None),
+                ("visual_impaired",vi if typ=="subtitles" else None),
+                ("original",original),("commentary",commentary)):
         if v is not None:d[k]="yes" if v else "no"
+
     if typ=="audio":
         if channels is not None:d["channels"]=str(channels)
         if rate and rate>0:d["sample_rate"]=f"{rate/1000:.1f} kHz"
         if depth is not None:d["bit_depth"]=f"{depth} bit"
-    if typ=="video" and width and height:d["dimensions"]=f"{width} × {height}"
+        if codec_delay is not None:d["codec_delay"]=f"{codec_delay} ns"
+        if seek_preroll is not None:d["seek_preroll"]=f"{seek_preroll} ns"
+
+    if typ=="video":
+        if width and height:d["dimensions"]=f"{width} × {height}"
+        if display_width and display_height:d["display_dimensions"]=f"{display_width} × {display_height}"
+        if interlaced is not None:d["scan_type"]="Interlaced" if interlaced else "Progressive"
+        if stereo_mode is not None:d["stereo_mode"]=str(stereo_mode)
+        if default_duration and default_duration>0:d["frame_rate"]=f"{1_000_000_000/default_duration:.3f} fps"
+
     return {k:v for k,v in d.items() if v not in (None,"")}
 
 def _merge(report:Report,track:dict[str,Any]):
