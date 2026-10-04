@@ -135,6 +135,161 @@ clone_setup_pending: dict[int, float] = {}
 last_scan_by_user: dict[int, float] = {}
 CLONE_SETUP_TTL_SECONDS = 5 * 60
 
+def add_to_group_url(bot_username: str = BOT_USERNAME) -> str:
+    permissions = GROUP_ADMIN_PERMISSIONS
+    return f"https://t.me/{bot_username}?startgroup&admin={permissions}"
+
+
+def safe_filename(message: Any) -> str:
+    name = getattr(getattr(message, "file", None), "name", None)
+    return str(name or "telegram_file")
+
+
+def metadata_button(token: str):
+    return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
+
+
+def cancel_button(token: str):
+    return [[Button.inline("❌ Cancel Scan", f"cancel:{token}".encode("ascii"))]]
+
+
+def clone_buttons():
+    return [
+        [Button.inline("🔐 Enter Clone Token", b"clone:token")],
+        [Button.url("🤖 Open @BotFather", "https://t.me/BotFather")],
+        [Button.inline("⬅️ Home", b"home:back")],
+    ]
+
+
+def web_report_button(
+    token: str,
+    bot_username: str = BOT_USERNAME,
+    *,
+    include_clone: bool = True,
+):
+    buttons = [
+        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
+    ]
+    if include_clone and CLONE_BOT_USERNAME:
+        buttons.append([
+            Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")
+        ])
+    buttons.append([
+        Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))
+    ])
+    return buttons
+
+
+def compact_scan_result(report: Report) -> str:
+    return (
+        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
+        "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
+    )
+
+
+HOME_TEXT = (
+    "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
+    "🔎 Scan Telegram media files for detailed metadata.\n"
+    "🌐 View complete file information in your browser.\n"
+    "🧬 Create and manage clone bots.\n\n"
+    "Choose an option below."
+)
+
+HELP_TEXT = (
+    "📖 <b>AniToon Help</b>\n\n"
+    "🔎 Send a video/document and press <b>📥 Download Metadata</b> to scan.\n"
+    "🌐 View the complete report with <b>Open File Info</b>.\n\n"
+    "<b>Commands & what they do</b>\n"
+    "/start — Open the AniToon home page\n"
+    "/help — Show this help and command guide\n"
+    "/about — See information about AniToon\n"
+    "/addtogroup — Get the button to add AniToon to your group\n"
+    "/clone — Start clone-bot setup with a BotFather token\n"
+    "/clones — View your clone bots, stats, and remove a clone\n"
+    "/cancel — Cancel your active metadata scan\n\n"
+    "Use the buttons below for the same features."
+)
+
+ABOUT_TEXT = (
+    "ℹ️ <b>About AniToon</b>\n\n"
+    "AniToon scans Telegram media without intentionally downloading complete large files.\n"
+    "It uses bounded range reads to inspect container, video, audio and subtitle metadata."
+)
+
+
+def cache_state(status_message: Any, source_message: Any, report: Report) -> ScanState:
+    token = secrets.token_urlsafe(18)
+    state = ScanState(
+        source_message=source_message,
+        report=report,
+        created_at=time.monotonic(),
+        web_token=token,
+    )
+    web_states[token] = state
+    while len(web_states) > MAX_STORED_RESULTS:
+        oldest = next(iter(web_states), None)
+        if oldest is None:
+            break
+        web_states.pop(oldest, None)
+    return state
+
+
+def _purge_states() -> None:
+    now = time.monotonic()
+    expired = [
+        token for token, state in web_states.items()
+        if now - state.created_at > REPORT_LINK_TTL_SECONDS
+    ]
+    for token in expired:
+        web_states.pop(token, None)
+    pending_expired = [
+        token for token, pending in pending_scans.items()
+        if now - pending.created_at > PENDING_SCAN_TTL_SECONDS
+    ]
+    for token in pending_expired:
+        pending_scans.pop(token, None)
+
+
+def home_buttons(
+    bot_username: str = BOT_USERNAME,
+    *,
+    include_clone: bool = True,
+    user_id: int | None = None,
+):
+    buttons = [
+        [Button.inline("🔎 Scan Files", b"home:scan")],
+    ]
+    if include_clone:
+        buttons.append([Button.inline("🤖 My Clones", b"home:clones")])
+        buttons.append([Button.inline("🧬 Create Clone", b"home:clone")])
+    buttons.append([Button.inline("📖 Help", b"home:help")])
+    buttons.append([Button.inline("ℹ️ About", b"home:about")])
+    if include_clone and _owner_allowed(user_id):
+        buttons.append([Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
+    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
+    return buttons
+
+
+def help_buttons(
+    bot_username: str = BOT_USERNAME,
+    *,
+    include_clone: bool = True,
+    user_id: int | None = None,
+):
+    buttons = [
+        [Button.inline("🔎 Scan Files", b"home:scan")],
+        [Button.inline("ℹ️ About", b"home:about")],
+    ]
+    if include_clone:
+        buttons.insert(1, [Button.inline("🤖 My Clones", b"home:clones")])
+        buttons.insert(2, [Button.inline("🧬 Create Clone", b"home:clone")])
+    if _owner_allowed(user_id):
+        buttons.insert(2 if include_clone else 1, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
+    buttons.append([Button.inline("⬅️ Home", b"home:back")])
+    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
+    return buttons
+
+
 def _new_clone_stats() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     return {
