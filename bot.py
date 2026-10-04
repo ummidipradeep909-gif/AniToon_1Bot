@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import io
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from telethon.sessions import MemorySession
 
 from file_inspector import Report, format_report, format_section
 from media_probe import (
+    create_video_previews,
     ProbeBudgetExceeded,
     ProbeCancelled,
     cancel_probe,
@@ -234,6 +236,53 @@ def compact_scan_result(report: Report) -> str:
         "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
         "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
     )
+
+
+async def send_video_previews(
+    client: Any,
+    source_message: Any,
+    scan_token: str,
+) -> int:
+    """Create and send five timeline preview images for a video."""
+    try:
+        previews = await create_video_previews(client, source_message, scan_token)
+        if not previews:
+            return 0
+
+        files = []
+        captions = []
+        for index, (data, seconds) in enumerate(previews, 1):
+            image = io.BytesIO(data)
+            image.name = f"AniToon_Preview_{index}.jpg"
+            files.append(image)
+
+            total_seconds = max(0, int(seconds))
+            minutes, secs = divmod(total_seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            stamp = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+            ratio = (index * 20) - 10
+            captions.append(
+                f"🎞️ <b>Preview {index}/5</b> • {ratio}%\n"
+                f"⏱️ {stamp} into video"
+            )
+
+        await client.send_file(
+            source_message.chat_id,
+            files,
+            caption=captions,
+            parse_mode="html",
+            reply_to=source_message.id,
+        )
+        return len(files)
+    except (ProbeBudgetExceeded, ProbeCancelled):
+        return 0
+    except Exception:
+        log.exception("Failed to send video previews")
+        return 0
+    finally:
+        for image in locals().get("files", []):
+            with suppress(Exception):
+                image.close()
 
 
 HOME_TEXT = (
@@ -1174,6 +1223,15 @@ async def analyze_source(
             )
         except Exception:
             log.exception("Failed to persist web report")
+
+        preview_count = 0
+        if report.video.get("tracks"):
+            await edit_status(
+                status_message,
+                "✅ <b>METADATA SCAN COMPLETE</b>\n\n🎞️ Preparing 5 video previews…",
+            )
+            preview_count = await send_video_previews(client, source_message, scan_token)
+
         await record_scan(
             user_id=user_id,
             source_message=source_message,
@@ -1182,9 +1240,12 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
+        final_result_text = compact_scan_result(report)
+        if preview_count:
+            final_result_text += f"\n\n🎞️ <b>{preview_count} video previews</b> • 10% → 90%"
         await edit_status(
             status_message,
-            compact_scan_result(report),
+            final_result_text,
             buttons=web_report_button(
                 scan_token,
                 bot_username,
