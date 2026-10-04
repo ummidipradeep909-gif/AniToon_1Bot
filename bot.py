@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import shutil
+import tempfile
 import time
 from contextlib import suppress
 from dataclasses import asdict, dataclass
@@ -636,8 +637,78 @@ async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
     return True
 
 
+APP_TMP_DIR = os.path.join(tempfile.gettempdir(), "anitoon")
+APP_TMP_LIMIT_BYTES = 32 * 1024 * 1024
+APP_TMP_RETENTION_SECONDS = 10 * 60
+
+
+def cleanup_app_temp() -> tuple[int, int]:
+    os.makedirs(APP_TMP_DIR, exist_ok=True)
+    now = time.time()
+    files: list[tuple[str, int, float]] = []
+    removed = 0
+    removed_bytes = 0
+
+    for root, _, names in os.walk(APP_TMP_DIR):
+        for name in names:
+            path = os.path.join(root, name)
+            try:
+                size = os.path.getsize(path)
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if now - mtime >= APP_TMP_RETENTION_SECONDS:
+                try:
+                    os.remove(path)
+                except OSError:
+                    continue
+                removed += 1
+                removed_bytes += size
+                continue
+            files.append((path, size, mtime))
+
+    total = sum(size for _, size, _ in files)
+    if total > APP_TMP_LIMIT_BYTES:
+        for path, size, _ in sorted(files, key=lambda item: item[2]):
+            if total <= APP_TMP_LIMIT_BYTES:
+                break
+            try:
+                os.remove(path)
+            except OSError:
+                continue
+            total -= size
+            removed += 1
+            removed_bytes += size
+
+    for root, dirs, _ in os.walk(APP_TMP_DIR, topdown=False):
+        for name in dirs:
+            with suppress(OSError):
+                os.rmdir(os.path.join(root, name))
+
+    return removed, removed_bytes
+
+
+def app_temp_usage_bytes() -> int:
+    os.makedirs(APP_TMP_DIR, exist_ok=True)
+    total = 0
+    for root, _, names in os.walk(APP_TMP_DIR):
+        for name in names:
+            with suppress(OSError):
+                total += os.path.getsize(os.path.join(root, name))
+    return total
+
+
+async def temp_cleanup_loop() -> None:
+    while True:
+        try:
+            cleanup_app_temp()
+        except Exception:
+            log.exception("Temporary storage cleanup failed")
+        await asyncio.sleep(300)
+
+
 def runtime_resource_stats() -> dict[str, Any]:
-    """Return app-local resource signals; exact workspace billing remains in Render."""
+    """Return app-owned resource signals; host/root filesystem is not app-controlled."""
     rss_mb = 0.0
     try:
         with open("/proc/self/status", "r", encoding="utf-8") as handle:
@@ -650,14 +721,9 @@ def runtime_resource_stats() -> dict[str, Any]:
 
     ram_limit_mb = 512.0
     ram_pct = (rss_mb / ram_limit_mb * 100.0) if ram_limit_mb else 0.0
-
-    try:
-        disk = shutil.disk_usage("/")
-        disk_used_pct = disk.used / disk.total * 100.0 if disk.total else 0.0
-        disk_used_gb = disk.used / (1024**3)
-    except OSError:
-        disk_used_pct = 0.0
-        disk_used_gb = 0.0
+    tmp_bytes = app_temp_usage_bytes()
+    tmp_mb = tmp_bytes / (1024**2)
+    tmp_pct = min(100.0, tmp_bytes / APP_TMP_LIMIT_BYTES * 100.0)
 
     uptime_hours = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600.0
     uptime_pct = min(100.0, uptime_hours / 750.0 * 100.0)
@@ -668,14 +734,15 @@ def runtime_resource_stats() -> dict[str, Any]:
         "rss_mb": rss_mb,
         "ram_limit_mb": ram_limit_mb,
         "ram_pct": ram_pct,
-        "disk_used_pct": disk_used_pct,
-        "disk_used_gb": disk_used_gb,
+        "tmp_mb": tmp_mb,
+        "tmp_bytes": tmp_bytes,
+        "tmp_pct": tmp_pct,
+        "tmp_limit_mb": APP_TMP_LIMIT_BYTES / (1024**2),
         "uptime_hours": uptime_hours,
         "uptime_pct": uptime_pct,
         "web_egress_gb": egress_gb,
         "web_egress_pct": egress_pct,
     }
-
 
 def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
@@ -728,12 +795,12 @@ async def render_owner_resources(event, user_id: int) -> None:
         f"🧠 RAM <b>{stats['rss_mb']:.1f}/512 MB</b> • {stats['ram_pct']:.1f}% {ram_state}\n"
         f"📡 Web egress <b>{stats['web_egress_gb']:.3f}/4 GB</b> • {stats['web_egress_pct']:.1f}% {egress_state}\n"
         f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
-        f"💾 Disk <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n"
+        f"🧹 Bot temp <b>{stats['tmp_mb']:.1f}/{stats['tmp_limit_mb']:.0f} MB</b> • {stats['tmp_pct']:.1f}%\n"
         f"🔎 Load <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b> active • {queued_processes} queued\n"
         f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
-        "ℹ️ RAM ↑ = bot workers + media parsing. Web egress ↑ = browser traffic/previews. "
-        "Uptime ↑ = process running. Disk is ephemeral runtime storage.\n"
-        "⚠️ Render's exact workspace billing meters are shown in Render Billing/Metrics."
+        "ℹ️ RAM ↑ = workers/media parsing. Web ↑ = browser traffic/previews. "
+        "Uptime ↑ = process running. Bot temp is auto-cleaned every 5 min; old files expire after 10 min.\n"
+        "⚠️ Render host/root disk usage is not app-owned and cannot be safely cleaned by the bot."
     )
     await event.edit(
         text,
@@ -4136,7 +4203,10 @@ async def health_server():
 async def main():
     clone_monitor_task: asyncio.Task | None = None
     group_onboarding_task: asyncio.Task | None = None
+    temp_cleanup_task: asyncio.Task | None = None
     _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
+    cleanup_app_temp()
+    temp_cleanup_task = asyncio.create_task(temp_cleanup_loop())
     health = await health_server()
 
     try:
@@ -4256,6 +4326,10 @@ async def main():
         clone_client_ids.clear()
         clone_stats.clear()
         active_scan_clients.clear()
+        if temp_cleanup_task is not None:
+            temp_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await temp_cleanup_task
         for task in list(preview_tasks):
             task.cancel()
         for task in list(preview_tasks):
