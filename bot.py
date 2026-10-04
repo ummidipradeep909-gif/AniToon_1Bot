@@ -485,7 +485,7 @@ async def remove_clone_as_owner(owner_id: int, clone_id: int) -> bool:
     return True
 
 
-async def render_owner_clones(event, owner_id: int) -> None:
+async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
     if not _owner_allowed(owner_id):
         await event.answer("Owner access only.", alert=True)
         return
@@ -503,31 +503,42 @@ async def render_owner_clones(event, owner_id: int) -> None:
         })
 
     items.sort(key=lambda x: x["clone_id"], reverse=True)
+    page_size = 5
+    max_page = max(0, (len(items) - 1) // page_size)
+    page = max(0, min(int(page), max_page))
+    chunk = items[page * page_size:(page + 1) * page_size]
 
     if not items:
         await event.edit(
             "👑 <b>Clone Bots of AniToon</b>\n\nNo active clone bots.",
             parse_mode="html",
-            buttons=[[Button.inline("⬅️ Dashboard", b"owner:dashboard")]],
+            buttons=[
+                [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
+            ],
         )
         return
 
-    lines = [f"👑 <b>Clone Bots of AniToon</b> — {len(items)} active", ""]
+    lines = [
+        f"👑 <b>Clone Bots of AniToon</b> — {len(items)} active",
+        "",
+    ]
     buttons = []
-    for item in items[:20]:
+
+    for item in chunk:
         clone_username = str(item.get("clone_username") or "").lstrip("@")
         owner_id = int(item["owner_id"])
         owner_name = html.escape(str(item["owner_name"]))
         status = "🟢 Online" if item["online"] else "🔴 Offline"
+
         lines.append(
             f"🤖 <b>@{html.escape(clone_username or 'unknown')}</b> — {status}\n"
-            f"👤 <a href="tg://user?id={owner_id}">{owner_name}</a>"
+            f"👤 <a href=\"tg://user?id={owner_id}\">{owner_name}</a>"
         )
+
         if clone_username:
-            buttons.append([Button.url(
-                "🤖 Open Clone",
-                f"https://t.me/{clone_username}",
-            )])
+            buttons.append([
+                Button.url("🤖 Open Clone", f"https://t.me/{clone_username}")
+            ])
         buttons.append([
             Button.inline(
                 "🗑 Remove Clone",
@@ -535,223 +546,32 @@ async def render_owner_clones(event, owner_id: int) -> None:
             )
         ])
 
-    if len(items) > 20:
-        lines.append(f"\n…and {len(items) - 20} more active clone(s).")
+    nav = []
+    if page > 0:
+        nav.append(
+            Button.inline(
+                "◀️ Previous",
+                f"owner:clones:{page - 1}".encode("ascii"),
+            )
+        )
+    if page < max_page:
+        nav.append(
+            Button.inline(
+                "Next ▶️",
+                f"owner:clones:{page + 1}".encode("ascii"),
+            )
+        )
+    if nav:
+        buttons.append(nav)
 
-    buttons.append([Button.inline("🔄 Refresh", b"owner:clones")])
+    buttons.append([Button.inline("🔄 Refresh", f"owner:clones:{page}".encode("ascii"))])
     buttons.append([Button.inline("⬅️ Dashboard", b"owner:dashboard")])
+
     await event.edit(
-        "\n".join(lines),
+        "\n".join(lines) + f"\n\nPage {page + 1}/{max_page + 1}",
         parse_mode="html",
         buttons=buttons,
     )
-
-
-HOME_TEXT = (
-    "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
-    "🔎 Scan Telegram media files for detailed metadata.\n"
-    "🌐 View complete file information in your browser.\n"
-    "🧬 Create and manage clone bots.\n\n"
-    "Choose an option below."
-)
-
-HELP_TEXT = (
-    "📖 <b>AniToon Help</b>\n\n"
-    "🔎 Send a video/document and press <b>📥 Download Metadata</b> to scan.\n"
-    "🌐 View the complete report with <b>Open File Info</b>.\n\n"
-    "<b>Commands & what they do</b>\n"
-    "/start — Open the AniToon home page\n"
-    "/help — Show this help and command guide\n"
-    "/about — See information about AniToon\n"
-    "/addtogroup — Get the button to add AniToon to your group\n"
-    "/clone — Start clone-bot setup with a BotFather token\n"
-    "/clones — View your clone bots, stats, and remove a clone\n"
-    "/cancel — Cancel your active metadata scan\n\n"
-    "Use the buttons below for the same features."
-)
-
-
-ABOUT_TEXT = (
-    "⛩ <b>AniToon Bot</b> ⛩\n\n"
-    "File metadata inspection for Telegram media.\n"
-    "Detailed metadata is shown on the web report after a scan.\n\n"
-    "🌐 Web: " + PUBLIC_WEB_URL
-)
-
-
-def add_to_group_url(bot_username: str) -> str:
-    return f"https://t.me/{bot_username}?startgroup&admin={GROUP_ADMIN_PERMISSIONS}"
-
-
-def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True, user_id: int | None = None):
-    if include_clone:
-        buttons = [
-            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
-            [Button.inline("🧬 Create Clone", b"home:clone"), Button.inline("📖 Help", b"home:help")],
-            [Button.inline("ℹ️ About", b"home:about")],
-        ]
-        if CLONE_BOT_USERNAME:
-            buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
-    else:
-        buttons = [
-            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("📖 Help", b"home:help")],
-            [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
-        ]
-    if include_clone and _owner_allowed(user_id):
-        buttons.insert(3, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
-    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
-    return buttons
-
-
-def help_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True, user_id: int | None = None):
-    if include_clone:
-        buttons = [
-            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
-            [Button.inline("🧬 Create Clone", b"home:clone"), Button.inline("ℹ️ About", b"home:about")],
-            [Button.inline("⬅️ Home", b"home:back")],
-        ]
-        if _owner_allowed(user_id):
-            buttons.insert(2, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
-        buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
-        return buttons
-    return [
-        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("ℹ️ About", b"home:about")],
-        [Button.inline("⬅️ Home", b"home:back")],
-        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
-    ]
-
-
-def clone_buttons():
-    return [
-        [Button.inline("🔐 Enter Clone Token", b"clone:token")],
-        [Button.url("🤖 Open @BotFather", "https://t.me/BotFather")],
-        [Button.inline("⬅️ Home", b"home:back")],
-    ]
-
-
-def web_report_button(
-    token: str,
-    bot_username: str = BOT_USERNAME,
-    *,
-    include_clone: bool = True,
-):
-    row = [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]
-    if include_clone and CLONE_BOT_USERNAME:
-        row.append(Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}"))
-    return [
-        row,
-        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
-    ]
-
-
-def metadata_button(token: str):
-    return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
-
-
-def cancel_button(token: str):
-    return [[Button.inline("❌ Cancel Scan", f"cancel:{token}".encode("ascii"))]]
-
-
-def purge_pending_scans() -> None:
-    now = time.monotonic()
-    expired = [
-        token
-        for token, pending in pending_scans.items()
-        if now - pending.created_at > PENDING_SCAN_TTL_SECONDS
-    ]
-    for token in expired:
-        pending_scans.pop(token, None)
-
-
-def compact_scan_result(report: Report) -> str:
-    return (
-        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
-        "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
-    )
-
-
-def is_checkable_message(event) -> bool:
-    message = event.message
-    if not message or not getattr(message, "media", None):
-        return False
-    if not getattr(message, "file", None) and not getattr(message, "photo", None):
-        return False
-    if FILE_CHECKER_PRIVATE_ONLY and not event.is_private:
-        return False
-    return True
-
-
-def safe_filename(message: Any) -> str:
-    file_obj = getattr(message, "file", None)
-    name = getattr(file_obj, "name", None)
-    if name:
-        return str(name)
-    ext = getattr(file_obj, "ext", None)
-    if ext:
-        return f"telegram_file{ext}"
-    if getattr(message, "photo", None):
-        return "telegram_photo"
-    return "telegram_file"
-
-
-def state_key(message: Any) -> tuple[int, int] | None:
-    chat_id = getattr(message, "chat_id", None)
-    msg_id = getattr(message, "id", None)
-    if chat_id is None or msg_id is None:
-        return None
-    return int(chat_id), int(msg_id)
-
-
-def cache_state(report_message: Any, source_message: Any, report: Report) -> ScanState | None:
-    key = state_key(report_message)
-    if key is None:
-        return None
-
-    # Each bot client can produce the same Telegram message IDs in the same
-    # user's private chat, so never reuse a previous state for a new report.
-    token = secrets.token_urlsafe(18)
-    state = ScanState(
-        source_message=source_message,
-        report=report,
-        created_at=time.monotonic(),
-        web_token=token,
-    )
-    scan_states[key] = state
-    web_states[token] = state
-    _purge_states()
-    return state
-
-
-def _purge_states() -> None:
-    purge_pending_scans()
-    now = time.monotonic()
-    expired_keys = [
-        key for key, state in scan_states.items()
-        if now - state.created_at > REPORT_LINK_TTL_SECONDS
-    ]
-    for key in expired_keys:
-        state = scan_states.pop(key, None)
-        if state:
-            web_states.pop(state.web_token, None)
-
-    expired_tokens = [
-        token for token, state in web_states.items()
-        if now - state.created_at > REPORT_LINK_TTL_SECONDS
-    ]
-    for token in expired_tokens:
-        web_states.pop(token, None)
-
-    if len(web_states) > MAX_STORED_RESULTS:
-        ordered = sorted(web_states.items(), key=lambda item: item[1].created_at)
-        for token, state in ordered[: len(web_states) - MAX_STORED_RESULTS]:
-            web_states.pop(token, None)
-            for key, current in list(scan_states.items()):
-                if current is state:
-                    scan_states.pop(key, None)
-
-
-def clip(text: str, limit: int = 3900) -> str:
-    return text if len(text) <= limit else text[: limit - 40] + "\n\n…message shortened."
 
 
 async def edit_status(message, text: str, *, buttons=None) -> None:
@@ -1412,14 +1232,18 @@ async def handle_callback(
     purge_pending_scans()
     data = (event.data or b"").decode("ascii", "ignore")
 
-    if data == "owner:clones":
+    if data.startswith("owner:clones"):
         await event.answer()
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
         if not _owner_allowed(user_id):
             await event.answer("Owner access only.", alert=True)
             return
-        await render_owner_clones(event, int(user_id))
+        try:
+            page = int(data.split(":", 2)[2]) if data.count(":") >= 2 else 0
+        except ValueError:
+            page = 0
+        await render_owner_clones(event, int(user_id), page)
         return
 
     if data.startswith("owner:clone_remove:"):
