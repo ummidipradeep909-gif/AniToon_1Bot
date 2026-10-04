@@ -1029,7 +1029,7 @@ async def run_scan(
             source_message,
             scan_token,
             progress=progress,
-            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "4194304")),
+            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "33554432")),
             port=int(os.getenv("PORT", "10000")),
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
