@@ -637,6 +637,73 @@ def _extract_video_previews(container: Any, stream: Any) -> list[dict[str, Any]]
             log.exception("Preview extraction failed | ratio=%.2f", ratio)
     return previews
 
+PREVIEW_CONCURRENCY = 1
+preview_semaphore = asyncio.Semaphore(PREVIEW_CONCURRENCY)
+
+async def generate_video_previews(
+    client: Any,
+    message: Any,
+    token: str,
+    *,
+    budget: int = 24 * 1024 * 1024,
+    timeout: int = 35,
+) -> list[dict[str, Any]]:
+    """Generate web-only preview frames without holding the metadata scan slot."""
+    async with preview_semaphore:
+        f = getattr(message, "file", None)
+        media = getattr(message, "media", None)
+        if not media:
+            return []
+        name = str(getattr(f, "name", None) or "").lower()
+        mime = str(getattr(f, "mime_type", None) or "").lower()
+        ext = (".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".m2ts", ".mts")
+        if "video" not in mime and not name.endswith(ext):
+            return []
+
+        total = getattr(f, "size", None)
+        ptoken = f"{token}:preview"
+        effective_budget = max(8 * 1024 * 1024, min(int(budget), MAX_PROBE_BUDGET))
+        session = register_probe(ptoken, client, media, total, budget=effective_budget)
+        loop = asyncio.get_running_loop()
+        reader = TelegramSeekableFile(session, loop)
+
+        format_hint = None
+        if name.endswith(".mkv") or "matroska" in mime:
+            format_hint = "matroska"
+        elif name.endswith(".webm") or "webm" in mime:
+            format_hint = "webm"
+        elif name.endswith((".mp4", ".m4v", ".mov")) or "mp4" in mime:
+            format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
+        elif name.endswith((".ts", ".m2ts", ".mts")) or "mpegts" in mime:
+            format_hint = "mpegts"
+
+        def work():
+            container = None
+            try:
+                container = _open_with_ffmpeg(reader, format_hint)
+                stream = next((s for s in container.streams if s.type == "video"), None)
+                if stream is None:
+                    return []
+                return _extract_video_previews(container, stream)
+            finally:
+                if container is not None:
+                    with suppress(Exception):
+                        container.close()
+                remove_probe(ptoken)
+                reader.close()
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(work), timeout=timeout)
+        except (asyncio.TimeoutError, ProbeBudgetExceeded, ProbeCancelled):
+            log.warning("Preview generation stopped safely | token=%s", token)
+            with suppress(Exception):
+                await session.cancel()
+            return []
+        except Exception:
+            log.exception("Background preview generation failed | token=%s", token)
+            return []
+
+
 def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
     options = {
         "probesize": str(4 * 1024 * 1024),
@@ -688,7 +755,7 @@ async def inspect_telegram_player(
                 client,
                 message,
                 progress=progress,
-                deep=True,
+                deep=False,
             )
         except (ProbeBudgetExceeded, ProbeCancelled):
             raise
@@ -721,10 +788,6 @@ async def inspect_telegram_player(
             )
             await say("🔎 Stage 3/4 • reading video, audio and subtitle streams…")
             player_report = _build_report(message, container, session)
-            video_streams = [s for s in container.streams if s.type == "video"]
-            if video_streams:
-                await say("🧩 Stage 4/4 • preparing visual previews for the web report…")
-                player_report.previews = _extract_video_previews(container, video_streams[0])
         finally:
             if container is not None:
                 container.close()
