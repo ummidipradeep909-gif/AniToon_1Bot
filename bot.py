@@ -2785,6 +2785,10 @@ def home_page(report_token: str | None = None) -> bytes:
         ("⚡", "Beyblade", "https://t.me/Ani_beyblade"),
         ("⚡", "Pokemon", "https://t.me/poketmonster_01"),
     ]
+    socials = [
+        ("◎", "Instagram", "@AniToonHQ", "https://www.instagram.com/AniToonHQ"),
+        ("▶", "YouTube", "AniToon HQ", "https://www.youtube.com/channel/UC5LrPauKQX6PkO8mLd-DxEg"),
+    ]
 
     def card(icon: str, name: str, url: str) -> str:
         return (
@@ -2797,6 +2801,15 @@ def home_page(report_token: str | None = None) -> bytes:
 
     current_html = "".join(card(*item) for item in channels)
     completed_html = "".join(card(*item) for item in completed)
+
+    social_html = "".join(
+        f'<a class="social-channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+        f'<span class="social-icon">{icon}</span>'
+        f'<span class="social-main"><strong>{html.escape(name)}</strong><small>{html.escape(handle)}</small></span>'
+        f'<span class="channel-arrow">↗</span>'
+        f'</a>'
+        for icon, name, handle, url in socials
+    )
 
     report_embed = ""
     if report_token:
@@ -2867,6 +2880,12 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel-icon{{width:36px;height:36px;display:grid;place-items:center;flex:0 0 auto;border-radius:12px;background:rgba(154,140,255,.08);border:1px solid rgba(154,140,255,.13);font-size:18px}}
 .channel-name{{flex:1;min-width:0;font-weight:800}}
 .channel-arrow{{color:var(--muted);font-size:18px}}
+.social-channel{{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px 13px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.012));transition:.20s ease}}
+.social-channel:hover{{transform:translateY(-3px);border-color:rgba(94,231,255,.30);box-shadow:0 14px 30px rgba(0,0,0,.22)}}
+.social-icon{{width:40px;height:40px;display:grid;place-items:center;flex:0 0 auto;border-radius:13px;background:linear-gradient(145deg,rgba(154,140,255,.13),rgba(94,231,255,.08));border:1px solid rgba(255,255,255,.10);font-size:20px;font-weight:900}}
+.social-main{{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0}}
+.social-main strong{{font-size:12px}}
+.social-main small{{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .report-section iframe{{display:block;width:100%;height:1900px;border:0;background:#050611}}
 .footer{{display:flex;justify-content:space-between;gap:12px;margin-top:18px;color:#777d98;font-size:10px;padding:0 4px}}
 .footer b{{color:#b7b8ca}}
@@ -2909,6 +2928,11 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
   <section class="section">
     <div class="section-head"><div><small>ARCHIVE</small><h2>✅ Completed collections</h2></div></div>
     <div class="list">{completed_html}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><small>CONNECT</small><h2>📲 Social Accounts</h2></div></div>
+    <div class="list">{social_html}</div>
   </section>
 
   <footer class="footer">
