@@ -233,7 +233,7 @@ def web_report_button(
     include_clone: bool = True,
 ):
     buttons = [
-        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
+        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}?embed=1")],
     ]
     if include_clone and CLONE_BOT_USERNAME:
         buttons.append([
@@ -1426,15 +1426,6 @@ async def analyze_source(
             status="completed",
             source_bot=bot_username,
         )
-
-        resend_ok = False
-        if user_id is not None:
-            resend_ok = await resend_scanned_file(
-                client,
-                int(user_id),
-                source_message,
-                filename=filename,
-            )
 
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
