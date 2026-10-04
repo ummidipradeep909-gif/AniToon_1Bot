@@ -1398,18 +1398,25 @@ async def main():
                 )
                 await asyncio.sleep(wait_seconds)
 
-        await bot(functions.bots.SetBotCommandsRequest(
-            scope=types.BotCommandScopeDefault(),
-            lang_code="en",
-            commands=[
-                types.BotCommand(command="start", description="Open the bot"),
-                types.BotCommand(command="help", description="Show help"),
-                types.BotCommand(command="about", description="About AniToons"),
-                types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-                types.BotCommand(command="clone", description="Open the linked clone bot"),
-                types.BotCommand(command="cancel", description="Cancel your running scan"),
-            ],
-        ))
+        command_list = [
+            types.BotCommand(command="start", description="Open the bot"),
+            types.BotCommand(command="help", description="Show help"),
+            types.BotCommand(command="about", description="About AniToons"),
+            types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+            types.BotCommand(command="clone", description="Open the linked clone bot"),
+            types.BotCommand(command="cancel", description="Cancel your running scan"),
+        ]
+
+        # One clean command set for regular users and group admins.
+        for scope in (
+            types.BotCommandScopeDefault(),
+            types.BotCommandScopeAllChatAdministrators(),
+        ):
+            await bot(functions.bots.SetBotCommandsRequest(
+                scope=scope,
+                lang_code="en",
+                commands=command_list,
+            ))
 
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
