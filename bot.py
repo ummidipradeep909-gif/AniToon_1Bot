@@ -104,7 +104,7 @@ clone_owners: dict[int, int] = {}
 active_scan_clients: dict[str, Any] = {}
 
 
-scan_states: dictscan_states: dict[tuple[int, int], ScanState] = {}
+scan_states: dict[tuple[int, int], ScanState] = {}
 web_states: dict[str, ScanState] = {}
 pending_scans: dict[str, PendingScan] = {}
 active_scans: dict[str, asyncio.Task] = {}
@@ -263,21 +263,15 @@ def cache_state(report_message: Any, source_message: Any, report: Report) -> Sca
     if key is None:
         return None
 
-    state = scan_states.get(key)
-    token = state.web_token if state else secrets.token_urlsafe(18)
-
-    if state is None:
-        state = ScanState(
-            source_message=source_message,
-            report=report,
-            created_at=time.monotonic(),
-            web_token=token,
-        )
-    else:
-        state.source_message = source_message
-        state.report = report
-        state.created_at = time.monotonic()
-
+    # Each bot client can produce the same Telegram message IDs in the same
+    # user's private chat, so never reuse a previous state for a new report.
+    token = secrets.token_urlsafe(18)
+    state = ScanState(
+        source_message=source_message,
+        report=report,
+        created_at=time.monotonic(),
+        web_token=token,
+    )
     scan_states[key] = state
     web_states[token] = state
     _purge_states()
