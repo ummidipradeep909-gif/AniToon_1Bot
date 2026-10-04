@@ -86,6 +86,7 @@ scan_states: dict[tuple[int, int], ScanState] = {}
 web_states: dict[str, ScanState] = {}
 pending_scans: dict[str, PendingScan] = {}
 active_scans: dict[str, asyncio.Task] = {}
+active_scan_users: dict[str, int | None] = {}
 
 HELP_TEXT = (
     "🔬 <b>AniToons File Intelligence</b>\n\n"
@@ -407,6 +408,7 @@ async def analyze_source(
     finally:
         await cancel_probe(scan_token) if scan_token in active_scans else None
         active_scans.pop(scan_token, None)
+        active_scan_users.pop(scan_token, None)
 
 
 async def analyze(event) -> None:
@@ -435,8 +437,7 @@ async def cancel_user_scan(user_id: int) -> bool:
             return True
 
     for token, task in list(active_scans.items()):
-        pending = getattr(task, "scan_user_id", None)
-        if pending == user_id:
+        if active_scan_users.get(token) == user_id:
             task.cancel()
             return True
 
@@ -556,8 +557,8 @@ async def handle_callback(event):
                 token,
             )
         )
-        task.scan_user_id = pending.user_id
         active_scans[token] = task
+        active_scan_users[token] = pending.user_id
         return
 
     if data.startswith("cancel:"):
@@ -1407,16 +1408,14 @@ async def main():
             types.BotCommand(command="cancel", description="Cancel your running scan"),
         ]
 
-        # One clean command set for regular users and group admins.
-        for scope in (
-            types.BotCommandScopeDefault(),
-            types.BotCommandScopeAllChatAdministrators(),
-        ):
-            await bot(functions.bots.SetBotCommandsRequest(
-                scope=scope,
-                lang_code="en",
-                commands=command_list,
-            ))
+        # One clean command set for everyone.
+        # Telegram uses the default scope as the fallback in private chats
+        # and groups when no narrower scope is configured.
+        await bot(functions.bots.SetBotCommandsRequest(
+            scope=types.BotCommandScopeDefault(),
+            lang_code="en",
+            commands=command_list,
+        ))
 
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
