@@ -2271,35 +2271,7 @@ h1 {{
     ⛩ AniToon's • <a href="/health">System status</a>
   </div>
 </div>
-<script>
-const FILE_NAME = {json.dumps(report.filename)};
-function copyFilename() {
-  const status = document.getElementById("copy-status");
-  if (!navigator.clipboard) {
-    status.textContent = "Clipboard is not available in this browser.";
-    return;
-  }
-  navigator.clipboard.writeText(FILE_NAME).then(() => {
-    status.textContent = "Filename copied.";
-    setTimeout(() => { status.textContent = ""; }, 1800);
-  }).catch(() => {
-    status.textContent = "Could not copy filename.";
-  });
-}
-let remaining = 300;
-const countdown = document.getElementById("countdown");
-const timer = setInterval(() => {
-  remaining -= 1;
-  if (remaining <= 0) {
-    clearInterval(timer);
-    countdown.textContent = "Expired";
-    return;
-  }
-  const m = String(Math.floor(remaining / 60)).padStart(2, "0");
-  const s = String(remaining % 60).padStart(2, "0");
-  countdown.textContent = m + ":" + s;
-}, 1000);
-</script>
+
 </body>
 </html>"""
     return document.encode("utf-8")
@@ -2625,7 +2597,35 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
   tick();
 }})();
 </script>
-</body>
+<script>
+const FILE_NAME = {json.dumps(report.filename)};
+function copyFilename() {{
+  const status = document.getElementById("copy-status");
+  if (!navigator.clipboard) {{
+    status.textContent = "Clipboard is not available in this browser.";
+    return;
+  }}
+  navigator.clipboard.writeText(FILE_NAME).then(() => {{
+    status.textContent = "Filename copied.";
+    setTimeout(() => {{ status.textContent = ""; }}, 1800);
+  }}).catch(() => {{
+    status.textContent = "Could not copy filename.";
+  }});
+}}
+let remaining = 300;
+const countdown = document.getElementById("countdown");
+const timer = setInterval(() => {{
+  remaining -= 1;
+  if (remaining <= 0) {{
+    clearInterval(timer);
+    countdown.textContent = "Expired";
+    return;
+  }}
+  const m = String(Math.floor(remaining / 60)).padStart(2, "0");
+  const s = String(remaining % 60).padStart(2, "0");
+  countdown.textContent = m + ":" + s;
+}}, 1000);
+</script></body>
 </html>"""
     return document.encode("utf-8")
 
