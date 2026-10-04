@@ -25,6 +25,7 @@ from media_probe import (
     inspect_telegram_player,
     purge_probes,
 )
+from mongo_store import record_clone_request, record_scan, record_user
 
 load_dotenv()
 
@@ -88,41 +89,67 @@ pending_scans: dict[str, PendingScan] = {}
 active_scans: dict[str, asyncio.Task] = {}
 active_scan_users: dict[str, int | None] = {}
 
+HOME_TEXT = (
+    "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
+    "🔎 Scan Telegram media files for detailed metadata.\n"
+    "🌐 View complete file information in your browser.\n"
+    "🧬 Create a clone configuration for your own bot.\n\n"
+    "Choose an option below."
+)
+
 HELP_TEXT = (
     "🔬 <b>AniToons File Intelligence</b>\n\n"
     "Send a video or Telegram document and inspect its media metadata.\n\n"
     "🔊 Audio, 💬 subtitles, 🎬 video and ⚙️ container details are available in the web report.\n\n"
     "<b>📋 Commands</b>\n"
-    "/start — Open the bot\n"
+    "/start — Open the home page\n"
     "/help — Open this help page\n"
     "/about — About AniToons\n"
     "/addtogroup — Add the bot to a group\n"
-    "/clone — Open the linked clone bot\n"
+    "/clone — Open clone creation\n"
     "/cancel — Cancel your running scan\n\n"
-    "<b>🔘 Buttons on this page</b>\n"
-    "📖 Help — Open this page\n"
+    "<b>🔘 Buttons</b>\n"
+    "🔎 Scan Files — Scan a Telegram file\n"
+    "🧬 Create Clone — Open clone creation\n"
+    "📖 Help — Show commands and button guide\n"
     "ℹ️ About — Bot information\n"
-    "➕ Add Me to Your Group — Add the bot to a group\n"
-    "🤖 Clone Bot — Open the linked clone bot\n\n"
+    "➕ Add Me to Your Group — Add the bot to a group\n\n"
     "During a scan, a <b>❌ Cancel Scan</b> button appears on the progress message.\n\n"
     "🛡️ Scans use bounded byte-range reads and do not intentionally download the complete large file."
 )
 
 ABOUT_TEXT = (
-    "⛩ <b>AniToons Bot</b> ⛩\n\n"
+    "⛩ <b>AniToon Bot</b> ⛩\n\n"
     "File metadata inspection for Telegram media.\n"
     "Detailed metadata is shown on the web report after a scan.\n\n"
     "🌐 Web: " + PUBLIC_WEB_URL
 )
 
 
-def main_buttons():
+def home_buttons():
     buttons = [
+        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
         [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
         [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
     ]
     if CLONE_BOT_USERNAME:
-        buttons.append([Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+        buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+    return buttons
+
+
+def help_buttons():
+    return [
+        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
+        [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
+        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+    ]
+
+
+def clone_buttons():
+    buttons = [[Button.url("🤖 Open @BotFather", "https://t.me/BotFather")]]
+    if CLONE_BOT_USERNAME:
+        buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+    buttons.append([Button.inline("⬅️ Home", b"home:back")])
     return buttons
 
 
@@ -323,6 +350,7 @@ async def analyze_source(
     source_message: Any,
     status_message: Any,
     scan_token: str,
+    user_id: int | None = None,
 ) -> None:
     global checks_total, checks_ok, checks_failed
     checks_total += 1
@@ -344,6 +372,12 @@ async def analyze_source(
             state.web_token = scan_token
             web_states[scan_token] = state
 
+            await record_scan(
+                user_id=user_id,
+                source_message=source_message,
+                report=report,
+                status="completed",
+            )
             result = compact_scan_result(report)
             await edit_status(
                 status_message,
@@ -358,7 +392,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
         raise
 
@@ -368,7 +402,7 @@ async def analyze_source(
             status_message,
             "🛑 <b>Safe scan limit reached.</b>\n\n"
             "The player engine stopped before downloading the complete file.",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
 
     except ProbeCancelled:
@@ -376,7 +410,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
 
     except asyncio.TimeoutError:
@@ -384,7 +418,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "⏰ <b>Metadata scan reached the 5-minute limit.</b>",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
 
     except errors.FloodWaitError as exc:
@@ -392,7 +426,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             f"⏳ Telegram temporarily rate-limited this scan for {int(exc.seconds)} seconds.",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
 
     except Exception as exc:
@@ -402,7 +436,7 @@ async def analyze_source(
             status_message,
             "❌ <b>Metadata scan failed.</b>\n\n"
             f"<code>{html.escape(type(exc).__name__)}</code>",
-            buttons=main_buttons(),
+            buttons=home_buttons(),
         )
 
     finally:
@@ -448,15 +482,23 @@ async def handle_new_message(event):
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
-    if command in {"/start", "/help"}:
-        await event.reply(HELP_TEXT, parse_mode="html", buttons=main_buttons())
+    if command == "/start":
+        await record_user(event)
+        await event.reply(HOME_TEXT, parse_mode="html", buttons=home_buttons())
+        return
+
+    if command == "/help":
+        await record_user(event)
+        await event.reply(HELP_TEXT, parse_mode="html", buttons=help_buttons())
         return
 
     if command == "/about":
-        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=main_buttons())
+        await record_user(event)
+        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=home_buttons())
         return
 
     if command == "/addtogroup":
+        await record_user(event)
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
@@ -465,20 +507,16 @@ async def handle_new_message(event):
         return
 
     if command == "/clone":
-        if CLONE_BOT_USERNAME:
-            await event.reply(
-                "🤖 <b>AniToon Clone Bot</b>\n\n"
-                "Open the linked clone bot below.",
-                parse_mode="html",
-                buttons=[[Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")]],
-            )
-        else:
-            await event.reply(
-                "🤖 <b>Clone Bot</b>\n\n"
-                "The linked clone bot is not configured yet.",
-                parse_mode="html",
-                buttons=main_buttons(),
-            )
+        await record_user(event)
+        await record_clone_request(event)
+        await event.reply(
+            "🧬 <b>Clone Creation</b>\n\n"
+            "Create the new bot with <b>@BotFather</b>.\n"
+            "A real clone requires its own Telegram bot token.\n"
+            "Never put bot tokens into MongoDB.",
+            parse_mode="html",
+            buttons=clone_buttons(),
+        )
         return
 
     if command == "/cancel":
@@ -492,6 +530,7 @@ async def handle_new_message(event):
     if not is_checkable_message(event):
         return
 
+    await record_user(event)
     await analyze(event)
 
 
@@ -501,28 +540,42 @@ async def handle_callback(event):
 
     if data == "home:help":
         await event.answer()
-        await event.edit(HELP_TEXT, parse_mode="html", buttons=main_buttons())
+        await event.edit(HELP_TEXT, parse_mode="html", buttons=help_buttons())
+        return
+
+    if data == "home:scan":
+        await event.answer()
+        await event.edit(
+            "🔎 <b>Scan Files</b>\n\n"
+            "Send a Telegram video or document in this chat.\n"
+            "The scan starts only after you press <b>📥 Download Metadata</b>.\n\n"
+            "🛡️ Large files are inspected with bounded byte-range reads.",
+            parse_mode="html",
+            buttons=help_buttons(),
+        )
+        return
+
+    if data == "home:clone":
+        await event.answer()
+        await record_clone_request(event)
+        await event.edit(
+            "🧬 <b>Clone Creation</b>\n\n"
+            "Create the new bot with <b>@BotFather</b>.\n"
+            "A real clone requires its own Telegram bot token.\n"
+            "Never put bot tokens into MongoDB.",
+            parse_mode="html",
+            buttons=clone_buttons(),
+        )
         return
 
     if data == "home:about":
         await event.answer()
-        await event.edit(ABOUT_TEXT, parse_mode="html", buttons=main_buttons())
+        await event.edit(ABOUT_TEXT, parse_mode="html", buttons=home_buttons())
         return
 
-    if data == "home:policy":
+    if data == "home:back":
         await event.answer()
-        await event.edit(
-            "🛡️ <b>SCAN POLICY</b>\n\n"
-            "• Sending a file does not start a scan.\n"
-            "• Scan starts only after <b>📥 Download Metadata</b> is pressed.\n"
-            "• Uses targeted Telegram byte-range reads.\n"
-            "• Searches Matroska metadata for real audio/subtitle TrackEntry records.\n"
-            "• Never intentionally downloads the complete large file.\n"
-            "• Scan limit: 5 minutes.\n"
-            "• Browser report link stays valid for 5 minutes or until the service restarts.",
-            parse_mode="html",
-            buttons=[[Button.inline("⬅️ Back", b"home:back")]],
-        )
+        await event.edit(HOME_TEXT, parse_mode="html", buttons=home_buttons())
         return
 
     if data.startswith("scan:"):
@@ -555,6 +608,7 @@ async def handle_callback(event):
                 pending.source_message,
                 status_message,
                 token,
+                pending.user_id,
             )
         )
         active_scans[token] = task
