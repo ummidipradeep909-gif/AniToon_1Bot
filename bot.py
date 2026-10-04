@@ -42,6 +42,8 @@ from mongo_store import (
     user_scan_summary,
     record_scan,
     record_user,
+    record_bot_user,
+    list_bot_users,
     save_web_report,
     update_clone_stats,
     record_group_chat,
@@ -144,6 +146,7 @@ known_group_chats: dict[tuple[int, int], dict[str, Any]] = {}
 group_touch_cache: dict[tuple[int, int], float] = {}
 owner_broadcast_pending: dict[int, float] = {}
 group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
+bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 
 
 scan_states: dict[tuple[int, int], ScanState] = {}
@@ -1595,7 +1598,70 @@ async def _group_onboarding_loop() -> None:
 async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
     clean = (message_text or "").strip()
     if not clean:
-        return {"groups": 0, "sent": 0, "failed": 0, "clones": 0, "clone_notifications": 0}
+        return {
+            "users": 0,
+            "main_users": 0,
+            "clone_users": 0,
+            "groups": 0,
+            "group_sent": 0,
+            "failed": 0,
+            "bots": 0,
+        }
+
+    payload = "📢 <b>AniToon Announcement</b>\n\n" + html.escape(clean)
+    users_sent = main_users = clone_users = group_sent = failed = 0
+    bot_count = 0
+
+    async def send_to_bot(target: TelegramClient, bot_id: int, clone_id: int = 0) -> tuple[int, int]:
+        nonlocal failed, users_sent, main_users, clone_users
+        user_ids = await list_bot_users(int(bot_id), 1_000_000)
+        sent_local = 0
+        for uid in user_ids:
+            try:
+                await target.send_message(int(uid), payload, parse_mode="html")
+                sent_local += 1
+                users_sent += 1
+                if clone_id:
+                    clone_users += 1
+                else:
+                    main_users += 1
+            except errors.FloodWaitError as exc:
+                sleep_for = min(max(1, int(exc.seconds)), 120)
+                await asyncio.sleep(sleep_for)
+                try:
+                    await target.send_message(int(uid), payload, parse_mode="html")
+                    sent_local += 1
+                    users_sent += 1
+                    if clone_id:
+                        clone_users += 1
+                    else:
+                        main_users += 1
+                except Exception:
+                    failed += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.06)
+        return sent_local, len(user_ids)
+
+    try:
+        main_bot_id = await _ensure_bot_identity(bot)
+    except Exception:
+        main_bot_id = None
+
+    if main_bot_id is not None:
+        bot_count += 1
+        await send_to_bot(bot, int(main_bot_id), 0)
+
+    for clone_id, target in list(clone_clients.items()):
+        try:
+            clone_bot_id = await _ensure_bot_identity(target)
+            if clone_bot_id is None:
+                clone_bot_id = int(clone_id)
+            bot_count += 1
+            await send_to_bot(target, int(clone_bot_id), int(clone_id))
+        except Exception:
+            failed += 1
+            log.warning("Clone broadcast audience failed | clone_id=%s", clone_id, exc_info=True)
 
     groups = await list_group_chats()
     merged: dict[tuple[int, int], dict[str, Any]] = {}
@@ -1607,9 +1673,6 @@ async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
     for key, group in known_group_chats.items():
         merged.setdefault(key, dict(group))
 
-    sent = failed = 0
-    payload = "📢 <b>AniToon Announcement</b>\n\n" + html.escape(clean)
-
     for (bot_id, chat_id), group in merged.items():
         clone_id = int(group.get("clone_id") or 0)
         target = bot if bot_id == _bot_id_for_client(bot) else clone_clients.get(clone_id)
@@ -1618,50 +1681,32 @@ async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
             continue
         try:
             await target.send_message(chat_id, payload, parse_mode="html")
-            sent += 1
+            group_sent += 1
         except errors.FloodWaitError as exc:
-            await asyncio.sleep(min(max(1, int(exc.seconds)), 60))
+            await asyncio.sleep(min(max(1, int(exc.seconds)), 120))
             try:
                 await target.send_message(chat_id, payload, parse_mode="html")
-                sent += 1
+                group_sent += 1
             except Exception:
                 failed += 1
         except Exception:
             failed += 1
             log.warning(
-                "Owner broadcast failed | bot_id=%s | chat_id=%s | clone_id=%s",
+                "Owner group broadcast failed | bot_id=%s | chat_id=%s | clone_id=%s",
                 bot_id, chat_id, clone_id, exc_info=True,
             )
         await asyncio.sleep(0.08)
 
-    clone_notifications = 0
-    for clone_id, owner_id in list(clone_owners.items()):
-        username = clone_usernames.get(int(clone_id))
-        try:
-            await bot.send_message(
-                int(owner_id),
-                "📢 <b>Owner Broadcast</b>\n\n" + html.escape(clean)
-                + (
-                    f"\n\n🤖 Clone: <b>@{html.escape(username)}</b>"
-                    if username else
-                    f"\n\n🤖 Clone Bot #{int(clone_id)}"
-                ),
-                parse_mode="html",
-            )
-            clone_notifications += 1
-        except Exception:
-            log.debug(
-                "Clone owner broadcast notification failed | clone_id=%s | owner_id=%s",
-                clone_id, owner_id, exc_info=True,
-            )
-
     return {
+        "users": users_sent,
+        "main_users": main_users,
+        "clone_users": clone_users,
         "groups": len(merged),
-        "sent": sent,
+        "group_sent": group_sent,
         "failed": failed,
-        "clones": len(clone_clients),
-        "clone_notifications": clone_notifications,
+        "bots": bot_count,
     }
+
 
 def _owner_broadcast_pending(user_id: int) -> bool:
     created = owner_broadcast_pending.get(int(user_id))
@@ -2070,6 +2115,26 @@ async def handle_new_message(
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
+    # Keep a per-bot private audience so owner broadcasts can reach users of
+    # the main bot and each clone through the bot they actually used.
+    if getattr(event, "is_private", False):
+        try:
+            sender = await event.get_sender()
+            uid = getattr(sender, "id", None)
+            bot_id = await _ensure_bot_identity(client)
+            if uid is not None and bot_id is not None:
+                audience_key = (int(bot_id), int(uid))
+                now_mono = time.monotonic()
+                if now_mono - bot_audience_touch_cache.get(audience_key, 0.0) >= 6 * 3600:
+                    bot_audience_touch_cache[audience_key] = now_mono
+                    await record_bot_user(
+                        bot_id=int(bot_id),
+                        bot_username=bot_username,
+                        user_id=int(uid),
+                    )
+        except Exception:
+            log.debug("Bot audience tracking failed", exc_info=True)
+
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
         if text.startswith("/") and text.split(maxsplit=1)[0].split("@", 1)[0].lower() != "/start":
@@ -2091,9 +2156,11 @@ async def handle_new_message(
                 result = await _broadcast_owner_message(text)
                 await event.reply(
                     "✅ <b>Broadcast finished</b>\n\n"
-                    f"📢 Groups reached: <b>{result['sent']}/{result['groups']}</b>\n"
-                    f"🤖 Clone bots covered: <b>{result['clones']}</b>\n"
-                    f"👤 Clone-owner copies: <b>{result['clone_notifications']}</b>\n"
+                    f"👤 Users reached: <b>{result['users']}</b>\n"
+                    f"🤖 Main-bot users: <b>{result['main_users']}</b>\n"
+                    f"🧬 Clone-bot users: <b>{result['clone_users']}</b>\n"
+                    f"👥 Groups reached: <b>{result['group_sent']}/{result['groups']}</b>\n"
+                    f"🤖 Bot sources: <b>{result['bots']}</b>\n"
                     f"⚠️ Failed deliveries: <b>{result['failed']}</b>",
                     parse_mode="html",
                     buttons=[[Button.inline("👑 Owner Dashboard", b"owner:dashboard")]],
@@ -2330,8 +2397,8 @@ async def handle_callback(
         owner_broadcast_pending[int(user_id)] = time.monotonic()
         await event.edit(
             "📢 <b>Broadcast Message</b>\n\n"
-            "Send one message to deliver it to every registered group handled by AniToon and its clone bots.\n\n"
-            "🤖 Clone owners will also receive a copy.",
+            "Send one message for AniToon users, clone-bot users, and every registered group.\n\n"
+            "⚡ Delivery uses the bot each user or group has interacted with.",
             parse_mode="html",
             buttons=[[Button.inline("❌ Cancel", b"owner:broadcast_cancel")]],
         )
