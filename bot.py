@@ -2907,6 +2907,7 @@ async def health_server():
 
 
 async def main():
+    clone_monitor_task: asyncio.Task | None = None
     _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
     health = await health_server()
 
