@@ -380,7 +380,7 @@ def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
             seen.add(off);yield off,n,label;used+=n
             if used>=budget:return
 
-async def _read_rangeasync def _read_range(client,media,total,offset,n):
+async def _read_range(client,media,total,offset,n):
     chunk=min(probe_chunk(),n);out=io.BytesIO()
     try:
         async for part in client.iter_download(media,offset=max(0,offset),limit=(n+chunk-1)//chunk,chunk_size=chunk,request_size=chunk,file_size=total):
