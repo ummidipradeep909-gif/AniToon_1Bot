@@ -334,7 +334,12 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
         }
 
 
-async def owner_user_scans(user_id: int, days: int = 7, limit: int = 50) -> list[dict[str, Any]]:
+async def owner_user_scans(
+    user_id: int,
+    days: int = 7,
+    limit: int = 50,
+    skip: int = 0,
+) -> list[dict[str, Any]]:
     db = await _get_db()
     if db is None:
         return []
@@ -356,7 +361,7 @@ async def owner_user_scans(user_id: int, days: int = 7, limit: int = 50) -> list
                         "message_id": 1,
                         "source_bot": 1,
                     },
-                ).sort("created_at", -1).limit(int(limit))
+                ).sort("created_at", -1).skip(int(skip)).limit(int(limit))
             )
         )
     except Exception:
