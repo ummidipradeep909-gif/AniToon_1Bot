@@ -43,12 +43,13 @@ CODEC_NAMES = {
     "hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub",
 }
 
-DEFAULT_RANGE_CHUNK = 1 * 1024 * 1024
-DEFAULT_BUDGET = 32 * 1024 * 1024
-MAX_PROBE_BUDGET = 64 * 1024 * 1024
+DEFAULT_RANGE_CHUNK = 512 * 1024
+# Source-media probing is capped well below 4 MB.
+DEFAULT_BUDGET = 2_560 * 1024
+MAX_PROBE_BUDGET = 2_560 * 1024
 RANGE_TOKEN_TTL = 10 * 60
 PREVIEW_RATIOS = (0.50,)
-PREVIEW_BUDGET = 64 * 1024 * 1024
+PREVIEW_BUDGET = 256 * 1024
 RANGE_IO_CONCURRENCY = 4
 range_io_semaphore = asyncio.Semaphore(RANGE_IO_CONCURRENCY)
 
@@ -645,10 +646,10 @@ async def generate_video_previews(
     message: Any,
     token: str,
     *,
-    budget: int = 24 * 1024 * 1024,
-    timeout: int = 35,
+    budget: int = 256 * 1024,
+    timeout: int = 8,
 ) -> list[dict[str, Any]]:
-    """Generate web-only preview frames without holding the metadata scan slot."""
+    """Generate one tiny web-only preview without downloading the source video."""
     async with preview_semaphore:
         f = getattr(message, "file", None)
         media = getattr(message, "media", None)
@@ -660,9 +661,29 @@ async def generate_video_previews(
         if "video" not in mime and not name.endswith(ext):
             return []
 
+        # Prefer Telegram's existing thumbnail. It is a tiny image generated for
+        # the video, so we do not seek through the multi-GB source just to preview it.
+        try:
+            thumb = await asyncio.wait_for(
+                client.download_media(message, file=bytes, thumb=0),
+                timeout=5,
+            )
+            if thumb:
+                raw = bytes(thumb)
+                if len(raw) <= PREVIEW_BUDGET:
+                    return [{
+                        "ratio": 0,
+                        "seconds": 0,
+                        "data": base64.b64encode(raw).decode("ascii"),
+                        "mime": "image/jpeg",
+                        "label": "Telegram thumbnail",
+                    }]
+        except Exception:
+            log.debug("Telegram thumbnail preview unavailable | token=%s", token, exc_info=True)
+
         total = getattr(f, "size", None)
         ptoken = f"{token}:preview"
-        effective_budget = max(8 * 1024 * 1024, min(int(budget), MAX_PROBE_BUDGET))
+        effective_budget = max(64 * 1024, min(int(budget), MAX_PROBE_BUDGET))
         session = register_probe(ptoken, client, media, total, budget=effective_budget)
         loop = asyncio.get_running_loop()
         reader = TelegramSeekableFile(session, loop)
