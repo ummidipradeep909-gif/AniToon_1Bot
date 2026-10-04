@@ -51,6 +51,17 @@ PUBLIC_WEB_URL = (
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 
+# Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
+# Telegram still lets the group owner change any permission before confirming.
+GROUP_ADMIN_PERMISSIONS = (
+    "change_info+delete_messages+restrict_members+invite_users+pin_messages+"
+    "manage_topics+promote_members+manage_video_chats+anonymous+manage_chat+"
+    "post_stories+edit_stories+delete_stories"
+)
+ADD_TO_GROUP_URL = (
+    f"https://t.me/{BOT_USERNAME}?startgroup&admin={GROUP_ADMIN_PERMISSIONS}"
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
@@ -127,7 +138,7 @@ def home_buttons():
     buttons = [
         [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
         [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
-        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
     ]
     if CLONE_BOT_USERNAME:
         buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
@@ -138,7 +149,7 @@ def help_buttons():
     return [
         [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
         [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
-        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
     ]
 
 
@@ -160,7 +171,7 @@ def web_report_button(token: str):
         row.append(Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}"))
     return [
         row,
-        [Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")],
+        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
     ]
 
 
@@ -608,7 +619,7 @@ async def handle_new_message(event):
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
-            buttons=[[Button.url("➕ Add Me to Your Group", f"https://t.me/{BOT_USERNAME}?startgroup=true")]],
+            buttons=[[Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)]],
         )
         return
 
