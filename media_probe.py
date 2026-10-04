@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import io
 import logging
@@ -48,6 +49,8 @@ MAX_PROBE_BUDGET = 64 * 1024 * 1024
 RANGE_TOKEN_TTL = 10 * 60
 PREVIEW_RATIOS = (0.10, 0.30, 0.50, 0.70, 0.90)
 PREVIEW_BUDGET = 64 * 1024 * 1024
+RANGE_IO_CONCURRENCY = 4
+range_io_semaphore = asyncio.Semaphore(RANGE_IO_CONCURRENCY)
 
 
 class ProbeBudgetExceeded(RuntimeError):
@@ -95,16 +98,17 @@ class RangeProbeSession:
             raise ProbeBudgetExceeded("metadata byte-range budget reached")
 
         data = b""
-        async for part in self.client.iter_download(
-            self.media,
-            offset=offset,
-            limit=1,
-            chunk_size=request_size,
-            request_size=request_size,
-            file_size=self.total,
-        ):
-            data = bytes(part)
-            break
+        async with range_io_semaphore:
+            async for part in self.client.iter_download(
+                self.media,
+                offset=offset,
+                limit=1,
+                chunk_size=request_size,
+                request_size=request_size,
+                file_size=self.total,
+            ):
+                data = bytes(part)
+                break
 
         if not data:
             return b""
@@ -579,6 +583,8 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
     if not primary.mime and secondary.mime: primary.mime = secondary.mime
     primary.media_kind = secondary.media_kind if secondary.media_kind != "File" else primary.media_kind
     primary.sampled = int(primary.sampled or 0) + int(secondary.sampled or 0)
+    if not primary.previews and secondary.previews:
+        primary.previews = list(secondary.previews)
 
     seen=set(primary.probe_ranges)
     primary.probe_ranges += [x for x in secondary.probe_ranges if x not in seen]
@@ -587,6 +593,49 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
     primary.notes.insert(0, "Combined metadata sources: custom container parser + PyAV/FFmpeg.")
     return primary
 
+
+def _extract_video_previews(container: Any, stream: Any) -> list[dict[str, Any]]:
+    previews: list[dict[str, Any]] = []
+    duration = None
+    with suppress(Exception):
+        if stream.duration is not None and stream.time_base is not None:
+            duration = float(stream.duration * stream.time_base)
+    if not duration or duration <= 0:
+        with suppress(Exception):
+            if container.duration is not None:
+                duration = float(container.duration / av.time_base)
+    if not duration or duration <= 0:
+        return previews
+
+    for ratio in PREVIEW_RATIOS:
+        target_seconds = max(0.0, min(duration - 0.05, duration * float(ratio)))
+        try:
+            if stream.time_base is not None:
+                target_pts = int(target_seconds / float(stream.time_base))
+                container.seek(target_pts, stream=stream, any_frame=False, backward=True)
+            else:
+                container.seek(int(target_seconds * av.time_base), any_frame=False, backward=True)
+
+            selected = None
+            for frame in container.decode(stream):
+                selected = frame
+                break
+            if selected is None:
+                continue
+
+            image = selected.to_image()
+            image.thumbnail((640, 360))
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=78, optimize=True)
+            previews.append({
+                "ratio": int(ratio * 100),
+                "seconds": target_seconds,
+                "data": base64.b64encode(output.getvalue()).decode("ascii"),
+                "mime": "image/jpeg",
+            })
+        except Exception:
+            log.exception("Preview extraction failed | ratio=%.2f", ratio)
+    return previews
 
 def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
     options = {
@@ -605,89 +654,6 @@ def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = No
     container = av.open(reader, **kwargs)
     _ = list(container.streams)
     return container
-
-
-async def create_video_previews(
-    client: Any,
-    message: Any,
-    token: str,
-    *,
-    budget: int = PREVIEW_BUDGET,
-) -> list[tuple[bytes, float]]:
-    """Return five JPEG frames sampled across the video timeline."""
-    f = getattr(message, "file", None)
-    media = getattr(message, "media", None)
-    if not media:
-        return []
-    name = str(getattr(f, "name", None) or "").lower()
-    mime = str(getattr(f, "mime_type", None) or "").lower()
-    video_ext = (".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".m2ts", ".mts")
-    if "video" not in mime and not name.endswith(video_ext):
-        return []
-
-    total = getattr(f, "size", None)
-    preview_token = f"{token}:preview"
-    effective_budget = max(8 * 1024 * 1024, min(int(budget or PREVIEW_BUDGET), MAX_PROBE_BUDGET))
-    session = register_probe(preview_token, client, media, total, budget=effective_budget)
-    loop = asyncio.get_running_loop()
-    reader = TelegramSeekableFile(session, loop)
-
-    format_hint = None
-    if name.endswith(".mkv") or "matroska" in mime:
-        format_hint = "matroska"
-    elif name.endswith(".webm") or "webm" in mime:
-        format_hint = "webm"
-    elif name.endswith((".mp4", ".m4v", ".mov")) or "mp4" in mime:
-        format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
-    elif name.endswith((".ts", ".m2ts", ".mts")) or "mpegts" in mime:
-        format_hint = "mpegts"
-
-    def decode_frames() -> list[tuple[bytes, float]]:
-        container = None
-        try:
-            container = _open_with_ffmpeg(reader, format_hint)
-            streams = [s for s in container.streams if s.type == "video"]
-            if not streams:
-                return []
-            stream = streams[0]
-
-            duration = None
-            with suppress(Exception):
-                if stream.duration is not None and stream.time_base is not None:
-                    duration = float(stream.duration * stream.time_base)
-            if not duration or duration <= 0:
-                with suppress(Exception):
-                    if container.duration is not None:
-                        duration = float(container.duration / av.time_base)
-            if not duration or duration <= 0:
-                return []
-
-            previews = []
-            for ratio in PREVIEW_RATIOS:
-                seconds = max(0.0, min(duration - 0.05, duration * float(ratio)))
-                try:
-                    if stream.time_base is not None:
-                        pts = int(seconds / float(stream.time_base))
-                        container.seek(pts, stream=stream, any_frame=False, backward=True)
-                    else:
-                        container.seek(int(seconds * av.time_base), any_frame=False, backward=True)
-                    frame = next(container.decode(stream), None)
-                    if frame is None:
-                        continue
-                    image = frame.to_image()
-                    out = io.BytesIO()
-                    image.save(out, format="JPEG", quality=82, optimize=True)
-                    previews.append((out.getvalue(), seconds))
-                except Exception:
-                    log.exception("Preview extraction failed | ratio=%.2f | file=%s", ratio, name)
-            return previews
-        finally:
-            if container is not None:
-                with suppress(Exception):
-                    container.close()
-            remove_probe(preview_token)
-
-    return await asyncio.to_thread(decode_frames)
 
 
 async def inspect_telegram_player(
@@ -755,6 +721,10 @@ async def inspect_telegram_player(
             )
             await say("🔎 Stage 3/4 • reading video, audio and subtitle streams…")
             player_report = _build_report(message, container, session)
+            video_streams = [s for s in container.streams if s.type == "video"]
+            if video_streams:
+                await say("🧩 Stage 4/4 • preparing visual previews for the web report…")
+                player_report.previews = _extract_video_previews(container, video_streams[0])
         finally:
             if container is not None:
                 container.close()
