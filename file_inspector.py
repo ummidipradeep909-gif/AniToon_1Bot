@@ -9,9 +9,9 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-MAX_INITIAL_PROBE = 4 * 1024 * 1024
-MAX_DEEP_PROBE = 8 * 1024 * 1024
-DEFAULT_CHUNK = 256 * 1024
+MAX_INITIAL_PROBE = 1 * 1024 * 1024
+MAX_DEEP_PROBE = 4 * 1024 * 1024
+DEFAULT_CHUNK = 512 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -126,7 +126,10 @@ def _flt(data:bytes,s:int,e:int):
     try:return struct.unpack(">f" if e-s==4 else ">d",data[s:e])[0] if e-s in (4,8) else None
     except struct.error:return None
 def _lang(code:str|None)->str|None:
-    c=(code or "").lower().replace("_","-"); return LANG.get(c) or LANG.get(c.split("-")[0])
+    c=(code or "").lower().replace("_","-")
+    if not c or c in {"und", "unknown", "unk"}:
+        return None
+    return LANG.get(c) or LANG.get(c.split("-")[0])
 def _fmtsec(sec:float|None)->str:
     if sec is None or sec<0:return "Unknown"
     total=int(round(sec)); h,rem=divmod(total,3600); m,s=divmod(rem,60)
@@ -191,9 +194,24 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
         return None
     use_lang=lang_i or lang
     lname=_lang(use_lang)
-    cdisplay=cname or CODEC.get(cid or "") or cid or "Unknown"
-    d={"type":typ,"track":str(num) if num is not None else None,"name":name or lname or cdisplay,"display_name":name or lname or cdisplay,
-       "name_source":"track metadata" if name else ("language metadata" if lname else "codec metadata"),"language":use_lang,"language_name":lname,"codec":cid,"codec_name":cname or CODEC.get(cid)}
+    codec_display=cname or CODEC.get(cid or "") or cid
+    if not codec_display:
+        codec_display = "Audio" if typ=="audio" else ("Subtitle" if typ=="subtitles" else "Video")
+    # Never expose a bare "Unknown" track name when the stream type is known.
+    if name and name.strip().lower() not in {"unknown", "und", "undefined", "audio", "track"}:
+        display_name=name
+        name_source="track metadata"
+    elif lname:
+        display_name=f"{lname} • {codec_display or ('Audio' if typ=='audio' else 'Video')}"
+        name_source="language + codec metadata"
+    elif codec_display:
+        display_name=codec_display
+        name_source="codec metadata"
+    else:
+        display_name=f"{typ.title()} Track {num or '?'}"
+        name_source="stream type fallback"
+    d={"type":typ,"track":str(num) if num is not None else None,"name":display_name,"display_name":display_name,
+       "name_source":name_source,"language":use_lang,"language_name":lname,"codec":cid,"codec_name":cname or CODEC.get(cid) or codec_display}
     for k,v in (("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),("hearing_impaired",sdh if typ=="subtitles" else None),("visual_impaired",vi if typ=="subtitles" else None),("original",original),("commentary",commentary)):
         if v is not None:d[k]="yes" if v else "no"
     if typ=="audio":
@@ -295,9 +313,9 @@ def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
     # index is visible in the initial range.
     preferred_mib = [
         8, 12, 16, 24, 32, 48, 64, 96,
-        128, 160, 192, 224, 256, 288, 320,
+        8, 12, 16, 24, 32, 48, 64,
     ]
-    window = 256 * 1024
+    window = 128 * 1024
     seen = set()
 
     for mib in preferred_mib:
@@ -363,7 +381,19 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
 
 def _codec_hints(data:bytes,r:Report):
     for marker,name in ((b"A_AAC","AAC"),(b"A_AC3","AC-3"),(b"A_EAC3","E-AC-3"),(b"A_OPUS","Opus"),(b"A_FLAC","FLAC"),(b"A_MPEG/L3","MP3"),(b"A_VORBIS","Vorbis")):
-        if marker in data:r.audio.setdefault("sample_codecs",name)
+        if marker in data:
+            r.audio.setdefault("sample_codecs",name)
+            if not isinstance(r.audio.get("tracks"), list):
+                r.audio["tracks"] = []
+            if not r.audio["tracks"]:
+                r.audio["tracks"].append({
+                    "type": "audio",
+                    "track": "1",
+                    "name": name,
+                    "display_name": name,
+                    "name_source": "codec marker fallback",
+                    "codec_name": name,
+                })
     for marker,name in ((b"S_TEXT/UTF8","SubRip/UTF-8"),(b"S_TEXT/ASS","ASS"),(b"S_TEXT/SSA","SSA"),(b"S_TEXT/WEBVTT","WebVTT"),(b"S_HDMV/PGS","PGS"),(b"S_VOBSUB","VobSub")):
         if marker in data:r.subtitles.append({"name":name,"format":name,"source":"codec marker in sample"})
 
