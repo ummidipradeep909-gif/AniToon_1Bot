@@ -724,22 +724,16 @@ async def render_owner_resources(event, user_id: int) -> None:
     guard_line = "✅ Guard is clear — new heavy scans are allowed." if not guard else f"🛑 <b>Guard active:</b> {html.escape(guard)}"
 
     text = (
-        "🖥️ <b>Render Free Resource Guard</b>\n\n"
-        f"🧠 RAM: <b>{stats['rss_mb']:.1f} / 512 MB</b> • <b>{stats['ram_pct']:.1f}%</b> {ram_state}\n"
-        f"📡 Tracked web egress: <b>{stats['web_egress_gb']:.3f} / 4 GB app guard</b> • <b>{stats['web_egress_pct']:.1f}%</b> {egress_state}\n"
-        f"⏱️ Current process uptime: <b>{stats['uptime_hours']:.2f} h</b>\n"
-        f"📊 Uptime vs 750h allowance: <b>{stats['uptime_pct']:.1f}%</b>\n"
-        f"💾 Local filesystem currently used: <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n\n"
-        "🛡️ New heavy scans are paused when RAM pressure reaches 80% or the app egress safety buffer is reached.\n"
-        "⚠️ Render's exact workspace billing meter is still shown in Render Billing/Metrics; "
-        "the egress figure above is only traffic tracked by this process.\n\n"
-        "📈 <b>Why these numbers increase</b>\n"
-        "• RAM rises from Python/Telethon/MongoDB state, media probing, and concurrent scans.\n"
-        "• Egress rises when this web service sends HTML, JSON, and preview-image data to browsers.\n"
-        "• Uptime rises while this process is running; Render's 750h figure is a workspace-level allowance, not a per-process meter.\n"
-        "• Disk usage includes the runtime image and installed dependencies; Free services use ephemeral storage, so this is not a monthly billing quota.\n\n"
-        f"🔎 <b>Live workload:</b> {active_processes}/{MAX_CONCURRENT_CHECKS} scans active • {queued_processes} queued • {len(preview_tasks)} preview task(s)\n"
-        f"{guard_line}"
+        "🖥️ <b>Render Resource Guard</b>\n"
+        f"🧠 RAM <b>{stats['rss_mb']:.1f}/512 MB</b> • {stats['ram_pct']:.1f}% {ram_state}\n"
+        f"📡 Web egress <b>{stats['web_egress_gb']:.3f}/4 GB</b> • {stats['web_egress_pct']:.1f}% {egress_state}\n"
+        f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
+        f"💾 Disk <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n"
+        f"🔎 Load <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b> active • {queued_processes} queued\n"
+        f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
+        "ℹ️ RAM ↑ = bot workers + media parsing. Web egress ↑ = browser traffic/previews. "
+        "Uptime ↑ = process running. Disk is ephemeral runtime storage.\n"
+        "⚠️ Render's exact workspace billing meters are shown in Render Billing/Metrics."
     )
     await event.edit(
         text,
@@ -1359,21 +1353,29 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        await edit_status(
-            status_message,
-            status_text(filename, "✅ Processing complete", 99),
-            buttons=cancel_button(scan_token),
-        )
         final_result_text = compact_scan_result(report)
-        await edit_status(
-            status_message,
-            final_result_text,
-            buttons=web_report_button(
-                scan_token,
-                bot_username,
-                include_clone=include_clone,
-            ),
+        result_buttons = web_report_button(
+            scan_token,
+            bot_username,
+            include_clone=include_clone,
         )
+
+        # Completion is sent as a fresh message so the edit throttle can never
+        # hide the final result behind the temporary 99% processing message.
+        try:
+            final_message = await status_message.reply(
+                final_result_text,
+                parse_mode="html",
+                buttons=result_buttons,
+            )
+            if final_message is not None:
+                log.info("Final scan result sent | token=%s", scan_token)
+        except Exception:
+            log.exception("Failed to send final scan result message | token=%s", scan_token)
+            raise
+
+        with suppress(Exception):
+            await status_message.delete()
 
         if report.video.get("tracks"):
             _schedule_preview_generation(
