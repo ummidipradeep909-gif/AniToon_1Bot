@@ -1011,33 +1011,38 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
         await message.edit(text, parse_mode="html", buttons=buttons)
 
 
-def status_text(filename: str, line: str) -> str:
+def progress_details(line: str) -> tuple[int, str]:
     low = line.lower()
 
     if "stage 1/4" in low:
-        pct = 15
+        pct = 12
     elif "stage 2/4" in low:
-        pct = 35
+        pct = 34
     elif "stage 3/4" in low:
-        pct = 70
+        pct = 68
     elif "stage 4/4" in low:
-        pct = 92
+        pct = 88
     else:
         pct = 50
-
-    filled = pct // 10
-    bar = "█" * filled + "░" * (10 - filled)
 
     clean = line
     for prefix in ("🧭 ", "🎯 ", "🔎 ", "🧩 "):
         clean = clean.replace(prefix, "")
     if "•" in clean:
         clean = clean.split("•", 1)[1].strip()
+    return pct, clean
 
+
+def status_text(filename: str, line: str, pct: int | None = None) -> str:
+    parsed_pct, clean = progress_details(line)
+    pct = max(parsed_pct, min(99, int(pct if pct is not None else parsed_pct)))
+    filled = pct // 5
+    bar = "▰" * filled + "▱" * (20 - filled)
     return (
-        "🔎 <b>SCANNING METADATA</b>\n\n"
-        f"<code>[{bar}] {pct}%</code>\n"
-        f"{html.escape(clean)}"
+        "🔎 <b>SCANNING METADATA</b>\n"
+        f"📄 <b>{html.escape(filename)}</b>\n\n"
+        f"<code>{bar}</code> <b>{pct}%</b>\n"
+        f"⚙️ {html.escape(clean)}"
     )
 
 
@@ -1050,27 +1055,31 @@ async def run_scan(
 ) -> Report:
     filename = safe_filename(source_message)
 
+    progress_state = {"pct": 0, "label": "Starting scan…"}
+
     async def progress(line: str):
+        parsed_pct, label = progress_details(line)
+        progress_state["pct"] = max(int(progress_state["pct"]), parsed_pct)
+        progress_state["label"] = label
         await edit_status(
             status_message,
-            status_text(filename, line),
+            status_text(filename, label, progress_state["pct"]),
             buttons=cancel_button(scan_token),
         )
 
     heartbeat_stop = asyncio.Event()
     async def heartbeat():
-        dots = ("·", "••", "•••")
+        pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
             if heartbeat_stop.is_set():
                 break
-            bar = ("█" * 5) + ("░" * 5)
+            pct = max(1, int(progress_state["pct"]))
+            label = progress_state["label"]
             await edit_status(
                 status_message,
-                "🔎 <b>SCANNING METADATA</b>\n\n"
-                f"<code>[{bar}] {dots[index % len(dots)]}</code>\n"
-                "Processing media…",
+                status_text(filename, f"{label} {pulse[index % len(pulse)]}", pct),
                 buttons=cancel_button(scan_token),
             )
             index += 1
@@ -1217,7 +1226,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "🔎 <b>SCANNING METADATA</b>\n\n"
-            "<code>[░░░░░░░░░░] 0%</code>\n"
+            "<code>▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱</code> <b>1%</b>\n"
             "Starting scan…",
             buttons=cancel_button(scan_token),
         )
