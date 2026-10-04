@@ -234,11 +234,8 @@ HOME_TEXT = (
 )
 
 CLONE_HOME_TEXT = (
-    "⛩ <b>AniToon Media Info Clone</b> ⛩
-
-"
-    "🔎 Scan Telegram videos and documents for detailed media information.
-"
+    "⛩ <b>AniToon Media Info Clone</b> ⛩\n\n"
+    "🔎 Scan Telegram videos and documents for detailed media information.\n"
     "🌐 Open the complete file report in your browser."
 )
 
@@ -246,9 +243,8 @@ CLONE_HELP_TEXT = (
     "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
-    "3️⃣ Wait for the metadata scan to finish.\n"
-    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
-    "📋 <b>Command</b>\n"
+    "3️⃣ Open <b>🌐 Open File Info</b> for the complete report.\n\n"
+    "📋 <b>Only command</b>\n"
     "/start — Open Home"
 )
 
@@ -259,8 +255,7 @@ HELP_TEXT = (
     "3️⃣ Wait for the metadata scan to finish.\n"
     "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
     "🤖 <b>Clone Bots</b>\n"
-    "Use <code>/clone</code> or <b>🤖 Clone Manager</b>, then send the BotFather token. "
-    "Each account can manage up to <b>2</b> clones.\n\n"
+    "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
     "📋 <b>Commands</b>\n"
     "/start — Open Home\n"
     "/help — Open this guide\n"
@@ -734,7 +729,10 @@ async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> N
             Button.inline("🖥 Resources", b"owner:resources"),
             Button.inline("💚 Bot Status", b"home:status"),
         ],
-        [Button.inline("🔄 Refresh", b"owner:dashboard")],
+        [
+            Button.inline("📢 Broadcast", b"owner:broadcast"),
+            Button.inline("🔄 Refresh", b"owner:dashboard"),
+        ],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
     if edit:
@@ -943,7 +941,7 @@ async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
         online = bool(item.get("online"))
         status = "🟢 Online" if online else "🔴 Offline"
         lines.append(
-            f"🤖 <b>@{html.escape(username or 'unknown')}</b> — {status}\n"
+            f"🤖 <b>{html.escape('@' + username) if username else 'Clone Bot #' + str(clone_id)}</b> — {status}\n"
             f"👤 <a href=\"tg://user?id={owner_id}\">{owner_name}</a>"
         )
         if username:
@@ -1332,34 +1330,36 @@ def _clean_bot_token(value: str) -> str:
 
 
 GROUP_ONBOARDING_MESSAGES = (
-    "👋 <b>Hi everyone! I’m AniToon Media Info Bot.</b>\n\n"
-    "🤖 I help you check what is inside your Telegram video and document files.\n"
-    "🎞️ See video quality, resolution, codec and more.\n"
-    "🎧 Check audio tracks and languages.\n"
-    "💬 Find subtitle tracks and formats.\n"
-    "🌐 Open a clean web report with the complete file information.\n\n"
+    "👋 <b>Hi everyone! I’m new here — AniToon Media Info Bot.</b>\n\n"
+    "🔎 I help you see what is inside your Telegram video or document files.\n"
+    "🎬 Quality • resolution • codec • bitrate • duration\n"
+    "🎧 Audio tracks • languages • channels\n"
+    "💬 Subtitles • languages • formats\n"
+    "📦 Container and technical file details\n\n"
     "📤 Send a media file here and tap <b>🔎 Scan File Info</b>.\n"
-    f"🧬 You can also create your own clone bot for personal use from @{html.escape(BOT_USERNAME)}.",
-    "🎞️ <b>Check Video Quality</b>\n\n"
-    "AniToon can show the important video details inside a file — resolution, codec, frame rate, bitrate and duration.\n\n"
-    "📤 Send a video and tap <b>🔎 Scan File Info</b> to inspect it.",
-    "🎧 <b>Check Audio Tracks</b>\n\n"
-    "See how many audio tracks a file has, plus available language, codec, channels, sample rate and bitrate information.\n\n"
-    "📤 Send the video or document and scan the file.",
-    "💬 <b>Check Subtitles</b>\n\n"
-    "Find subtitle tracks and their available language and format information before downloading or sharing a file.\n\n"
-    "📤 Send the media file here and use <b>🔎 Scan File Info</b>.",
-    "📦 <b>Check the File Container</b>\n\n"
-    "See the file/container format, duration and other technical information in one place.\n\n"
-    "🌐 The complete report opens in the AniToon web page.",
-    "🌐 <b>Open the Complete Web Report</b>\n\n"
-    "After scanning, tap <b>🌐 Open File Info</b> to view the complete report in a clean browser page.\n\n"
-    "🔎 Video • 🎧 Audio • 💬 Subtitles • 📦 Container • ⚙️ Technical details",
-    "✨ <b>One Bot, Many Uses</b>\n\n"
-    "Use AniToon for quick file checks, media quality details, audio and subtitle inspection, and a complete web report.\n\n"
-    f"🧬 You can also create your own clone bot for personal use from @{html.escape(BOT_USERNAME)}.\n"
-    "📤 Send a file anytime and tap <b>🔎 Scan File Info</b>.",
+    "🌐 Open the full report in the web page.\n"
+    "🧬 You can also create your own AniToon clone bot for personal use.",
+    "🎬 <b>Day 2 • Check Video Quality</b>\n\n"
+    "See the video resolution, codec, pixel format, profile and other available quality details before you download or share a file.\n\n"
+    "📤 Send the video and tap <b>🔎 Scan File Info</b>.",
+    "🎧 <b>Day 3 • Check Audio Tracks</b>\n\n"
+    "See audio track count, language, codec, channels, layout, sample rate and bitrate when available.\n\n"
+    "📤 Send the file and scan its media information.",
+    "💬 <b>Day 4 • Find Subtitles</b>\n\n"
+    "Check embedded subtitle tracks, languages and subtitle formats so you know what is available before downloading the file.\n\n"
+    "📤 Send the media file and tap <b>🔎 Scan File Info</b>.",
+    "📦 <b>Day 5 • Check File & Container Details</b>\n\n"
+    "AniToon can identify the container or media format and show technical details such as runtime, MIME type and average bitrate when available.\n\n"
+    "🌐 Everything is organized in one clean report.",
+    "🌐 <b>Day 6 • Open the Full Web Report</b>\n\n"
+    "After the scan, use <b>🌐 Open File Info</b> to see video, audio, subtitle and technical details in an easy-to-read browser page.\n\n"
+    "⚡ Useful for checking a file quickly without downloading a complete copy.",
+    "✨ <b>Day 7 • Make AniToon Part of Your Workflow</b>\n\n"
+    "Use AniToon for quality checks, audio and subtitle inspection, container details and complete web reports.\n\n"
+    "🧬 You can also create your own clone bot for personal use.\n"
+    "📤 Send a file anytime and tap <b>🔎 Scan File Info</b>."
 )
+
 
 def _bot_id_for_client(client: Any) -> int | None:
     return bot_identity_ids.get(id(client))
@@ -1595,52 +1595,72 @@ async def _group_onboarding_loop() -> None:
 async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
     clean = (message_text or "").strip()
     if not clean:
-        return {"groups": 0, "sent": 0, "failed": 0, "clones": 0}
+        return {"groups": 0, "sent": 0, "failed": 0, "clones": 0, "clone_notifications": 0}
 
     groups = await list_group_chats()
     merged: dict[tuple[int, int], dict[str, Any]] = {}
     for group in groups:
         try:
-            key = (int(group["bot_id"]), int(group["chat_id"]))
-            merged[key] = dict(group)
+            merged[(int(group["bot_id"]), int(group["chat_id"]))] = dict(group)
         except (KeyError, TypeError, ValueError):
             continue
     for key, group in known_group_chats.items():
         merged.setdefault(key, dict(group))
 
-    active_clone_ids = set()
-    sent = 0
-    failed = 0
+    sent = failed = 0
+    payload = "📢 <b>AniToon Announcement</b>\n\n" + html.escape(clean)
+
     for (bot_id, chat_id), group in merged.items():
         clone_id = int(group.get("clone_id") or 0)
         target = bot if bot_id == _bot_id_for_client(bot) else clone_clients.get(clone_id)
-        if clone_id:
-            active_clone_ids.add(clone_id)
         if target is None:
             failed += 1
             continue
         try:
-            await target.send_message(
-                chat_id,
-                "📢 <b>AniToon Announcement</b>\n\n" + html.escape(clean),
-                parse_mode="html",
-            )
+            await target.send_message(chat_id, payload, parse_mode="html")
             sent += 1
+        except errors.FloodWaitError as exc:
+            await asyncio.sleep(min(max(1, int(exc.seconds)), 60))
+            try:
+                await target.send_message(chat_id, payload, parse_mode="html")
+                sent += 1
+            except Exception:
+                failed += 1
         except Exception:
             failed += 1
             log.warning(
                 "Owner broadcast failed | bot_id=%s | chat_id=%s | clone_id=%s",
-                bot_id,
-                chat_id,
-                clone_id,
-                exc_info=True,
+                bot_id, chat_id, clone_id, exc_info=True,
+            )
+        await asyncio.sleep(0.08)
+
+    clone_notifications = 0
+    for clone_id, owner_id in list(clone_owners.items()):
+        username = clone_usernames.get(int(clone_id))
+        try:
+            await bot.send_message(
+                int(owner_id),
+                "📢 <b>Owner Broadcast</b>\n\n" + html.escape(clean)
+                + (
+                    f"\n\n🤖 Clone: <b>@{html.escape(username)}</b>"
+                    if username else
+                    f"\n\n🤖 Clone Bot #{int(clone_id)}"
+                ),
+                parse_mode="html",
+            )
+            clone_notifications += 1
+        except Exception:
+            log.debug(
+                "Clone owner broadcast notification failed | clone_id=%s | owner_id=%s",
+                clone_id, owner_id, exc_info=True,
             )
 
     return {
         "groups": len(merged),
         "sent": sent,
         "failed": failed,
-        "clones": len(active_clone_ids),
+        "clones": len(clone_clients),
+        "clone_notifications": clone_notifications,
     }
 
 def _owner_broadcast_pending(user_id: int) -> bool:
@@ -1684,6 +1704,14 @@ def _bind_bot_handlers(
     include_clone: bool,
 ) -> None:
     async def on_message(event):
+        try:
+            await _touch_group_chat(
+                event,
+                client=client,
+                bot_username=bot_username,
+            )
+        except Exception:
+            log.debug("Group tracking failed", exc_info=True)
         await handle_new_message(
             event,
             client=client,
@@ -1691,13 +1719,19 @@ def _bind_bot_handlers(
             include_clone=include_clone,
         )
 
-    async def on_callback(event):
-        await handle_callback(
-            event,
-            client=client,
-            bot_username=bot_username,
-            include_clone=include_clone,
-        )
+    async def on_chat_action(event):
+        try:
+            await _handle_bot_added_to_group(
+                event,
+                client=client,
+                bot_username=bot_username,
+            )
+        except Exception:
+            log.exception("Group join/onboarding handler failed")
+
+    client.add_event_handler(on_message, events.NewMessage(incoming=True))
+    client.add_event_handler(on_callback, events.CallbackQuery)
+    client.add_event_handler(on_chat_action, events.ChatAction())
 
     client.add_event_handler(on_message, events.NewMessage(incoming=True))
     client.add_event_handler(on_callback, events.CallbackQuery)
@@ -1769,7 +1803,7 @@ async def monitor_clone_bots() -> None:
                 errors.UserDeactivatedError,
             ):
                 owner_id = clone_owners.get(int(clone_id))
-                username = clone_usernames.get(int(clone_id), "unknown")
+                username = clone_usernames.get(int(clone_id)) or f"Clone Bot #{int(clone_id)}"
                 log.warning(
                     "Clone token revoked/deactivated | clone_id=%s | username=%s",
                     clone_id,
@@ -1845,9 +1879,8 @@ async def begin_clone_setup(event) -> None:
 
     await event.reply(
         "🧬 <b>Create a Clone Bot</b>\n\n"
-        "1️⃣ Create a bot with @BotFather.\n"
-        "2️⃣ Send the BotFather token here.\n"
-        "3️⃣ Your token message is deleted after processing.\n\n"
+        "1️⃣ Open @BotFather and create your bot.\n"
+        "2️⃣ Send the BotFather token here.\n\n"
         "🔒 <b>Limit:</b> 2 clone bots per user.",
         parse_mode="html",
         buttons=clone_setup_buttons(),
@@ -2034,19 +2067,14 @@ async def handle_new_message(
 
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
+        if text.startswith("/") and text.split(maxsplit=1)[0].split("@", 1)[0].lower() != "/start":
+            return
 
     if include_clone and await handle_clone_token_message(event):
         return
 
-    home_text = HOME_TEXT if include_clone else (
-        "⛩ <b>AniToon Clone Bot</b> ⛩\n\n"
-        "🔎 Scan Telegram media files for detailed metadata.\n"
-        "🌐 View complete file information in your browser.\n\n"
-        "Choose an option below."
-    )
-    help_text = HELP_TEXT if include_clone else HELP_TEXT.replace(
-        "/clone — Start clone-bot setup with a BotFather token\n", ""
-    )
+    home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
+    help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
 
     if command == "/start":
         await record_user(event)
@@ -2133,6 +2161,11 @@ async def handle_new_message(
         return
 
     if command == "/status":
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.reply("ℹ️ System status is available to the owner only.")
+            return
         await record_user(event)
         await render_public_status(event, edit=False)
         return
@@ -2258,6 +2291,33 @@ async def handle_callback(
                 [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
             ],
         )
+        return
+
+    if data == "owner:broadcast":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        owner_broadcast_pending[int(user_id)] = time.monotonic()
+        await event.edit(
+            "📢 <b>Broadcast Message</b>\n\n"
+            "Send one message to deliver it to every registered group handled by AniToon and its clone bots.\n\n"
+            "🤖 Clone owners will also receive a copy.",
+            parse_mode="html",
+            buttons=[[Button.inline("❌ Cancel", b"owner:broadcast_cancel")]],
+        )
+        return
+
+    if data == "owner:broadcast_cancel":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is not None:
+            owner_broadcast_pending.pop(int(user_id), None)
+        if _owner_allowed(user_id):
+            await render_owner_dashboard(event, int(user_id))
         return
 
     if data == "owner:resources":
@@ -2430,6 +2490,11 @@ async def handle_callback(
 
     if data == "home:status":
         await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
         await render_public_status(event)
         return
 
@@ -2444,9 +2509,8 @@ async def handle_callback(
 
     if data == "home:help":
         await event.answer()
-        text = HELP_TEXT if include_clone else HELP_TEXT.replace(
-            "/clone — Start clone-bot setup with a BotFather token\n", ""
-        )
+        text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
+
         await event.edit(
             text,
             parse_mode="html",
@@ -2458,9 +2522,7 @@ async def handle_callback(
         await event.answer()
         await event.edit(
             "🔎 <b>Ready to Scan</b>\n\n"
-            "📤 <b>Send me a video or document.</b>\n"
-            "⚡ I’ll detect the file and show you the scan button.\n\n"
-            "🛡️ No scan starts until you press it.",
+            "📤 <b>Send me a video or document.</b>",
             parse_mode="html",
             buttons=scan_page_buttons(),
         )
@@ -2488,11 +2550,6 @@ async def handle_callback(
             )
         return
 
-    if data == "clone:token":
-        await event.answer()
-        if include_clone:
-            await begin_clone_setup(event)
-        return
 
     if data == "clone:cancel":
         await event.answer()
@@ -2917,9 +2974,9 @@ def web_page(report: Report, report_token: str | None = None) -> bytes:
 
         cards = []
         for index, track in enumerate(items, 1):
-            name = track.get("name") or track.get("display_name") or "Unnamed track"
-            language = track.get("language_name") or track.get("language") or "Unknown"
-            codec = track.get("codec_name") or track.get("codec") or "Unknown"
+            name = track.get("name") or track.get("display_name") or f"{kind} Track {index}"
+            language = track.get("language_name") or track.get("language") or "Not available"
+            codec = track.get("codec_name") or track.get("codec") or f"{kind} codec"
 
             details = [
                 ("Language", language),
@@ -2989,9 +3046,9 @@ def web_page(report: Report, report_token: str | None = None) -> bytes:
             )
         return "".join(cards)
 
-    runtime = report.container.get("runtime") or "Unknown"
-    container_name = report.detected or "Unknown"
-    mime = report.mime or "Unknown"
+    runtime = report.container.get("runtime") or "Not available"
+    container_name = report.detected or "Detected media"
+    mime = report.mime or "application/octet-stream"
     sampled = f"{report.sampled / 1024 / 1024:.2f} MiB"
     wallpaper_seed = html.escape(report_token or secrets.token_urlsafe(10))
     wallpaper_url = f"https://picsum.photos/seed/{wallpaper_seed}/1920/1080"
@@ -3199,7 +3256,7 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
         <div class="kv"><span>MIME</span><strong>{esc(mime)}</strong></div>
         <div class="kv"><span>Runtime</span><strong>{esc(runtime)}</strong></div>
         <div class="kv"><span>Sample read</span><strong>{esc(sampled)}</strong></div>
-        <div class="kv"><span>Average bitrate</span><strong>{esc(report.container.get("average_bitrate", "Unknown"))}</strong></div>
+        <div class="kv"><span>Average bitrate</span><strong>{esc(report.container.get("average_bitrate", "Not available"))}</strong></div>
         <div class="kv"><span>Probe ranges</span><strong>{len(report.probe_ranges)}</strong></div>
       </div>
     </div>
@@ -3535,6 +3592,7 @@ async def health_server():
 
 async def main():
     clone_monitor_task: asyncio.Task | None = None
+    group_onboarding_task: asyncio.Task | None = None
     _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
     health = await health_server()
 
@@ -3619,9 +3677,10 @@ async def main():
                 )
 
         me = await bot.get_me()
-        username = getattr(me, "username", "unknown")
+        username = getattr(me, "username", None) or BOT_USERNAME.lstrip("@") or "AniToon_1Bot"
 
         clone_monitor_task = asyncio.create_task(monitor_clone_bots())
+        group_onboarding_task = asyncio.create_task(_group_onboarding_loop())
 
         log.info(
             "Telegram bot online as @%s | private_only=%s | clones=%s | concurrency=%s | scan_timeout=%ss | web=%s",
@@ -3636,6 +3695,10 @@ async def main():
         await bot.run_until_disconnected()
 
     finally:
+        if group_onboarding_task is not None:
+            group_onboarding_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await group_onboarding_task
         if clone_monitor_task is not None:
             clone_monitor_task.cancel()
             with suppress(asyncio.CancelledError):
