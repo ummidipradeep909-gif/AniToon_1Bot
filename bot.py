@@ -784,6 +784,7 @@ async def analyze_source(
 
     except asyncio.CancelledError:
         outcome = "cancelled"
+        await persist_outcome("cancelled")
         checks_failed += 1
         await cancel_probe(scan_token)
         await edit_status(
