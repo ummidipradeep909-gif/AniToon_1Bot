@@ -356,6 +356,88 @@ async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
     return True
 
 
+def _owner_allowed(user_id: int | None) -> bool:
+    return OWNER_ID > 0 and user_id is not None and int(user_id) == OWNER_ID
+
+def _owner_user_label(record: dict[str, Any]) -> str:
+    username = str(record.get("username") or "").strip().lstrip("@")
+    name = " ".join(str(record.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
+    return f"@{username}" if username else (name or f"User {record.get('user_id', '?')}")
+
+async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> None:
+    if not _owner_allowed(user_id):
+        await event.answer("Owner access only.", alert=True)
+        return
+    summary = await owner_7day_summary(7)
+    if not summary.get("available"):
+        text = ("👑 <b>Owner Dashboard</b>\n\n"
+                "⚠️ MongoDB is not connected.\n"
+                "Set <code>MONGODB_URI</code> in Render to keep the last 7 days of user and scan history.")
+        buttons = [[Button.inline("🔄 Refresh", b"owner:dashboard")], [Button.inline("⬅️ Home", b"home:back")]]
+    else:
+        text = ("👑 <b>Owner Dashboard</b>\n\n"
+                "📅 <b>Last 7 Days</b>\n\n"
+                f"👥 Users with scans: <b>{summary['total_users']}</b>\n"
+                f"📁 Scan files: <b>{summary['total_scans']}</b>\n"
+                f"✅ Completed: <b>{summary['completed']}</b>\n"
+                f"❌ Failed: <b>{summary['failed']}</b>\n"
+                f"🛑 Cancelled: <b>{summary['cancelled']}</b>")
+        buttons = [[Button.inline("👥 Users & Scan Files", b"owner:users:0")], [Button.inline("🔄 Refresh", b"owner:dashboard")], [Button.inline("⬅️ Home", b"home:back")]]
+    if edit:
+        await event.edit(text, parse_mode="html", buttons=buttons)
+    else:
+        await event.reply(text, parse_mode="html", buttons=buttons)
+
+async def render_owner_users(event, owner_id: int, page: int = 0) -> None:
+    if not _owner_allowed(owner_id):
+        await event.answer("Owner access only.", alert=True)
+        return
+    summary = await owner_7day_summary(7)
+    users = summary.get("users", []) if summary.get("available") else []
+    page_size = 10
+    max_page = max(0, (len(users) - 1) // page_size)
+    page = max(0, min(int(page), max_page))
+    chunk = users[page * page_size:(page + 1) * page_size]
+    if not users:
+        await event.edit("👥 <b>Users — Last 7 Days</b>\n\nNo scan activity found.", parse_mode="html", buttons=[[Button.inline("👑 Dashboard", b"owner:dashboard")]])
+        return
+    lines = ["👥 <b>Users — Last 7 Days</b>", ""]
+    buttons = []
+    for item in chunk:
+        name = _owner_user_label(item)
+        lines.append(f"👤 <b>{html.escape(name)}</b> — 📁 {int(item.get('scans', 0) or 0)}")
+        buttons.append([Button.inline(f"📁 {name[:28]}", f"owner:user:{int(item['user_id'])}".encode("ascii"))])
+    nav = []
+    if page > 0:
+        nav.append(Button.inline("◀️ Previous", f"owner:users:{page-1}".encode("ascii")))
+    if page < max_page:
+        nav.append(Button.inline("Next ▶️", f"owner:users:{page+1}".encode("ascii")))
+    if nav:
+        buttons.append(nav)
+    buttons.append([Button.inline("👑 Dashboard", b"owner:dashboard")])
+    await event.edit("\n".join(lines) + f"\n\nPage {page + 1}/{max_page + 1}", parse_mode="html", buttons=buttons)
+
+async def render_owner_user_scans(event, owner_id: int, target_user_id: int) -> None:
+    if not _owner_allowed(owner_id):
+        await event.answer("Owner access only.", alert=True)
+        return
+    records = await owner_user_scans(int(target_user_id), 7, 40)
+    if not records:
+        await event.edit(f"📁 <b>User {int(target_user_id)} — Scan Files</b>\n\nNo scans in the last 7 days.", parse_mode="html", buttons=[[Button.inline("⬅️ Users", b"owner:users:0")]])
+        return
+    lines = [f"📁 <b>User {int(target_user_id)} — Scan Files</b>", "📅 Last 7 Days", ""]
+    for index, item in enumerate(records, 1):
+        filename = str(item.get("filename") or "telegram_file")
+        status = str(item.get("status") or "unknown")
+        when = item.get("created_at")
+        when_text = when.strftime("%d %b %H:%M UTC") if isinstance(when, datetime) else "Unknown"
+        source = str(item.get("source_bot") or BOT_USERNAME)
+        lines.append(f"{index}. <b>{html.escape(filename[:110])}</b>\n   {html.escape(status)} • {html.escape(source)} • {html.escape(when_text)}")
+    text = "\n".join(lines)
+    if len(text) > 3900:
+        text = text[:3860] + "\n\n…showing the newest scan files."
+    await event.edit(text, parse_mode="html", buttons=[[Button.inline("⬅️ Users", b"owner:users:0")], [Button.inline("👑 Dashboard", b"owner:dashboard")]])
+
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🔎 Scan Telegram media files for detailed metadata.\n"
