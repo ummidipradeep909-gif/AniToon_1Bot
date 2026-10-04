@@ -65,7 +65,8 @@ FILE_CHECKER_PRIVATE_ONLY = (
 )
 # Free-instance safe default: keep compute concurrency deliberately conservative.
 MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "4")), 4))
-SCAN_TIMEOUT_SECONDS = max(30, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "300")), 300))
+# Fail fast instead of leaving a Free-instance worker hung for minutes.
+SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
 REPORT_LINK_TTL_SECONDS = 5 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
@@ -1128,14 +1129,30 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             if heartbeat_stop.is_set():
                 break
-            pct = max(1, int(progress_state["pct"]))
+
+            # Keep the bar visibly moving while the worker is doing bounded
+            # network/metadata work. Real parser callbacks can jump it forward.
+            current = int(progress_state["pct"])
+            if current < 14:
+                current = 14
+
+            if current < 76:
+                visual_pct = min(35, current + 2)
+            else:
+                visual_pct = min(96, current + 2)
+
+            progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
             await edit_status(
                 status_message,
-                status_text(filename, f"{label} {pulse[index % len(pulse)]}", pct),
+                status_text(
+                    filename,
+                    f"⚡ {label} {pulse[index % len(pulse)]}",
+                    progress_state["pct"],
+                ),
                 buttons=cancel_button(scan_token),
             )
             index += 1
@@ -1148,13 +1165,16 @@ async def run_scan(
                 client,
                 source_message,
                 progress=progress,
-                deep=True,
+                deep=False,
             )
 
-        return await asyncio.wait_for(
+        report = await asyncio.wait_for(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
+        progress_state["pct"] = max(int(progress_state["pct"]), 96)
+        progress_state["label"] = "✅ Worker finished — building report…"
+        return report
     finally:
         heartbeat_stop.set()
         heartbeat_task.cancel()
