@@ -103,8 +103,15 @@ HOME_TEXT = (
 HELP_TEXT = (
     "📖 <b>AniToon Help</b>\n\n"
     "🔎 Send a video/document and press <b>📥 Download Metadata</b> to scan.\n"
-    "🌐 View the complete report with <b>Open File Info</b>.\n"
-    "<b>Commands:</b> /start · /help · /about · /addtogroup · /clone · /cancel"
+    "🌐 View the complete report with <b>Open File Info</b>.\n\n"
+    "<b>Commands & what they do</b>\n"
+    "/start — Open the AniToon home page\n"
+    "/help — Show this help and command guide\n"
+    "/about — See information about AniToon\n"
+    "/addtogroup — Get the button to add AniToon to your group\n"
+    "/clone — Start clone-bot setup with a BotFather token\n"
+    "/cancel — Cancel your active metadata scan\n\n"
+    "Use the buttons below for the same features."
 )
 
 
