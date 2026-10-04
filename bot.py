@@ -710,8 +710,18 @@ async def render_owner_resources(event, user_id: int) -> None:
         return
 
     stats = runtime_resource_stats()
-    ram_state = "🟢 Normal" if stats["ram_pct"] < 70 else ("🟡 Watch" if stats["ram_pct"] < 80 else "🔴 High")
-    egress_state = "🟢 Low" if stats["web_egress_pct"] < 70 else ("🟡 Watch" if stats["web_egress_pct"] < 85 else "🔴 High")
+    ram_state = (
+        "🟢 Normal"
+        if stats["ram_pct"] < 70
+        else ("🟡 Watch" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 High")
+    )
+    egress_state = (
+        "🟢 Low"
+        if stats["web_egress_pct"] < 70
+        else ("🟡 Watch" if stats["web_egress_pct"] < 85 else "🔴 High")
+    )
+    guard = resource_guard_reason()
+    guard_line = "✅ Guard is clear — new heavy scans are allowed." if not guard else f"🛑 <b>Guard active:</b> {html.escape(guard)}"
 
     text = (
         "🖥️ <b>Render Free Resource Guard</b>\n\n"
@@ -720,9 +730,16 @@ async def render_owner_resources(event, user_id: int) -> None:
         f"⏱️ Current process uptime: <b>{stats['uptime_hours']:.2f} h</b>\n"
         f"📊 Uptime vs 750h allowance: <b>{stats['uptime_pct']:.1f}%</b>\n"
         f"💾 Local filesystem currently used: <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n\n"
-        "🛡️ New heavy scans are paused when RAM pressure reaches 80%.\n"
+        "🛡️ New heavy scans are paused when RAM pressure reaches 80% or the app egress safety buffer is reached.\n"
         "⚠️ Render's exact workspace billing meter is still shown in Render Billing/Metrics; "
-        "the egress figure above is only traffic tracked by this process."
+        "the egress figure above is only traffic tracked by this process.\n\n"
+        "📈 <b>Why these numbers increase</b>\n"
+        "• RAM rises from Python/Telethon/MongoDB state, media probing, and concurrent scans.\n"
+        "• Egress rises when this web service sends HTML, JSON, and preview-image data to browsers.\n"
+        "• Uptime rises while this process is running; Render's 750h figure is a workspace-level allowance, not a per-process meter.\n"
+        "• Disk usage includes the runtime image and installed dependencies; Free services use ephemeral storage, so this is not a monthly billing quota.\n\n"
+        f"🔎 <b>Live workload:</b> {active_processes}/{MAX_CONCURRENT_CHECKS} scans active • {queued_processes} queued • {len(preview_tasks)} preview task(s)\n"
+        f"{guard_line}"
     )
     await event.edit(
         text,
