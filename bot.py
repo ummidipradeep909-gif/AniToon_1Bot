@@ -3042,35 +3042,53 @@ h1 {{
     return document.encode("utf-8")
 
 def web_page(report: Report, report_token: str | None = None) -> bytes:
-    filename = html.escape(report.filename)
+    filename = html.escape(report.filename or "Telegram media file")
     generated = datetime.now(timezone.utc)
-    generated_text = generated.strftime("%Y-%m-%d %H:%M UTC")
+    generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
 
-    audio = report.audio.get("tracks", [])
-    video = report.video.get("tracks", [])
-    subtitles = report.subtitles or []
+    audio = list(report.audio.get("tracks", []) or [])
+    video = list(report.video.get("tracks", []) or [])
+    subtitles = list(report.subtitles or [])
 
     def esc(value: Any) -> str:
         return html.escape(str(value))
 
+    def human_size(value: Any) -> str:
+        try:
+            size = float(value)
+        except Exception:
+            return "Not available"
+        units = ("B", "KB", "MB", "GB", "TB")
+        i = 0
+        while size >= 1024 and i < len(units) - 1:
+            size /= 1024
+            i += 1
+        return f"{size:.1f} {units[i]}" if i else f"{int(size)} {units[i]}"
+
+    def icon_for(kind: str) -> str:
+        return {"Video": "🎬", "Audio": "🎧", "Subtitle": "💬"}.get(kind, "◈")
+
     def track_cards(items: list[dict[str, Any]], kind: str) -> str:
         if not items:
             return (
-                '<div class="empty">No confirmed '
-                + esc(kind)
-                + ' track was exposed by the player engine within the bounded probe.</div>'
+                f'<div class="empty-state">'
+                f'<span class="empty-icon">{icon_for(kind)}</span>'
+                f'<div><strong>No {esc(kind.lower())} tracks detected</strong>'
+                f'<p>The inspected metadata did not expose a confirmed {esc(kind.lower())} stream.</p></div>'
+                f'</div>'
             )
 
-        cards = []
+        cards: list[str] = []
         for index, track in enumerate(items, 1):
             name = track.get("name") or track.get("display_name") or f"{kind} Track {index}"
-            language = track.get("language_name") or track.get("language") or "Not available"
-            codec = track.get("codec_name") or track.get("codec") or f"{kind} codec"
+            language = track.get("language_name") or track.get("language")
+            codec = track.get("codec_name") or track.get("codec")
+            details: list[tuple[str, Any]] = []
 
-            details = [
-                ("Language", language),
-                ("Codec", codec),
-            ]
+            if language:
+                details.append(("Language", language))
+            if codec:
+                details.append(("Codec", codec))
 
             if kind == "Audio":
                 details.extend([
@@ -3084,52 +3102,45 @@ def web_page(report: Report, report_token: str | None = None) -> bytes:
                     ("Resolution", track.get("dimensions")),
                     ("Pixel format", track.get("pixel_format")),
                     ("Profile", track.get("profile")),
+                    ("Frame rate", track.get("frame_rate")),
                 ])
             else:
                 details.append(("Format", track.get("subtitle_format") or codec))
 
-            for label, value in details:
-                if value:
-                    pass
-                else:
-                    continue
-                details_html = ""
-
+            details = [(label, value) for label, value in details if value]
             rows = "".join(
-                f'<div class="kv"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
+                f'<div class="spec"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
                 for label, value in details
-                if value
             )
 
-            flags = []
-            if track.get("default") == "yes":
-                flags.append("DEFAULT")
-            if track.get("original") == "yes":
-                flags.append("ORIGINAL")
-            if track.get("commentary") == "yes":
-                flags.append("COMMENTARY")
-            if track.get("forced") == "yes":
-                flags.append("FORCED")
-            if track.get("hearing_impaired") == "yes":
-                flags.append("HI")
-            if track.get("visual_impaired") == "yes":
-                flags.append("VI")
+            flags: list[str] = []
+            for key, label in (
+                ("default", "DEFAULT"),
+                ("original", "ORIGINAL"),
+                ("commentary", "COMMENTARY"),
+                ("forced", "FORCED"),
+                ("hearing_impaired", "HI"),
+                ("visual_impaired", "VI"),
+            ):
+                if track.get(key) == "yes":
+                    flags.append(label)
 
             badges = "".join(f'<span class="badge">{esc(flag)}</span>' for flag in flags)
-            source = esc(track.get("name_source", "player metadata"))
-
             cards.append(
                 f"""
-                <article class="track">
-                  <div class="track-top">
-                    <div class="index">{index:02d}</div>
-                    <div class="track-main">
-                      <h3>{esc(name)}</h3>
-                      <div class="subline">{esc(kind)} • {esc(source)}</div>
+                <article class="track-card">
+                  <div class="track-orb">{icon_for(kind)}</div>
+                  <div class="track-content">
+                    <div class="track-heading">
+                      <div>
+                        <div class="track-number">{index:02d}</div>
+                        <h3>{esc(name)}</h3>
+                        <p>{esc(kind)} stream</p>
+                      </div>
+                      <div class="badges">{badges}</div>
                     </div>
-                    <div class="badges">{badges}</div>
+                    <div class="spec-grid">{rows}</div>
                   </div>
-                  <div class="grid">{rows}</div>
                 </article>
                 """
             )
@@ -3138,191 +3149,266 @@ def web_page(report: Report, report_token: str | None = None) -> bytes:
     runtime = report.container.get("runtime") or "Not available"
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
-    sampled = f"{report.sampled / 1024 / 1024:.2f} MiB"
-    audio_names = [str(t.get("name")) for t in audio if t.get("name")]
-    subtitle_names = [str(t.get("name")) for t in subtitles if t.get("name")]
+    size_text = human_size(report.size)
+    sampled_text = human_size(report.sampled)
+
+    first_video = video[0] if video else {}
+    quality = first_video.get("dimensions") or "Not available"
+    primary_codec = first_video.get("codec_name") or first_video.get("codec") or "Not available"
+    bitrate = report.container.get("average_bitrate") or "Not available"
+    title = report.container.get("title")
+
+    report_id = esc((report_token or "local")[:14])
 
     document = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b1020">
-<title>AniToons File Intelligence — {filename}</title>
+<meta name="theme-color" content="#070816">
+<title>AniToon Media Intelligence — {filename}</title>
 <style>
 :root {{
   color-scheme: dark;
-  --bg: #070b14;
-  --panel: rgba(17,24,39,.88);
-  --border: rgba(148,163,184,.18);
-  --muted: #94a3b8;
-  --text: #f8fafc;
-  --accent: #7dd3fc;
-  --good: #86efac;
+  --bg:#050611;
+  --panel:rgba(12,15,34,.72);
+  --panel-strong:rgba(15,19,43,.88);
+  --line:rgba(255,255,255,.10);
+  --line-strong:rgba(139,124,255,.32);
+  --text:#f7f7fb;
+  --muted:#9ea4bf;
+  --accent:#9a8cff;
+  --accent-2:#5ee7ff;
+  --good:#7cf4b0;
+  --shadow:0 28px 80px rgba(0,0,0,.42);
 }}
-* {{ box-sizing: border-box; }}
+* {{ box-sizing:border-box; }}
+html {{ scroll-behavior:smooth; }}
 body {{
-  margin: 0;
-  min-height: 100vh;
-  position: relative;
-  isolation: isolate;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  margin:0;
+  min-height:100vh;
+  color:var(--text);
+  background:var(--bg);
+  font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  overflow-x:hidden;
 }}
 body::before {{
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:-4;
   background:
-    radial-gradient(900px 520px at 12% -5%, rgba(125,211,252,.15), transparent 62%),
-    radial-gradient(900px 520px at 100% 0%, rgba(168,85,247,.13), transparent 64%),
-    linear-gradient(180deg, #070b14, #0a0f1b 55%, #070b14);
+    radial-gradient(900px 620px at 8% 5%, rgba(110,95,255,.24), transparent 68%),
+    radial-gradient(780px 560px at 92% 10%, rgba(49,224,255,.17), transparent 70%),
+    radial-gradient(900px 680px at 50% 100%, rgba(176,76,255,.12), transparent 72%),
+    linear-gradient(180deg,#070816 0%,#050611 55%,#03040b 100%);
 }}
 body::after {{
-  content: "";
-  position: fixed;
-  inset: -10%;
-  z-index: -1;
+  content:"";
+  position:fixed;
+  inset:-35%;
+  z-index:-3;
   background:
-    radial-gradient(900px 420px at 10% 0%, rgba(125,211,252,.12), transparent 65%),
-    radial-gradient(850px 420px at 100% 0%, rgba(168,85,247,.12), transparent 65%);
-  pointer-events: none;
-  animation: glowDrift 18s ease-in-out infinite alternate;
+    conic-gradient(from 0deg at 50% 50%, transparent 0 18%, rgba(114,99,255,.12) 25%, transparent 35% 55%, rgba(70,229,255,.10) 63%, transparent 75% 100%);
+  filter:blur(34px);
+  animation:aurora 24s linear infinite;
+  pointer-events:none;
 }}
-@keyframes glowDrift {{
-  from {{ transform:translate3d(-1%,0,0) scale(1); opacity:.88; }}
-  to {{ transform:translate3d(1%,1%,0) scale(1.03); opacity:1; }}
+.bg-grid {{
+  position:fixed;
+  inset:0;
+  z-index:-2;
+  opacity:.23;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+  background-size:36px 36px;
+  mask-image:linear-gradient(to bottom,black 0%,transparent 85%);
 }}
-@media (prefers-reduced-motion: reduce) {{
-  body::after {{ animation:none !important; }}
+.orb {{
+  position:fixed;
+  width:260px;height:260px;border-radius:50%;
+  z-index:-1;pointer-events:none;
+  filter:blur(2px);
+  opacity:.42;
+  mix-blend-mode:screen;
 }}
-.wrap {{ max-width: 1080px; margin:auto; padding:20px 14px 50px; }}
+.orb.a {{
+  top:12%;left:-110px;
+  background:radial-gradient(circle at 50% 50%,rgba(157,122,255,.38),transparent 68%);
+  animation:floatA 16s ease-in-out infinite;
+}}
+.orb.b {{
+  top:58%;right:-120px;
+  background:radial-gradient(circle at 50% 50%,rgba(56,215,255,.28),transparent 68%);
+  animation:floatB 20s ease-in-out infinite;
+}}
+.top-glow {{
+  position:fixed;top:0;left:0;right:0;height:3px;z-index:20;
+  background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);
+  background-size:200% 100%;
+  animation:scanline 5s linear infinite;
+}}
+.wrap {{ max-width:1120px; margin:auto; padding:22px 16px 54px; }}
+.nav {{
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  margin-bottom:16px;padding:10px 13px;
+  border:1px solid var(--line);border-radius:16px;
+  background:rgba(9,11,25,.66);backdrop-filter:blur(18px);
+}}
+.nav .brand {{font-weight:900;letter-spacing:.08em;text-transform:uppercase;font-size:11px;color:#dddafe;}}
+.nav a {{color:var(--muted);text-decoration:none;font-size:12px;font-weight:750;}}
 .hero {{
-  padding:24px;
-  border:1px solid var(--border);
-  border-radius:24px;
-  background:linear-gradient(135deg,rgba(15,23,42,.78),rgba(17,24,39,.66));
-  box-shadow:0 20px 60px rgba(0,0,0,.26);
+  position:relative;overflow:hidden;
+  padding:26px;border:1px solid var(--line);border-radius:28px;
+  background:linear-gradient(145deg,rgba(15,18,43,.86),rgba(8,10,23,.60));
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(22px);
+  animation:reveal .75s cubic-bezier(.2,1,.2,1) both;
 }}
-.logo {{ font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); font-weight:800; }}
-h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
-.file {{ color:#cbd5e1; overflow-wrap:anywhere; }}
-.meta {{ margin-top:10px; color:var(--muted); font-size:12px; display:flex; gap:10px; flex-wrap:wrap; }}
-.pill {{
-  display:inline-flex; align-items:center; gap:7px;
-  padding:7px 10px; border-radius:999px;
-  background:rgba(148,163,184,.08); border:1px solid var(--border);
+.hero::before {{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(110deg,transparent 0%,rgba(255,255,255,.04) 28%,transparent 48%),
+    radial-gradient(420px 180px at 0% 0%,rgba(154,140,255,.15),transparent 72%);
+  transform:translateX(-20%);
+  animation:sheen 9s ease-in-out infinite;
 }}
+.eyebrow {{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:7px 10px;border:1px solid rgba(124,244,176,.16);border-radius:999px;
+  background:rgba(124,244,176,.07);color:var(--good);
+  font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;
+}}
+.dot {{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 16px rgba(124,244,176,.7);animation:pulse 1.8s ease-in-out infinite;}}
+h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-spacing:-.035em; }}
+.file {{color:#c7cbe1;overflow-wrap:anywhere;font-size:13px;max-width:850px;}}
+.hero-meta {{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}}
+.pill {{display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:11px;}}
 .summary {{
-  display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:10px; margin-top:18px;
+  display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:18px;
 }}
 .stat {{
-  padding:15px; border:1px solid var(--border); border-radius:16px;
-  background:rgba(2,6,23,.28);
+  position:relative;padding:14px;border:1px solid var(--line);border-radius:17px;
+  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.015));
+  overflow:hidden;transition:transform .2s ease,border-color .2s ease,background .2s ease;
 }}
-.stat b {{ display:block; font-size:22px; margin-bottom:2px; }}
-.stat span {{ color:var(--muted); font-size:12px; }}
+.stat:hover {{transform:translateY(-3px);border-color:var(--line-strong);background:rgba(255,255,255,.065);}}
+.stat::after {{
+  content:"";position:absolute;width:70px;height:70px;right:-20px;top:-24px;border-radius:50%;
+  background:radial-gradient(circle,rgba(154,140,255,.17),transparent 70%);
+}}
+.stat b {{display:block;font-size:21px;letter-spacing:-.02em;}}
+.stat span {{color:var(--muted);font-size:11px;}}
 .section {{
-  margin-top:16px; border:1px solid var(--border); border-radius:20px;
-  background:var(--panel); overflow:hidden;
+  margin-top:16px;border:1px solid var(--line);border-radius:22px;
+  background:var(--panel);backdrop-filter:blur(18px);box-shadow:0 20px 50px rgba(0,0,0,.20);
+  overflow:hidden;animation:reveal .7s cubic-bezier(.2,1,.2,1) both;
 }}
+.section:nth-of-type(2){{animation-delay:.08s}} .section:nth-of-type(3){{animation-delay:.14s}}
+.section:nth-of-type(4){{animation-delay:.20s}} .section:nth-of-type(5){{animation-delay:.26s}}
 .section-head {{
-  padding:16px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px;
-  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:16px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(255,255,255,.035),transparent);
 }}
-.section-head h2 {{ margin:0; font-size:18px; }}
-.section-body {{ padding:14px; }}
-.track {{
-  padding:16px; border:1px solid var(--border); border-radius:16px;
-  background:rgba(2,6,23,.22); margin-bottom:10px;
+.section-head h2 {{margin:0;font-size:17px;letter-spacing:-.02em;}}
+.section-body {{padding:14px;}}
+.track-card {{
+  display:flex;gap:14px;padding:16px;border:1px solid var(--line);border-radius:18px;
+  background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));
+  margin-bottom:10px;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;
 }}
-.track:last-child {{ margin-bottom:0; }}
-.track-top {{ display:flex; gap:12px; align-items:flex-start; }}
-.index {{
-  width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto;
-  border-radius:12px; background:rgba(125,211,252,.10); color:var(--accent); font-weight:800;
+.track-card:last-child {{margin-bottom:0;}}
+.track-card:hover {{transform:translateY(-2px);border-color:rgba(154,140,255,.30);box-shadow:0 16px 35px rgba(0,0,0,.22);}}
+.track-orb {{
+  width:46px;height:46px;border-radius:15px;display:grid;place-items:center;flex:0 0 auto;
+  background:radial-gradient(circle at 30% 20%,rgba(154,140,255,.24),rgba(94,231,255,.08));
+  border:1px solid rgba(154,140,255,.20);font-size:20px;
 }}
-.track-main {{ min-width:0; flex:1; }}
-.track-main h3 {{ margin:0; font-size:16px; overflow-wrap:anywhere; }}
-.subline {{ color:var(--muted); font-size:12px; margin-top:2px; }}
-.badges {{ display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }}
-.badge {{
-  padding:3px 7px; border-radius:999px; background:rgba(134,239,172,.09);
-  border:1px solid rgba(134,239,172,.18); color:var(--good); font-size:10px; font-weight:800;
+.track-content {{min-width:0;flex:1;}}
+.track-heading {{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}}
+.track-number {{color:var(--accent);font-size:10px;font-weight:900;letter-spacing:.12em;}}
+.track-heading h3 {{margin:2px 0 1px;font-size:16px;overflow-wrap:anywhere;}}
+.track-heading p {{margin:0;color:var(--muted);font-size:11px;}}
+.badges {{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;}}
+.badge {{padding:4px 7px;border-radius:999px;border:1px solid rgba(124,244,176,.15);background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:900;letter-spacing:.08em;}}
+.spec-grid {{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px;}}
+.spec {{display:flex;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:11px;background:rgba(255,255,255,.035);}}
+.spec span {{color:var(--muted);font-size:11px;}}
+.spec strong {{font-size:11px;text-align:right;overflow-wrap:anywhere;}}
+.empty-state {{display:flex;gap:12px;align-items:center;padding:14px;border:1px dashed rgba(255,255,255,.10);border-radius:16px;background:rgba(255,255,255,.02);}}
+.empty-icon {{font-size:20px;opacity:.7;}}
+.empty-state strong {{font-size:13px;}}
+.empty-state p {{margin:2px 0 0;color:var(--muted);font-size:11px;}}
+.tech-grid {{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;}}
+.tech {{
+  padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.028);
 }}
-.grid {{
-  margin-top:13px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;
+.tech small {{display:block;color:var(--muted);font-size:10px;margin-bottom:4px;}}
+.tech b {{display:block;font-size:12px;overflow-wrap:anywhere;}}
+.footer {{
+  display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:18px;
+  color:#7f849d;font-size:10px;padding:0 3px;
 }}
-.kv {{
-  display:flex; justify-content:space-between; gap:14px;
-  padding:8px 10px; border-radius:10px; background:rgba(148,163,184,.05);
-}}
-.kv span {{ color:var(--muted); }}
-.kv strong {{ text-align:right; overflow-wrap:anywhere; }}
-.empty {{ color:var(--muted); padding:10px; }}
-.note {{
-  margin-top:16px; padding:14px 16px; border:1px solid var(--border); border-radius:16px;
-  background:rgba(15,23,42,.72); color:#cbd5e1;
-}}
-.countdown {{ color:var(--accent); font-weight:800; }}
-@keyframes reportReveal {{
-  from {{ opacity:0; transform:translateY(14px); filter:blur(5px); }}
-  to {{ opacity:1; transform:translateY(0); filter:blur(0); }}
-}}
-.section {{ animation:reportReveal .65s cubic-bezier(.2,1,.2,1) both; }}
-.section:nth-of-type(2) {{ animation-delay:.08s; }}
-.section:nth-of-type(3) {{ animation-delay:.14s; }}
-.section:nth-of-type(4) {{ animation-delay:.20s; }}
-@media(max-width:720px) {{
-  .summary {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
-  .grid {{ grid-template-columns:1fr; }}
-  .badges {{ justify-content:flex-start; }}
-}}
+.footer strong {{color:#b9bad0;}}
+.countdown {{color:var(--accent-2);font-weight:900;}}
+.reveal-line {{height:1px;background:linear-gradient(90deg,transparent,rgba(154,140,255,.45),transparent);margin:2px 0 0;}}
+@keyframes aurora {{to {{transform:rotate(360deg)}}}}
+@keyframes floatA {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(80px,40px,0) scale(1.12)}}}}
+@keyframes floatB {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(-80px,-30px,0) scale(1.10)}}}}
+@keyframes pulse {{0%,100%{{transform:scale(.85);opacity:.8}}50%{{transform:scale(1.15);opacity:1}}}}
+@keyframes scanline {{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
+@keyframes sheen {{0%,100%{{transform:translateX(-25%)}}50%{{transform:translateX(45%)}}}}
+@keyframes reveal {{from{{opacity:0;transform:translateY(18px);filter:blur(7px)}}to{{opacity:1;transform:none;filter:none}}}}
+@media(max-width:860px){{.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:620px){{.wrap{{padding:12px 10px 35px}}.hero{{padding:20px;border-radius:22px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-card{{padding:13px}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
 <body>
+<div class="top-glow"></div>
+<div class="bg-grid"></div>
+<div class="orb a"></div><div class="orb b"></div>
+
 <div class="wrap">
-  <nav class="site-nav" style="margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;background:rgba(15,20,34,.88);">
-    <a href="/" style="color:var(--text);text-decoration:none;font-weight:850;">⛩ AniToon's List ⛩</a>
-    <a href="/" style="color:var(--accent);text-decoration:none;font-size:12px;font-weight:750;">Home ↗</a>
+  <nav class="nav">
+    <div class="brand">AniToon Media Intelligence</div>
+    <a href="/">Home ↗</a>
   </nav>
-<div class="wrap">
+
   <header class="hero">
-    <div class="logo">AniToon Media Info</div>
+    <span class="eyebrow"><span class="dot"></span> Analysis Complete</span>
     <h1>Media Metadata Report</h1>
     <div class="file">{filename}</div>
-    <div class="source-line">🧠 Sources: Telegram metadata • Deep container parser • FFmpeg/PyAV</div>
-    <div class="meta">
-      <span class="pill">Generated {generated_text}</span>
-      <span class="pill">⏳ Link valid for <span id="countdown" class="countdown">05:00</span></span>
-      <span class="pill">🛡️ No complete file download</span>
+    {f'<div class="pill" style="margin-top:10px;display:inline-flex;">🎞️ {esc(title)}</div>' if title else ''}
+    <div class="hero-meta">
+      <span class="pill">📦 {esc(container_name)}</span>
+      <span class="pill">📏 {esc(size_text)}</span>
+      <span class="pill">⏱️ <span id="countdown" class="countdown">05:00</span></span>
     </div>
-    <div class="hero-actions">
-      <button class="action-btn" type="button" onclick="copyFilename()">📋 Copy filename</button>
-      <button class="action-btn" type="button" onclick="window.print()">🖨️ Print</button>
-    </div>
-    <div id="copy-status" class="copy-status" aria-live="polite"></div>
 
     <div class="summary">
-      <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
-      <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
-      <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
+      <div class="stat"><b>{len(video)}</b><span>Video</span></div>
+      <div class="stat"><b>{len(audio)}</b><span>Audio</span></div>
+      <div class="stat"><b>{len(subtitles)}</b><span>Subtitles</span></div>
+      <div class="stat"><b>{esc(quality)}</b><span>Quality</span></div>
       <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
     </div>
   </header>
 
   <section class="section">
-    <div class="section-head"><h2>🎬 Video</h2><span class="pill">{esc(container_name)}</span></div>
+    <div class="section-head">
+      <h2>🎬 Video</h2>
+      <span class="pill">{esc(primary_codec)}</span>
+    </div>
     <div class="section-body">{track_cards(video, "Video")}</div>
   </section>
 
   <section class="section">
     <div class="section-head">
-      <h2>🔊 Audio</h2>
-      <span class="pill">{esc(", ".join(audio_names) if audio_names else "Not detected")}</span>
+      <h2>🎧 Audio</h2>
+      <span class="pill">{len(audio)} track{'s' if len(audio) != 1 else ''}</span>
     </div>
     <div class="section-body">{track_cards(audio, "Audio")}</div>
   </section>
@@ -3330,28 +3416,31 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
   <section class="section">
     <div class="section-head">
       <h2>💬 Subtitles</h2>
-      <span class="pill">{esc(", ".join(subtitle_names) if subtitle_names else "Not detected")}</span>
+      <span class="pill">{len(subtitles)} track{'s' if len(subtitles) != 1 else ''}</span>
     </div>
     <div class="section-body">{track_cards(subtitles, "Subtitle")}</div>
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>⚙️ Technical</h2></div>
+    <div class="section-head">
+      <h2>⚙️ Technical</h2>
+      <span class="pill">ID {report_id}</span>
+    </div>
     <div class="section-body">
-      <div class="grid">
-        <div class="kv"><span>Container</span><strong>{esc(container_name)}</strong></div>
-        <div class="kv"><span>MIME</span><strong>{esc(mime)}</strong></div>
-        <div class="kv"><span>Runtime</span><strong>{esc(runtime)}</strong></div>
-        <div class="kv"><span>Sample read</span><strong>{esc(sampled)}</strong></div>
-        <div class="kv"><span>Average bitrate</span><strong>{esc(report.container.get("average_bitrate", "Not available"))}</strong></div>
-        <div class="kv"><span>Probe ranges</span><strong>{len(report.probe_ranges)}</strong></div>
+      <div class="tech-grid">
+        <div class="tech"><small>Container</small><b>{esc(container_name)}</b></div>
+        <div class="tech"><small>MIME type</small><b>{esc(mime)}</b></div>
+        <div class="tech"><small>Runtime</small><b>{esc(runtime)}</b></div>
+        <div class="tech"><small>File size</small><b>{esc(size_text)}</b></div>
+        <div class="tech"><small>Average bitrate</small><b>{esc(bitrate)}</b></div>
+        <div class="tech"><small>Metadata sampled</small><b>{esc(sampled_text)}</b></div>
       </div>
     </div>
   </section>
 
-  <div class="note">
-    <b>Privacy / bandwidth:</b> this page is a metadata report. The scanner does not create a complete local copy of the Telegram file.
-    The browser report token expires after 5 minutes; the report data is also persisted in MongoDB during that window.
+  <div class="footer">
+    <span><strong>AniToon</strong> • Media intelligence</span>
+    <span>Generated {generated_text} • Secure report link</span>
   </div>
 </div>
 
@@ -3363,32 +3452,17 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
     if (countdown) {{
       const m = Math.floor(left / 60);
       const s = left % 60;
-      countdown.textContent =
-        String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+      countdown.textContent = String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
     }}
     if (left > 0) {{
       left -= 1;
-      setTimeout(tick, 1000);
+      setTimeout(tick,1000);
     }}
   }};
   tick();
-
-  const status = document.getElementById("copy-status");
-  const button = document.querySelector(".action-btn");
-  window.copyFilename = () => {{
-    if (!navigator.clipboard) {{
-      if (status) status.textContent = "Clipboard is not available.";
-      return;
-    }}
-    navigator.clipboard.writeText(FILE_NAME).then(() => {{
-      if (status) status.textContent = "Filename copied.";
-      setTimeout(() => {{ if (status) status.textContent = ""; }}, 1800);
-    }}).catch(() => {{
-      if (status) status.textContent = "Could not copy filename.";
-    }});
-  }};
 }})();
-</script></body>
+</script>
+</body>
 </html>"""
     return document.encode("utf-8")
 
