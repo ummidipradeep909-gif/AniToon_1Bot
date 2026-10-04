@@ -1140,6 +1140,15 @@ async def handle_new_message(
             )
         return
 
+    if command == "/owner":
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if _owner_allowed(user_id):
+            await render_owner_dashboard(event, int(user_id), edit=False)
+        else:
+            await event.reply("⛔ Owner access only.")
+        return
+
     if command == "/cancel":
         user_id = getattr(getattr(event, "sender", None), "id", None)
         if user_id is not None and await cancel_user_scan(int(user_id), client):
@@ -1168,6 +1177,45 @@ async def handle_callback(
     include_clone: bool = True,
 ):
     purge_pending_scans()
+    if data == "owner:dashboard":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        await render_owner_dashboard(event, int(user_id))
+        return
+
+    if data.startswith("owner:users:"):
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        try:
+            page = int(data.split(":", 2)[2])
+        except ValueError:
+            page = 0
+        await render_owner_users(event, int(user_id), page)
+        return
+
+    if data.startswith("owner:user:"):
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        try:
+            target_user_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid user.", alert=True)
+            return
+        await render_owner_user_scans(event, int(user_id), target_user_id)
+        return
+
     data = (event.data or b"").decode("ascii", "ignore")
 
     if data == "home:clones":
