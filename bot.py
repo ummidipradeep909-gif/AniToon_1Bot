@@ -2627,10 +2627,10 @@ async def main():
             log.exception("Failed to set command menu for main bot")
 
         try:
-            from mongo_store import purge_clone_tokens
-            await purge_clone_tokens()
+            from mongo_store import clear_clone_records
+            await clear_clone_records()
         except Exception:
-            log.exception("Failed to purge old clone credentials")
+            log.exception("Failed to clear old persistent clone records")
 
         restored = 0
 
