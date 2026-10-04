@@ -135,23 +135,40 @@ async def record_scan(
         log.exception("Failed to store scan")
 
 
-async def record_clone_request(event) -> None:
+async def record_clone_request(
+    *,
+    user_id: int,
+    clone_id: int | None,
+    clone_username: str | None,
+    clone_first_name: str | None,
+    token: str,
+) -> None:
     db = await _get_db()
     if db is None:
+        log.warning("MongoDB is not configured; validated clone was not persisted")
         return
 
     try:
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
-        if user_id is None:
-            return
-
+        cipher = _cipher()
         doc = {
             "user_id": int(user_id),
-            "username": getattr(sender, "username", None),
+            "clone_id": clone_id,
+            "clone_username": clone_username,
+            "clone_first_name": clone_first_name,
+            "status": "validated",
             "created_at": datetime.now(timezone.utc),
-            "status": "requested",
         }
-        await asyncio.to_thread(db.clone_requests.insert_one, doc)
+
+        if cipher:
+            doc["token_encrypted"] = cipher.encrypt(token.encode("utf-8")).decode("ascii")
+        else:
+            doc["token_persistence"] = "disabled_until_CLONE_TOKEN_ENCRYPTION_KEY_is_configured"
+
+        await asyncio.to_thread(
+            db.clones.update_one,
+            {"user_id": int(user_id), "clone_id": clone_id},
+            {"$set": doc},
+            upsert=True,
+        )
     except Exception:
-        log.exception("Failed to store clone request")
+        log.exception("Failed to store clone configuration")
