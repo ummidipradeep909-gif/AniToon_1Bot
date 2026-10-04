@@ -247,17 +247,15 @@ HELP_TEXT = (
 )
 
 ABOUT_TEXT = (
-    "✨ <b>AniToon • File Intelligence</b> ✨\n\n"
-    "🎬 <b>Smart Telegram Metadata Scanner</b>\n"
-    "Inspect video, audio, subtitles, documents and more using bounded remote reads.\n\n"
-    "🛡️ <b>Privacy-first inspection</b>\n"
-    "Large files are not intentionally downloaded in full. Scans are bounded for safer resource use.\n\n"
-    "🌐 <b>Web Reports</b>\n"
-    "Open the generated File Info page to view the complete metadata report.\n\n"
-    "🤖 <b>Clone Bots</b>\n"
-    "Create and manage up to <b>2 clone bots per user</b>. Clone credentials are encrypted before MongoDB storage.\n\n"
-    "⚡ <b>Fast & Clean</b>\n"
-    "Queued scans • bounded inspection • persistent clone configuration"
+    "ℹ️ <b>About AniToon</b> ✨\n\n"
+    "🤖 <b>AniToon Bot</b>\n"
+    "A Telegram bot that detects your video or document and scans its available metadata using bounded reads.\n\n"
+    "🌐 <b>AniToon Web</b>\n"
+    "The web page presents the complete file information in a clean, easy-to-read report.\n\n"
+    "📦 <b>What you get</b>\n"
+    "Video • Audio • Subtitles • Container • Technical metadata\n\n"
+    "⚡ <b>Simple workflow</b>\n"
+    "Send file → tap Scan File Info → open the web report."
 )
 
 
@@ -320,10 +318,7 @@ def home_buttons(
         buttons.append([Button.inline("🤖 Clone Manager", b"home:clones")])
     buttons.extend([
         [Button.inline("📊 My Stats", b"home:stats")],
-        [Button.inline("💚 Bot Status", b"home:status")],
     ])
-    if show_privacy:
-        buttons.append([Button.inline("🔐 Privacy", b"home:privacy")])
     buttons.extend([
         [Button.inline("📖 Help", b"home:help")],
         [Button.inline("ℹ️ About", b"home:about")],
@@ -1594,16 +1589,24 @@ async def render_user_stats(event, user_id: int, *, edit: bool = True) -> None:
     if not summary.get("available"):
         text = (
             "📊 <b>My Stats</b>\n\n"
-            "MongoDB history is currently unavailable.\n"
-            "Your live scans are still protected by the queue."
+            "⚠️ Scan history is temporarily unavailable."
         )
     else:
+        total = int(summary.get("scans", 0) or 0)
+        completed = int(summary.get("completed", 0) or 0)
+        failed = int(summary.get("failed", 0) or 0)
+        cancelled = int(summary.get("cancelled", 0) or 0)
+        finished = completed + failed
+        success = (completed / finished * 100) if finished else 0.0
         text = (
-            "📊 <b>My Stats — Last 7 Days</b>\n\n"
-            f"📁 Total scans: <b>{summary['scans']}</b>\n"
-            f"✅ Completed: <b>{summary['completed']}</b>\n"
-            f"❌ Failed: <b>{summary['failed']}</b>\n"
-            f"🛑 Cancelled: <b>{summary['cancelled']}</b>"
+            "📊 <b>My Stats</b>\n"
+            "📅 <i>Last 7 days</i>\n\n"
+            f"📁 <b>Total Scans</b> • {total}\n"
+            f"✅ <b>Completed</b> • {completed}\n"
+            f"❌ <b>Failed</b> • {failed}\n"
+            f"🛑 <b>Cancelled</b> • {cancelled}\n"
+            f"📈 <b>Success Rate</b> • {success:.1f}%\n\n"
+            "✨ Keep sending files — every scan is counted."
         )
     if edit:
         await event.edit(text, parse_mode="html", buttons=back_buttons())
@@ -1712,8 +1715,8 @@ async def handle_new_message(
             ABOUT_TEXT,
             parse_mode="html",
             buttons=[
-                [Button.url("🌐 Web Reports", PUBLIC_WEB_URL)],
-                [Button.url("💻 GitHub Project", PROJECT_GITHUB_URL)],
+                [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
+                [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
                 [Button.inline("⬅️ Home", b"home:back")],
             ],
         )
@@ -2093,9 +2096,10 @@ async def handle_callback(
     if data == "home:scan":
         await event.answer()
         await event.edit(
-            "🔎 <b>Scan Files</b>\n\n"
-            "🟢 <b>Scanner ready.</b>\n"
-            "📦 Bounded metadata inspection is active.",
+            "🔎 <b>Ready to Scan</b>\n\n"
+            "📤 <b>Send me a video or document.</b>\n"
+            "⚡ I’ll detect the file and show you the scan button.\n\n"
+            "🛡️ No scan starts until you press it.",
             parse_mode="html",
             buttons=scan_page_buttons(),
         )
@@ -2153,8 +2157,8 @@ async def handle_callback(
             ABOUT_TEXT,
             parse_mode="html",
             buttons=[
-                [Button.url("🌐 Web Reports", PUBLIC_WEB_URL)],
-                [Button.url("💻 GitHub Project", PROJECT_GITHUB_URL)],
+                [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
+                [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
                 [Button.inline("⬅️ Home", b"home:back")],
             ],
         )
