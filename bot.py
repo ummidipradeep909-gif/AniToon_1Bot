@@ -1035,7 +1035,10 @@ def progress_details(line: str) -> tuple[int, str]:
 
 def status_text(filename: str, line: str, pct: int | None = None) -> str:
     parsed_pct, clean = progress_details(line)
-    pct = max(parsed_pct, min(99, int(pct if pct is not None else parsed_pct)))
+    current_pct = parsed_pct if pct is None else int(pct)
+    pct = max(0, min(99, current_pct))
+    if pct >= 99:
+        pct = 99
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
     return (
