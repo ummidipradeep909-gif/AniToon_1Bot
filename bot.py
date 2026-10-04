@@ -123,6 +123,7 @@ clone_owner_names: dict[int, str] = {}
 clone_client_ids: dict[int, int] = {}
 clone_stats: dict[int, dict[str, Any]] = {}
 clone_message_pending: dict[int, int] = {}
+clone_monitor_task: asyncio.Task | None = None
 active_scan_clients: dict[str, Any] = {}
 
 
@@ -1187,6 +1188,7 @@ async def _start_clone_bot(
             clone_id=int(clone_id),
             clone_username=username,
             clone_first_name=getattr(me, "first_name", None),
+            owner_name=sender_name,
             token=token,
         )
         log.info("Clone bot online as @%s | owner_id=%s", username, owner_user_id)
@@ -1196,6 +1198,43 @@ async def _start_clone_bot(
         with suppress(Exception):
             await client.disconnect()
         raise
+
+
+async def monitor_clone_bots() -> None:
+    while True:
+        await asyncio.sleep(300)
+        for clone_id, client in list(clone_clients.items()):
+            try:
+                await asyncio.wait_for(client.get_me(), timeout=15)
+            except (
+                errors.UnauthorizedError,
+                errors.AuthKeyUnregisteredError,
+                errors.UserDeactivatedError,
+            ):
+                owner_id = clone_owners.get(int(clone_id))
+                username = clone_usernames.get(int(clone_id), "unknown")
+                log.warning(
+                    "Clone token revoked/deactivated | clone_id=%s | username=%s",
+                    clone_id,
+                    username,
+                )
+                if owner_id:
+                    with suppress(Exception):
+                        await bot.send_message(
+                            int(owner_id),
+                            "⚠️ <b>Your clone bot was disconnected because its bot token is no longer valid.</b>",
+                            parse_mode="html",
+                            buttons=[[Button.inline("🤖 My Clones", b"home:clones")]],
+                        )
+                if owner_id:
+                    await remove_clone_for_user(int(owner_id), int(clone_id))
+            except Exception:
+                # Transient network errors do not remove a valid clone.
+                log.debug(
+                    "Temporary clone health-check failure | clone_id=%s",
+                    clone_id,
+                    exc_info=True,
+                )
 
 
 def _clone_pending(user_id: int) -> bool:
@@ -1252,6 +1291,29 @@ async def handle_clone_token_message(event) -> bool:
             "Please send the token exactly as provided by @BotFather.",
             parse_mode="html",
             buttons=clone_buttons(),
+        )
+        return True
+
+    existing_clones = await list_user_clones(int(user_id))
+    live_owned = {
+        int(item["clone_id"])
+        for item in existing_clones
+        if item.get("clone_id") is not None
+    }
+    runtime_owned = {
+        int(clone_id)
+        for clone_id, owner_id in clone_owners.items()
+        if int(owner_id) == int(user_id)
+    }
+    if len(live_owned | runtime_owned) >= 2:
+        await event.reply(
+            "⚠️ <b>You already have 2 connected clone bots.</b>\n\n"
+            "Remove one before creating another.",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("🤖 My Clones", b"home:clones")],
+                [Button.inline("⬅️ Home", b"home:back")],
+            ],
         )
         return True
 
@@ -2676,8 +2738,56 @@ async def main():
 
         restored = 0
 
+        try:
+            from mongo_store import load_clone_requests, mark_clone_removed
+            saved_clones = await load_clone_requests()
+        except Exception:
+            saved_clones = []
+            log.exception("Failed to load saved clone configurations")
+
+        restored = 0
+        per_user_restored: dict[int, int] = {}
+        for saved in saved_clones:
+            try:
+                uid = int(saved["user_id"])
+                clone_id = saved.get("clone_id")
+                if per_user_restored.get(uid, 0) >= 2:
+                    if clone_id is not None:
+                        await mark_clone_removed(uid, int(clone_id))
+                    continue
+
+                if clone_id is not None:
+                    _ensure_clone_stats(int(clone_id), saved)
+
+                await _start_clone_bot(
+                    saved["token"],
+                    uid,
+                    saved.get("owner_name"),
+                )
+                per_user_restored[uid] = per_user_restored.get(uid, 0) + 1
+                restored += 1
+            except (errors.UnauthorizedError, errors.AuthKeyUnregisteredError, errors.UserDeactivatedError):
+                try:
+                    await mark_clone_removed(
+                        int(saved.get("user_id") or 0),
+                        int(saved.get("clone_id") or 0),
+                    )
+                except Exception:
+                    log.exception("Failed to remove revoked clone record")
+                log.warning(
+                    "Removed revoked/deactivated clone | clone_id=%s",
+                    saved.get("clone_id"),
+                )
+            except Exception:
+                log.exception(
+                    "Failed to restore clone bot id=%s",
+                    saved.get("clone_id"),
+                )
+
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
+
+        clone_monitor_task = asyncio.create_task(monitor_clone_bots())
 
         log.info(
             "Telegram bot online as @%s | private_only=%s | clones=%s | concurrency=%s | scan_timeout=%ss | web=%s",
@@ -2692,6 +2802,10 @@ async def main():
         await bot.run_until_disconnected()
 
     finally:
+        if clone_monitor_task is not None:
+            clone_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await clone_monitor_task
         for client in list(clone_clients.values()):
             with suppress(Exception):
                 await client.disconnect()
