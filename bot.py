@@ -1541,6 +1541,18 @@ PRIVACY_TEXT = (
 )
 
 
+def is_checkable_message(event) -> bool:
+    """Return True only for Telegram video/document messages that can be scanned."""
+    message = getattr(event, "message", None)
+    if message is None:
+        return False
+    if getattr(message, "video", None) is not None:
+        return True
+    if getattr(message, "document", None) is not None:
+        return True
+    return False
+
+
 async def handle_new_message(
     event,
     *,
