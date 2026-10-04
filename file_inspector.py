@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import html
 import io
 import os
@@ -9,9 +10,9 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-MAX_INITIAL_PROBE = 1 * 1024 * 1024
-MAX_DEEP_PROBE = 4 * 1024 * 1024
-DEFAULT_CHUNK = 512 * 1024
+MAX_INITIAL_PROBE = 2 * 1024 * 1024
+MAX_DEEP_PROBE = 64 * 1024 * 1024
+DEFAULT_CHUNK = 1 * 1024 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -36,8 +37,8 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_DEEP_PROBE,4*1024*1024,MAX_DEEP_PROBE)
-def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,64*1024,512*1024)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",32*1024*1024,2*1024*1024,MAX_DEEP_PROBE)
+def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,128*1024,DEFAULT_CHUNK)
 
 @dataclass(slots=True)
 class ProbePiece:
@@ -47,14 +48,14 @@ class ProbePiece:
 
 @dataclass(slots=True)
 class Report:
-    filename:str="unknown"; size:int|None=None; mime:str|None=None; ext:str=""; detected:str="Unknown"; media_kind:str="File"
+    filename:str="Telegram media file"; size:int|None=None; mime:str|None=None; ext:str=""; detected:str="Detected media"; media_kind:str="File"
     sampled:int=0; sample_hash:str=""; notes:list[str]=field(default_factory=list)
     video:dict[str,Any]=field(default_factory=dict); audio:dict[str,Any]=field(default_factory=dict)
     subtitles:list[dict[str,Any]]=field(default_factory=list); container:dict[str,str]=field(default_factory=dict)
     probe_ranges:list[str]=field(default_factory=list)
 
 def human(n:int|None)->str:
-    if n is None:return "unknown"
+    if n is None:return "Not available"
     x=float(n)
     for unit in ("B","KiB","MiB","GiB","TiB"):
         if x<1024 or unit=="TiB": return f"{int(x)} B" if unit=="B" else f"{x:.2f} {unit}"
@@ -66,22 +67,54 @@ def _ext(name:str)->str:
 
 def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     h=data[:64]
+    ext=_ext(name)
+    mime_clean=(mime or "").strip().lower()
+
     if h.startswith(b"\x1aE\xdf\xa3"): return "Matroska/WebM container","mkv"
-    if len(data)>=12 and data[4:8]==b"ftyp": return "ISO-BMFF media","mp4"
+    if len(data)>=12 and data[4:8]==b"ftyp": return "ISO Base Media File Format (MP4/MOV)","mp4"
     if h.startswith(b"fLaC"): return "FLAC audio","flac"
     if h.startswith(b"OggS"): return "Ogg container","ogg"
-    if h.startswith(b"ID3"): return "MP3 audio (ID3)","mp3"
+    if h.startswith(b"ID3"): return "MP3 audio","mp3"
     if h.startswith(b"RIFF") and len(h)>=12 and h[8:12]==b"WAVE": return "WAV audio","wav"
     if h.startswith(b"%PDF-"): return "PDF document","pdf"
     if h.startswith(b"PK\x03\x04"): return "ZIP archive","zip"
     if h.startswith(b"\x89PNG\r\n\x1a\n"): return "PNG image","png"
     if h.startswith(b"\xff\xd8\xff"): return "JPEG image","jpeg"
+
     txt=data[:8192].decode("utf-8","replace").lstrip("\ufeff \t\r\n")
-    if txt.startswith("WEBVTT"):return "WebVTT subtitle","vtt"
-    if "[Events]" in txt and re.search(r"^\s*\[Script Info\]",txt,re.I|re.M):return "ASS/SSA subtitle","ass"
-    if re.search(r"<tt(?:\s|>)",txt,re.I):return "TTML subtitle","ttml"
-    if re.search(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*",txt):return "SubRip subtitle","srt"
-    return mime or "Binary file","binary"
+    if txt.startswith("WEBVTT"): return "WebVTT subtitle","vtt"
+    if "[Events]" in txt and re.search(r"^\s*\[Script Info\]",txt,re.I|re.M): return "ASS/SSA subtitle","ass"
+    if re.search(r"<tt(?:\s|>)",txt,re.I): return "TTML subtitle","ttml"
+    if re.search(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*",txt): return "SubRip subtitle","srt"
+
+    ext_labels={
+        ".mkv":("Matroska container","mkv"), ".webm":("WebM container","mkv"),
+        ".mp4":("MP4 media","mp4"), ".m4v":("MPEG-4 video","mp4"), ".mov":("QuickTime media","mp4"),
+        ".m2ts":("MPEG Transport Stream","ts"), ".ts":("MPEG Transport Stream","ts"),
+        ".avi":("AVI video","avi"), ".wmv":("Windows Media Video","wmv"), ".flv":("Flash Video","flv"),
+        ".mpg":("MPEG video","mpeg"), ".mpeg":("MPEG video","mpeg"), ".3gp":("3GPP media","3gp"),
+        ".flac":("FLAC audio","flac"), ".mp3":("MP3 audio","mp3"), ".wav":("WAV audio","wav"),
+        ".m4a":("MPEG-4 audio","m4a"), ".aac":("AAC audio","aac"), ".opus":("Opus audio","opus"),
+        ".ogg":("Ogg audio","ogg"), ".oga":("Ogg audio","ogg"), ".mka":("Matroska audio","mka"),
+        ".srt":("SubRip subtitle","srt"), ".ass":("ASS/SSA subtitle","ass"), ".ssa":("ASS/SSA subtitle","ssa"),
+        ".vtt":("WebVTT subtitle","vtt"), ".ttml":("TTML subtitle","ttml"),
+    }
+    if ext in ext_labels:return ext_labels[ext]
+
+    if mime_clean:
+        for prefix,label in (
+            ("video/","Video media"),("audio/","Audio media"),
+            ("text/","Text document"),("image/","Image file"),
+        ):
+            if mime_clean.startswith(prefix):
+                return f"{label} ({mime_clean})","binary"
+        if mime_clean=="application/pdf": return "PDF document","pdf"
+        if mime_clean=="application/zip": return "ZIP archive","zip"
+        return mime_clean,"binary"
+
+    guessed,_=mimetypes.guess_type(name)
+    if guessed:return guessed,"binary"
+    return "Binary file","binary"
 
 def _vint(data:bytes,pos:int):
     if pos>=len(data):return None
@@ -131,7 +164,7 @@ def _lang(code:str|None)->str|None:
         return None
     return LANG.get(c) or LANG.get(c.split("-")[0])
 def _fmtsec(sec:float|None)->str:
-    if sec is None or sec<0:return "Unknown"
+    if sec is None or sec<0:return "Not available"
     total=int(round(sec)); h,rem=divmod(total,3600); m,s=divmod(rem,60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
@@ -159,7 +192,11 @@ def _seek_targets(data:bytes)->dict[int,int]:
     return targets
 
 def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
-    typ=num=name=lang=lang_i=cid=cname=None; default=forced=enabled=sdh=vi=original=commentary=None; channels=depth=width=height=None; rate=None
+    typ=num=name=lang=lang_i=cid=cname=None
+    default=forced=enabled=sdh=vi=original=commentary=None
+    channels=depth=width=height=None
+    rate=None
+
     for eid,cs,ce in _children(data,s,e):
         b=data[cs:ce]
         if eid==0xD7 and b:num=int.from_bytes(b,"big")
@@ -190,29 +227,42 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
                 nb=data[ns:ne]
                 if nid==0xB0 and nb:width=int.from_bytes(nb,"big")
                 elif nid==0xBA and nb:height=int.from_bytes(nb,"big")
-    if typ not in {"audio","video","subtitles"}:
-        return None
+
+    if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
     lname=_lang(use_lang)
     codec_display=cname or CODEC.get(cid or "") or cid
-    if not codec_display:
-        codec_display = "Audio" if typ=="audio" else ("Subtitle" if typ=="subtitles" else "Video")
-    # Never expose a bare "Unknown" track name when the stream type is known.
-    if name and name.strip().lower() not in {"unknown", "und", "undefined", "audio", "track"}:
-        display_name=name
-        name_source="track metadata"
+    if codec_display and str(codec_display).strip().lower() in {"unknown","unk","undefined","und"}:
+        codec_display=None
+
+    base_type={"audio":"Audio","video":"Video","subtitles":"Subtitle"}[typ]
+    clean_name=name.strip() if name else None
+    if clean_name and clean_name.lower() in {"unknown","und","undefined","audio","video","subtitle","track"}:
+        clean_name=None
+    track_label=f" {num}" if num is not None else ""
+
+    if clean_name:
+        display_name=clean_name; name_source="track metadata"
+    elif lname and codec_display:
+        display_name=f"{lname} {codec_display} {base_type} Track{track_label}"; name_source="language + codec metadata"
     elif lname:
-        display_name=f"{lname} • {codec_display or ('Audio' if typ=='audio' else 'Video')}"
-        name_source="language + codec metadata"
+        display_name=f"{lname} {base_type} Track{track_label}"; name_source="language metadata"
     elif codec_display:
-        display_name=codec_display
-        name_source="codec metadata"
+        display_name=f"{codec_display} {base_type} Track{track_label}"; name_source="codec metadata"
     else:
-        display_name=f"{typ.title()} Track {num or '?'}"
-        name_source="stream type fallback"
-    d={"type":typ,"track":str(num) if num is not None else None,"name":display_name,"display_name":display_name,
-       "name_source":name_source,"language":use_lang,"language_name":lname,"codec":cid,"codec_name":cname or CODEC.get(cid) or codec_display}
-    for k,v in (("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),("hearing_impaired",sdh if typ=="subtitles" else None),("visual_impaired",vi if typ=="subtitles" else None),("original",original),("commentary",commentary)):
+        display_name=f"{base_type} Track{track_label}"; name_source="stream type fallback"
+
+    d={
+        "type":typ,"track":str(num) if num is not None else None,
+        "name":display_name,"display_name":display_name,"name_source":name_source,
+        "language":use_lang,"language_name":lname,"codec":cid,"codec_name":codec_display,
+    }
+    for k,v in (
+        ("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),
+        ("hearing_impaired",sdh if typ=="subtitles" else None),
+        ("visual_impaired",vi if typ=="subtitles" else None),
+        ("original",original),("commentary",commentary)
+    ):
         if v is not None:d[k]="yes" if v else "no"
     if typ=="audio":
         if channels is not None:d["channels"]=str(channels)
@@ -292,57 +342,45 @@ def _generic(data:bytes,kind:str,report:Report):
 
 def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
     ranges=[];used=initial
-    for eid,label,lim in ((0x1549A966,"Matroska Info",1024*1024),(0x1654AE6B,"Matroska Tracks",8*1024*1024)):
+    for eid,label,lim in (
+        (0x1549A966,"Matroska Info",2*1024*1024),
+        (0x1654AE6B,"Matroska Tracks",16*1024*1024),
+    ):
         if used>=budget:break
         off=targets.get(eid)
         if off is None or off<initial:continue
         n=min(lim,budget-used)
         if total is not None:n=min(n,max(1,total-off))
-        if n>0:
-            ranges.append((off,n,label))
-            used+=n
+        if n>0:ranges.append((off,n,label));used+=n
     return ranges
 
 def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
-    if not total or used>=budget:
-        return
-
-    # Sparse, bandwidth-safe search across the file. We inspect only small
-    # metadata windows at likely positions instead of downloading the payload.
-    # SeekHead is attempted first; these windows are the fallback when no usable
-    # index is visible in the initial range.
-    preferred_mib = [
-        8, 12, 16, 24, 32, 48, 64, 96,
-        8, 12, 16, 24, 32, 48, 64,
-    ]
-    window = 128 * 1024
-    seen = set()
-
+    if not total or used>=budget:return
+    preferred_mib=[1,2,4,8,12,16,24,32,48,64,80,96,112,128,160,192,256,384,512]
+    window=256*1024
+    seen=set()
     for mib in preferred_mib:
         off=mib*1024*1024
-        if off>=total:
-            continue
+        if off>=total:continue
         off=max(initial,off)
-        if off in seen:
-            continue
+        if off in seen:continue
         seen.add(off)
         n=min(window,budget-used,total-off)
-        if n<=0:
-            break
+        if n<=0:break
         yield off,n,f"metadata window {mib} MiB"
         used+=n
-        if used>=budget:
-            return
-
-    # Always give the tail a chance because some Matroska files keep a second
-    # SeekHead/metadata area close to the end.
-    tail=max(initial,total-window)
-    if tail not in seen and used<budget and tail<total:
-        n=min(window,budget-used,total-tail)
+        if used>=budget:return
+    for label,off in (
+        ("tail metadata window",max(initial,total-window)),
+        ("near-tail metadata window",max(initial,total-2*window)),
+    ):
+        if off in seen or used>=budget or off>=total:continue
+        n=min(window,budget-used,total-off)
         if n>0:
-            yield tail,n,"tail metadata window"
+            seen.add(off);yield off,n,label;used+=n
+            if used>=budget:return
 
-async def _read_range(client,media,total,offset,n):
+async def _read_rangeasync def _read_range(client,media,total,offset,n):
     chunk=min(probe_chunk(),n);out=io.BytesIO()
     try:
         async for part in client.iter_download(media,offset=max(0,offset),limit=(n+chunk-1)//chunk,chunk_size=chunk,request_size=chunk,file_size=total):
@@ -536,37 +574,49 @@ def _rows(track:dict[str,Any],i:int):
 
 def format_report(r:Report)->str:
     a=r.audio.get("tracks",[]);v=r.video.get("tracks",[])
-    lines=["🔬 <b>FILE INTELLIGENCE</b>","",f"📄 <b>{_safe(r.filename)}</b>",f"📦 {_safe(r.detected)}",f"📏 {human(r.size)}",f"🧾 MIME: {_safe(r.mime or 'unknown')}"]
+    lines=[
+        "🔬 <b>FILE INTELLIGENCE</b>","",
+        f"📄 <b>{_safe(r.filename)}</b>",
+        f"📦 {_safe(r.detected)}",
+        f"📏 {human(r.size)}",
+        f"🧾 MIME: {_safe(r.mime or 'application/octet-stream')}",
+    ]
     if r.container.get("runtime"):lines.append(f"⏱ Runtime: <b>{_safe(r.container['runtime'])}</b>")
-    lines += ["",f"🎬 Video tracks: <b>{len(v) if isinstance(v,list) else 0}</b>",f"🔊 Audio tracks: <b>{len(a) if isinstance(a,list) else 0}</b>",f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>"]
+    lines += [
+        "",
+        f"🎬 Video tracks: <b>{len(v) if isinstance(v,list) else 0}</b>",
+        f"🔊 Audio tracks: <b>{len(a) if isinstance(a,list) else 0}</b>",
+        f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>",
+    ]
     if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
-    lines += ["",f"🧪 Sampled: {human(r.sampled)} across {len(r.probe_ranges)} targeted range(s)","🛡️ No complete large-file download"]
+    lines += ["",f"🧪 Sampled: {human(r.sampled)} across {len(r.probe_ranges)} targeted range(s)"]
     if r.notes:lines += ["",f"ℹ️ {_safe(r.notes[0])}"]
     return "\n".join(lines)
 
-def format_section(r:Report,section:str)->str:
+
+def format_sectiondef format_section(r:Report,section:str)->str:
     if section=="audio":
         tracks=r.audio.get("tracks",[]);lines=["🔊 <b>AUDIO TRACKS</b>",""]
         if tracks:
             for i,t in enumerate(tracks,1):lines += _rows(t,i)+[""]
         else:
-            lines.append("No audio TrackEntry was detected in the sampled metadata.")
+            lines.append("No confirmed audio track was exposed by the inspected metadata.")
             if r.audio.get("sample_codecs"):lines += ["",f"Codec marker(s): {_safe(r.audio['sample_codecs'])}"]
         return "\n".join(lines).strip()
     if section=="subs":
         lines=["💬 <b>SUBTITLE TRACKS</b>",""]
         if r.subtitles:
             for i,t in enumerate(r.subtitles,1):lines += _rows(t,i)+[""]
-        else:lines.append("No subtitle TrackEntry was detected in the sampled metadata.")
+        else:lines.append("No confirmed subtitle track was exposed by the inspected metadata.")
         return "\n".join(lines).strip()
     if section=="video":
         tracks=r.video.get("tracks",[]);lines=["🎬 <b>VIDEO TRACKS</b>",""]
         if tracks:
             for i,t in enumerate(tracks,1):lines += _rows(t,i)+[""]
-        else:lines.append("Video track metadata was not fully visible in the sampled ranges.")
+        else:lines.append("No confirmed video track was exposed by the inspected metadata.")
         return "\n".join(lines).strip()
     if section=="technical":
-        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','unknown'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'unknown')}",f"Sampled: {human(r.sampled)}",f"Ranges: {len(r.probe_ranges)}"]
+        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}",f"Sampled: {human(r.sampled)}",f"Ranges: {len(r.probe_ranges)}"]
         if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
         if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
         if r.probe_ranges:lines += ["","Probe map:"]+[f"• {_safe(x)}" for x in r.probe_ranges]
