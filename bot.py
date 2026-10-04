@@ -1425,7 +1425,7 @@ async def monitor_clone_bots() -> None:
                             int(owner_id),
                             "⚠️ <b>Your clone bot was disconnected because its bot token is no longer valid.</b>",
                             parse_mode="html",
-                            buttons=[[Button.inline("🤖 My Clones", b"home:clones")]],
+                            buttons=[[Button.inline("🤖 Clone Manager", b"home:clones")]],
                         )
                 if owner_id:
                     await remove_clone_for_user(int(owner_id), int(clone_id))
@@ -1582,8 +1582,7 @@ async def handle_clone_token_message(event) -> bool:
         parse_mode="html",
         buttons=[
             [Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")],
-            [Button.inline("🤖 My Clones", b"home:clones")],
-            [Button.inline("🧬 Create Another Clone", b"home:clone")],
+            [Button.inline("🤖 Clone Manager", b"home:clones")],
             [Button.inline("⬅️ Home", b"home:back")],
         ],
     )
@@ -2015,8 +2014,7 @@ async def handle_callback(
             "The bot has been disconnected and will not be restored.",
             parse_mode="html",
             buttons=[
-                [Button.inline("🤖 My Clones", b"home:clones")],
-                [Button.inline("➕ Create Clone", b"home:clone")],
+                [Button.inline("🤖 Clone Manager", b"home:clones")],
                 [Button.inline("⬅️ Home", b"home:back")],
             ],
         )
