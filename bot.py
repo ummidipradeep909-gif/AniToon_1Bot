@@ -48,7 +48,7 @@ FILE_CHECKER_PRIVATE_ONLY = (
     os.getenv("FILE_CHECKER_PRIVATE_ONLY", "0").strip().lower()
     not in {"0", "false", "no", "off"}
 )
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 4))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "10")), 10))
 SCAN_TIMEOUT_SECONDS = max(30, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "300")), 300))
 REPORT_LINK_TTL_SECONDS = 5 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
@@ -61,10 +61,9 @@ PUBLIC_WEB_URL = (
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
-MAX_LIVE_CLONES = max(1, min(int(os.getenv("MAX_LIVE_CLONES", "20")), 50))
-MAX_CLONES_PER_USER = max(1, min(int(os.getenv("MAX_CLONES_PER_USER", "3")), 10))
+# Clone bots are kept in memory only. Do not persist or hard-cap clone creation here.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
-SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "10")), 60))
+SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "3")), 30))
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -86,6 +85,9 @@ log = logging.getLogger("anitoons-file-checker")
 bot = TelegramClient("file_checker_bot", API_ID, API_HASH)
 bot.flood_sleep_threshold = 15 * 60
 check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
+scan_queue_lock = asyncio.Lock()
+active_processes = 0
+queued_processes = 0
 started_at = datetime.now(timezone.utc)
 
 checks_total = 0
@@ -715,11 +717,59 @@ async def run_scan(
             source_message,
             scan_token,
             progress=progress,
-            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "8388608")),
+            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "4194304")),
             port=int(os.getenv("PORT", "10000")),
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
     )
+
+
+async def acquire_scan_slot(
+    status_message: Any,
+    scan_token: str,
+    filename: str,
+) -> None:
+    global active_processes, queued_processes
+
+    queued = False
+    async with scan_queue_lock:
+        if active_processes >= MAX_CONCURRENT_CHECKS:
+            queued_processes += 1
+            position = queued_processes
+            queued = True
+        else:
+            position = 0
+
+    if queued:
+        await edit_status(
+            status_message,
+            "⏳ <b>Bot is full</b>\n\n"
+            f"10 active users are being processed. Your scan is queued at <b>#{position}</b>.\n"
+            "Please wait — your scan will start automatically.",
+            buttons=cancel_button(scan_token),
+        )
+
+    acquired = False
+    try:
+        await check_semaphore.acquire()
+        acquired = True
+    except asyncio.CancelledError:
+        if queued:
+            async with scan_queue_lock:
+                queued_processes = max(0, queued_processes - 1)
+        raise
+
+    async with scan_queue_lock:
+        if queued:
+            queued_processes = max(0, queued_processes - 1)
+        active_processes += 1
+
+
+async def release_scan_slot() -> None:
+    global active_processes
+    async with scan_queue_lock:
+        active_processes = max(0, active_processes - 1)
+    check_semaphore.release()
 
 
 async def analyze_source(
@@ -747,9 +797,23 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
+    slot_acquired = False
     try:
-        async with check_semaphore:
-            report = await run_scan(
+        await acquire_scan_slot(status_message, scan_token, filename)
+        slot_acquired = True
+
+        if client is not bot:
+            await bump_clone_stat(client, "scans_started")
+
+        await edit_status(
+            status_message,
+            "🔎 <b>SCANNING METADATA</b>\n\n"
+            "<code>[░░░░░░░░░░] 0%</code>\n"
+            "Starting scan…",
+            buttons=cancel_button(scan_token),
+        )
+
+        report = await run_scan(
                 source_message,
                 status_message,
                 scan_token=scan_token,
@@ -843,6 +907,9 @@ async def analyze_source(
         )
 
     finally:
+        if slot_acquired:
+            await release_scan_slot()
+
         if scan_token in active_scans:
             await cancel_probe(scan_token)
         active_scans.pop(scan_token, None)
@@ -1499,9 +1566,14 @@ async def handle_callback(
             await event.answer("This scan belongs to another bot.", alert=True)
             return
 
-        await event.answer("Metadata scan started…")
+        async with scan_queue_lock:
+            queue_full = active_processes >= MAX_CONCURRENT_CHECKS
+            queue_position = queued_processes + 1 if queue_full else 0
 
-        await bump_clone_stat(client, "scans_started")
+        if queue_full:
+            await event.answer(f"Bot is full with {MAX_CONCURRENT_CHECKS} active scans. Your scan is queued at #{queue_position}.", alert=True)
+        else:
+            await event.answer("Metadata scan starting…")
 
         status_message = await event.get_message()
         await edit_status(
