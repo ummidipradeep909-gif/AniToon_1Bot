@@ -200,7 +200,7 @@ def web_report_button(
     ]
 
 
-def metadata_button(token: str):def metadata_button(token: str):
+def metadata_button(token: str):
     return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
 
 
