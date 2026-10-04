@@ -167,37 +167,24 @@ async def record_clone_request(
     token: str,
 ) -> None:
     db = await _get_db()
-    if db is None:
-        log.warning("MongoDB is not configured; clone data will remain in memory only")
-        return
-
-    if clone_id is None:
+    if db is None or clone_id is None:
         return
 
     try:
-        cipher = _cipher()
         now = datetime.now(timezone.utc)
-        set_fields = {
-            "user_id": int(user_id),
-            "clone_id": int(clone_id),
-            "clone_username": clone_username,
-            "clone_first_name": clone_first_name,
-            "status": "online",
-            "last_activity": now,
-            "updated_at": now,
-        }
-        if cipher:
-            set_fields["token_encrypted"] = cipher.encrypt(token.encode("utf-8")).decode("ascii")
-        else:
-            set_fields["token_persistence"] = (
-                "disabled_until_CLONE_TOKEN_ENCRYPTION_KEY_is_configured"
-            )
-
         await asyncio.to_thread(
             db.clones.update_one,
             {"user_id": int(user_id), "clone_id": int(clone_id)},
             {
-                "$set": set_fields,
+                "$set": {
+                    "user_id": int(user_id),
+                    "clone_id": int(clone_id),
+                    "clone_username": clone_username,
+                    "clone_first_name": clone_first_name,
+                    "status": "online",
+                    "last_activity": now,
+                    "updated_at": now,
+                },
                 "$setOnInsert": {
                     "created_at": now,
                     "messages_received": 0,
@@ -206,11 +193,34 @@ async def record_clone_request(
                     "scans_failed": 0,
                     "scans_cancelled": 0,
                 },
+                "$unset": {
+                    "token_encrypted": "",
+                    "token_persistence": "",
+                },
             },
             upsert=True,
         )
     except Exception:
-        log.exception("Failed to store clone configuration")
+        log.exception("Failed to store clone metadata")
+
+
+async def purge_clone_tokens() -> None:
+    """Remove any previously stored clone credentials."""
+    db = await _get_db()
+    if db is None:
+        return
+    try:
+        await asyncio.to_thread(
+            db.clones.update_many,
+            {"$or": [
+                {"token_encrypted": {"$exists": True}},
+                {"token_persistence": {"$exists": True}},
+            ]},
+            {"$unset": {"token_encrypted": "", "token_persistence": ""}},
+        )
+    except Exception:
+        log.exception("Failed to purge stored clone credentials")
+
 
 async def update_clone_stats(
     *,
@@ -349,78 +359,8 @@ async def mark_clone_removed(user_id: int, clone_id: int) -> None:
 
 
 async def load_clone_requests() -> list[dict[str, Any]]:
-    """Load active clone tokens and persisted statistics for restart recovery."""
-    db = await _get_db()
-    if db is None:
-        return []
-
-    cipher = _cipher()
-    if cipher is None:
-        return []
-
-    try:
-        rows = await asyncio.to_thread(
-            lambda: list(
-                db.clones.find(
-                    {
-                        "status": {"$in": ["validated", "online"]},
-                        "token_encrypted": {"$exists": True, "$ne": ""},
-                    },
-                    {
-                        "user_id": 1,
-                        "clone_id": 1,
-                        "clone_username": 1,
-                        "clone_first_name": 1,
-                        "created_at": 1,
-                        "last_activity": 1,
-                        "messages_received": 1,
-                        "scans_started": 1,
-                        "scans_completed": 1,
-                        "scans_failed": 1,
-                        "scans_cancelled": 1,
-                        "token_encrypted": 1,
-                    },
-                )
-            )
-        )
-
-        restored = []
-        for row in rows:
-            encrypted = row.get("token_encrypted")
-            if not encrypted:
-                continue
-            try:
-                token = cipher.decrypt(str(encrypted).encode("ascii")).decode("utf-8")
-            except (InvalidToken, ValueError, UnicodeDecodeError):
-                log.exception(
-                    "Could not decrypt saved clone token for clone_id=%s",
-                    row.get("clone_id"),
-                )
-                continue
-
-            restored.append(
-                {
-                    "user_id": row.get("user_id"),
-                    "clone_id": row.get("clone_id"),
-                    "clone_username": row.get("clone_username"),
-                    "clone_first_name": row.get("clone_first_name"),
-                    "created_at": row.get("created_at"),
-                    "last_activity": row.get("last_activity"),
-                    "messages_received": row.get("messages_received", 0),
-                    "scans_started": row.get("scans_started", 0),
-                    "scans_completed": row.get("scans_completed", 0),
-                    "scans_failed": row.get("scans_failed", 0),
-                    "scans_cancelled": row.get("scans_cancelled", 0),
-                    "token": token,
-                }
-            )
-
-        log.info("Loaded %s saved clone configuration(s)", len(restored))
-        return restored
-    except Exception:
-        log.exception("Failed to load saved clone configurations")
-        return []
-
+    # Clone credentials are intentionally not persisted.
+    return []
 
 
 async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
@@ -438,51 +378,43 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
 
     try:
         cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
-        pipeline = [
-            {"$match": {"created_at": {"$gte": cutoff}}},
-            {"$group": {
-                "_id": "$user_id",
-                "scans": {"$sum": 1},
-                "completed": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}
-                },
-                "failed": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}
-                },
-                "cancelled": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}
-                },
-                "last_scan": {"$max": "$created_at"},
-            }},
-            {"$sort": {"last_scan": -1}},
-        ]
+        grouped = await asyncio.to_thread(
+            lambda: list(
+                db.scans.aggregate([
+                    {"$match": {"created_at": {"$gte": cutoff}}},
+                    {"$group": {
+                        "_id": "$user_id",
+                        "scans": {"$sum": 1},
+                        "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                        "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}},
+                        "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+                        "last_scan": {"$max": "$created_at"},
+                    }},
+                ])
+            )
+        )
 
-        grouped = await asyncio.to_thread(lambda: list(db.scans.aggregate(pipeline)))
-        total_scans = sum(int(row.get("scans", 0) or 0) for row in grouped)
-        completed = sum(int(row.get("completed", 0) or 0) for row in grouped)
-        failed = sum(int(row.get("failed", 0) or 0) for row in grouped)
-        cancelled = sum(int(row.get("cancelled", 0) or 0) for row in grouped)
+        scan_map = {
+            int(row["_id"]): row
+            for row in grouped
+            if row.get("_id") is not None
+        }
+
+        profiles = await asyncio.to_thread(
+            lambda: list(
+                db.users.find(
+                    {"last_seen": {"$gte": cutoff}},
+                    {"username": 1, "first_name": 1, "last_name": 1, "last_seen": 1},
+                ).sort("last_seen", -1)
+            )
+        )
 
         users = []
-        user_ids = [int(row["_id"]) for row in grouped if row.get("_id") is not None]
-        profiles = {}
-        if user_ids:
-            profile_rows = await asyncio.to_thread(
-                lambda: list(
-                    db.users.find(
-                        {"_id": {"$in": user_ids}},
-                        {"username": 1, "first_name": 1, "last_name": 1, "last_seen": 1},
-                    )
-                )
-            )
-            profiles = {int(row["_id"]): row for row in profile_rows}
-
-        for row in grouped:
-            uid = row.get("_id")
-            if uid is None:
-                continue
-            uid = int(uid)
-            profile = profiles.get(uid, {})
+        seen = set()
+        for profile in profiles:
+            uid = int(profile["_id"])
+            seen.add(uid)
+            row = scan_map.get(uid, {})
             users.append({
                 "user_id": uid,
                 "username": profile.get("username"),
@@ -496,14 +428,31 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
                 "last_scan": row.get("last_scan"),
             })
 
+        for row in grouped:
+            if row.get("_id") is None or int(row["_id"]) in seen:
+                continue
+            users.append({
+                "user_id": int(row["_id"]),
+                "username": None,
+                "first_name": None,
+                "last_name": None,
+                "last_seen": None,
+                "scans": int(row.get("scans", 0) or 0),
+                "completed": int(row.get("completed", 0) or 0),
+                "failed": int(row.get("failed", 0) or 0),
+                "cancelled": int(row.get("cancelled", 0) or 0),
+                "last_scan": row.get("last_scan"),
+            })
+
+        total_scans = sum(int(row.get("scans", 0) or 0) for row in grouped)
         return {
             "available": True,
             "users": users,
             "total_users": len(users),
             "total_scans": total_scans,
-            "completed": completed,
-            "failed": failed,
-            "cancelled": cancelled,
+            "completed": sum(int(row.get("completed", 0) or 0) for row in grouped),
+            "failed": sum(int(row.get("failed", 0) or 0) for row in grouped),
+            "cancelled": sum(int(row.get("cancelled", 0) or 0) for row in grouped),
         }
     except Exception:
         log.exception("Failed to build owner 7-day summary")
