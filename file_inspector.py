@@ -360,9 +360,11 @@ def _generic(data:bytes,kind:str,report:Report):
 
 def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
     ranges=[];used=initial
+    # TrackEntry metadata is the highest-value part of the report. Read it
+    # first, then use whatever remains for Matroska Info/runtime/title data.
     for eid,label,lim in (
-        (0x1549A966,"Matroska Info",2*1024*1024),
         (0x1654AE6B,"Matroska Tracks",16*1024*1024),
+        (0x1549A966,"Matroska Info",512*1024),
     ):
         if used>=budget:break
         off=targets.get(eid)
