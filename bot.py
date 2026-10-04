@@ -1447,9 +1447,7 @@ async def analyze_source(
         # hide the final result behind the temporary 99% processing message.
         try:
             final_message = await status_message.reply(
-                final_result_text
-                + ("\n\n📤 <b>Your file copy was sent.</b>" if resend_ok else "\n\n⚠️ <b>File copy could not be sent.</b>")
-                + ("\n🗄️ <b>Archived in private storage.</b>" if archive_ok else "\n🗄️ <b>Storage archive unavailable.</b>"),
+                final_result_text,
                 parse_mode="html",
                 buttons=result_buttons,
             )
@@ -3050,15 +3048,6 @@ async def handle_callback(
             await event.answer("Owner access only.", alert=True)
             return
         await render_public_status(event)
-        return
-
-    if data == "home:privacy":
-        await event.answer()
-        await event.edit(
-            PRIVACY_TEXT,
-            parse_mode="html",
-            buttons=back_buttons(),
-        )
         return
 
     if data == "home:help":
