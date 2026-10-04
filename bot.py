@@ -63,7 +63,8 @@ FILE_CHECKER_PRIVATE_ONLY = (
     os.getenv("FILE_CHECKER_PRIVATE_ONLY", "0").strip().lower()
     not in {"0", "false", "no", "off"}
 )
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "10")), 10))
+# Free-instance safe default: keep compute concurrency deliberately conservative.
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "4")), 4))
 SCAN_TIMEOUT_SECONDS = max(30, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "300")), 300))
 REPORT_LINK_TTL_SECONDS = 5 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
@@ -79,7 +80,12 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 # Clone bots are live in memory only; scan execution is globally queued.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
 SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")), 10))
+# Render's current Hobby workspace includes 5 GB/month of outbound bandwidth.
+# This app deliberately stops heavy work at 80% of that as a safety buffer.
 WEB_EGRESS_GUARD_BYTES = 4 * 1024 * 1024 * 1024
+WEB_EGRESS_PAUSE_BYTES = int(WEB_EGRESS_GUARD_BYTES * 0.80)
+RAM_PAUSE_PCT = 80.0
+RAM_RESUME_PCT = 72.0
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -256,8 +262,15 @@ CLONE_HELP_TEXT = (
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Open <b>🌐 Open File Info</b> for the complete report.\n\n"
-    "📋 <b>Only command</b>\n"
-    "/start — Open Home"
+    "📋 <b>Commands on clone bots</b>\n"
+    "/start — Open Home\n"
+    "/help — Open this guide\n"
+    "/stats — View your 7-day stats\n"
+    "/about — About AniToon\n"
+    "/addtogroup — Add the bot to a group\n"
+    "/privacy — Privacy information\n"
+    "/cancel — Cancel your running scan\n\n"
+    "🤖 Clone management stays on the main AniToon bot."
 )
 
 HELP_TEXT = (
@@ -278,6 +291,7 @@ HELP_TEXT = (
     "/clone — Create/connect a clone bot\n"
     "/clones — View and manage your clones\n"
     "/myclones — Same as /clones\n"
+    "/resources — Render Free Resource Guard (owner)\n"
     "/cancel — Cancel your running scan"
 )
 
@@ -664,7 +678,22 @@ def runtime_resource_stats() -> dict[str, Any]:
 
 
 def memory_pressure_high() -> bool:
-    return runtime_resource_stats()["ram_pct"] >= 80.0
+    return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
+
+
+def resource_guard_reason() -> str | None:
+    stats = runtime_resource_stats()
+    if stats["ram_pct"] >= RAM_PAUSE_PCT:
+        return (
+            f"RAM pressure is {stats['ram_pct']:.1f}% (pause threshold {RAM_PAUSE_PCT:.0f}%). "
+            f"New heavy scans stay paused until memory falls below {RAM_RESUME_PCT:.0f}%."
+        )
+    if web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES:
+        return (
+            f"Tracked web egress reached {stats['web_egress_gb']:.2f} GB. "
+            f"Heavy work is paused before the {WEB_EGRESS_GUARD_BYTES / (1024**3):.0f} GB app guard."
+        )
+    return None
 
 
 def _owner_allowed(user_id: int | None) -> bool:
@@ -994,6 +1023,10 @@ async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
     )
 
 
+class ResourceGuardPause(RuntimeError):
+    """Raised when the free-instance protection gate temporarily blocks a new scan."""
+
+
 status_edit_cache: dict[int, tuple[float, str]] = {}
 STATUS_EDIT_MIN_INTERVAL = 0.9
 
@@ -1114,6 +1147,10 @@ async def acquire_scan_slot(
 ) -> None:
     global active_processes, queued_processes
 
+    guard = resource_guard_reason()
+    if guard:
+        raise ResourceGuardPause(guard)
+
     queued = False
     async with scan_queue_lock:
         if active_processes >= MAX_CONCURRENT_CHECKS:
@@ -1136,6 +1173,11 @@ async def acquire_scan_slot(
     try:
         await check_semaphore.acquire()
         acquired = True
+        guard = resource_guard_reason()
+        if guard:
+            check_semaphore.release()
+            acquired = False
+            raise ResourceGuardPause(guard)
     except asyncio.CancelledError:
         if queued:
             async with scan_queue_lock:
@@ -1310,6 +1352,20 @@ async def analyze_source(
             ),
         )
         raise
+
+    except ResourceGuardPause as exc:
+        await edit_status(
+            status_message,
+            "🛡️ <b>Free Resource Guard Paused This Scan</b>\n\n"
+            f"{html.escape(str(exc))}\n\n"
+            "Please try again when the guard returns to normal.",
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
+        )
+        outcome = "paused"
 
     except ProbeBudgetExceeded:
         await persist_outcome("failed")
@@ -1839,22 +1895,25 @@ def _owner_broadcast_pending(user_id: int) -> bool:
     return True
 
 async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
-    if not include_clone:
-        commands = [
-            types.BotCommand(command="start", description="Open Home"),
-        ]
-    else:
-        commands = [
-            types.BotCommand(command="start", description="Open Home"),
-            types.BotCommand(command="help", description="How to use AniToon Media Info Bot"),
-            types.BotCommand(command="stats", description="View your 7-day stats"),
-            types.BotCommand(command="about", description="About AniToons"),
-            types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+    common = [
+        types.BotCommand(command="start", description="Open Home"),
+        types.BotCommand(command="help", description="How to use AniToon"),
+        types.BotCommand(command="stats", description="View your 7-day stats"),
+        types.BotCommand(command="about", description="About AniToon"),
+        types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+        types.BotCommand(command="privacy", description="Privacy information"),
+        types.BotCommand(command="cancel", description="Cancel your scan"),
+    ]
+    if include_clone:
+        commands = common + [
             types.BotCommand(command="clones", description="View your clone bots"),
             types.BotCommand(command="myclones", description="View your clone bots"),
-            types.BotCommand(command="cancel", description="Cancel your scan"),
             types.BotCommand(command="clone", description="Create a clone bot"),
+            types.BotCommand(command="resources", description="Render resource guard (owner)"),
         ]
+    else:
+        # Clone bots expose the normal user commands too; clone management remains on AniToon.
+        commands = common
 
     await client(functions.bots.SetBotCommandsRequest(
         scope=types.BotCommandScopeDefault(),
@@ -2375,14 +2434,17 @@ async def handle_new_message(
                 )
         return
 
-    if command == "/status":
+    if command in {"/status", "/resources"}:
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
         if not _owner_allowed(user_id):
-            await event.reply("ℹ️ System status is available to the owner only.")
+            await event.reply("ℹ️ Render resource details are available to the owner only.")
             return
         await record_user(event)
-        await render_public_status(event, edit=False)
+        if command == "/resources":
+            await render_owner_resources(event, int(user_id))
+        else:
+            await render_public_status(event, edit=False)
         return
 
     if command == "/privacy":
