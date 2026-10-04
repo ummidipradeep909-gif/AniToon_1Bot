@@ -194,17 +194,19 @@ def _seek_targets(data:bytes)->dict[int,int]:
     return targets
 
 def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
-    typ=num=name=lang=lang_i=cid=cname=None
+    typ=num=name=lang=lang_i=cid=cname=uid=None
     default=forced=enabled=sdh=vi=original=commentary=None
     channels=depth=width=height=None
     display_width=display_height=None
-    interlaced=stereo_mode=None
+    crop_left=crop_right=crop_top=crop_bottom=None
+    interlaced=stereo_mode=alpha_mode=None
     default_duration=codec_delay=seek_preroll=None
-    rate=None
+    rate=output_rate=None
 
     for eid,cs,ce in _children(data,s,e):
         b=data[cs:ce]
         if eid==0xD7 and b:num=int.from_bytes(b,"big")
+        elif eid==0x73C5 and b:uid=int.from_bytes(b,"big")
         elif eid==0x83 and b:typ={1:"video",2:"audio",17:"subtitles"}.get(int.from_bytes(b,"big"),"other")
         elif eid==0x536E:name=_text(data,cs,ce)
         elif eid==0x22B59C:lang=_text(data,cs,ce)
@@ -220,6 +222,7 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
         elif eid==0x55AF and b:commentary=bool(int.from_bytes(b,"big"))
         elif eid==0x9F and b:channels=int.from_bytes(b,"big")
         elif eid==0xB5:rate=_flt(data,cs,ce)
+        elif eid==0x78B5:output_rate=_flt(data,cs,ce)
         elif eid==0x6264 and b:depth=int.from_bytes(b,"big")
         elif eid==0x23E383 and b:default_duration=int.from_bytes(b,"big")
         elif eid==0x56AA and b:codec_delay=int.from_bytes(b,"big")
@@ -229,6 +232,7 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
                 nb=data[ns:ne]
                 if nid==0x9F and nb:channels=int.from_bytes(nb,"big")
                 elif nid==0xB5:rate=_flt(data,ns,ne)
+                elif nid==0x78B5:output_rate=_flt(data,ns,ne)
                 elif nid==0x6264 and nb:depth=int.from_bytes(nb,"big")
         elif eid==0xE0:
             for nid,ns,ne in _children(data,cs,ce):
@@ -237,8 +241,13 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
                 elif nid==0xBA and nb:height=int.from_bytes(nb,"big")
                 elif nid==0x54B0 and nb:display_width=int.from_bytes(nb,"big")
                 elif nid==0x54BA and nb:display_height=int.from_bytes(nb,"big")
+                elif nid==0x54AA and nb:crop_left=int.from_bytes(nb,"big")
+                elif nid==0x54BB and nb:crop_right=int.from_bytes(nb,"big")
+                elif nid==0x54CC and nb:crop_top=int.from_bytes(nb,"big")
+                elif nid==0x54DD and nb:crop_bottom=int.from_bytes(nb,"big")
                 elif nid==0x9A and nb:interlaced=bool(int.from_bytes(nb,"big"))
                 elif nid==0x53B8 and nb:stereo_mode=int.from_bytes(nb,"big")
+                elif nid==0x53C0 and nb:alpha_mode=int.from_bytes(nb,"big")
 
     if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
@@ -266,6 +275,7 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
 
     d={"type":typ,"track":str(num) if num is not None else None,
        "name":display_name,"display_name":display_name,"name_source":name_source,
+       "track_uid":str(uid) if uid is not None else None,
        "language":use_lang,"language_name":lname,"codec":cid,"codec_name":codec_display}
     for k,v in (("default",default),("enabled",enabled),("forced",forced if typ=="subtitles" else None),
                 ("hearing_impaired",sdh if typ=="subtitles" else None),
@@ -276,6 +286,8 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     if typ=="audio":
         if channels is not None:d["channels"]=str(channels)
         if rate and rate>0:d["sample_rate"]=f"{rate/1000:.1f} kHz"
+        if output_rate and output_rate>0 and (not rate or abs(output_rate-rate)>0.001):
+            d["output_sample_rate"]=f"{output_rate/1000:.1f} kHz"
         if depth is not None:d["bit_depth"]=f"{depth} bit"
         if codec_delay is not None:d["codec_delay"]=f"{codec_delay} ns"
         if seek_preroll is not None:d["seek_preroll"]=f"{seek_preroll} ns"
@@ -283,8 +295,20 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     if typ=="video":
         if width and height:d["dimensions"]=f"{width} × {height}"
         if display_width and display_height:d["display_dimensions"]=f"{display_width} × {display_height}"
+        if any(v is not None for v in (crop_left,crop_right,crop_top,crop_bottom)):
+            d["crop"]=(f"L{crop_left or 0} / R{crop_right or 0} / "
+                       f"T{crop_top or 0} / B{crop_bottom or 0}")
         if interlaced is not None:d["scan_type"]="Interlaced" if interlaced else "Progressive"
-        if stereo_mode is not None:d["stereo_mode"]=str(stereo_mode)
+        if stereo_mode is not None:
+            d["stereo_mode"]={0:"Mono",1:"Side by Side (Left first)",2:"Side by Side (Right first)",
+                              3:"Top Bottom (Right first)",4:"Top Bottom (Left first)",
+                              5:"Checkerboard (Right first)",6:"Checkerboard (Left first)",
+                              7:"Row interleaved (Right first)",8:"Row interleaved (Left first)",
+                              9:"Column interleaved (Right first)",10:"Column interleaved (Left first)",
+                              11:"Anaglyph (cyan/red)",12:"Side by Side (left to right, half)",
+                              13:"Side by Side (right to left, half)",14:"Top Bottom (half)"
+                             }.get(stereo_mode,str(stereo_mode))
+        if alpha_mode is not None:d["alpha_mode"]="Present" if alpha_mode else "None"
         if default_duration and default_duration>0:d["frame_rate"]=f"{1_000_000_000/default_duration:.3f} fps"
 
     return {k:v for k,v in d.items() if v not in (None,"")}
@@ -311,15 +335,27 @@ def _info(data:bytes,report:Report):
     while p>=0:
         x=_elem(data,p)
         if not x:break
-        scale=1_000_000; dur=title=None
+        scale=1_000_000; dur=title=muxing_app=writing_app=date_utc=None
         for eid,s,e in _children(data,x[1],x[2]):
             b=data[s:e]
             if eid==0x2AD7B1 and b:scale=int.from_bytes(b,"big")
             elif eid==0x4489:dur=_flt(data,s,e)
             elif eid==0x7BA9:title=_text(data,s,e)
+            elif eid==0x4D80:muxing_app=_text(data,s,e)
+            elif eid==0x5741:writing_app=_text(data,s,e)
+            elif eid==0x4461 and b and len(b) in (8,16):
+                with suppress(Exception):
+                    date_utc=int.from_bytes(b[:8],"big")
         if dur is not None and dur>=0:
-            sec=dur*scale/1_000_000_000; report.container["runtime"]=_fmtsec(sec); report.container["runtime_seconds"]=f"{sec:.3f}"
+            sec=dur*scale/1_000_000_000
+            report.container["runtime"]=_fmtsec(sec)
+            report.container["runtime_seconds"]=f"{sec:.3f}"
         if title:report.container["title"]=title
+        if muxing_app:report.container["muxing_app"]=muxing_app
+        if writing_app:report.container["writing_app"]=writing_app
+        if date_utc is not None:
+            with suppress(Exception):
+                report.container["date_utc"]=(datetime(2001,1,1,tzinfo=timezone.utc)+timedelta(microseconds=date_utc)).isoformat()
         p=data.find(b"\x15\x49\xA9\x66",x[2])
 
 def _generic(data:bytes,kind:str,report:Report):
@@ -539,7 +575,7 @@ def _safe(v:Any)->str:return html.escape(str(v))
 def _rows(track:dict[str,Any],i:int):
     out=[f"{i}. {_safe(track.get('name') or track.get('display_name') or 'Unnamed')}"]
     if track.get("name_source"):out.append(f"   Name source: {_safe(track['name_source'])}")
-    for k in ("language_name","language","codec_name","codec","channels","sample_rate","bit_depth","default","forced","enabled","original","commentary","hearing_impaired","visual_impaired","dimensions"):
+    for k in ("track_uid","language_name","language","codec_name","codec","dimensions","display_dimensions","crop","frame_rate","scan_type","stereo_mode","alpha_mode","channels","sample_rate","output_sample_rate","bit_depth","codec_delay","seek_preroll","default","forced","enabled","original","commentary","hearing_impaired","visual_impaired"):
         if track.get(k):out.append(f"   {_safe(k.replace('_',' ').title())}: {_safe(track[k])}")
     return out
 
@@ -590,6 +626,9 @@ def format_section(r:Report,section:str)->str:
         lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}",f"Sampled: {human(r.sampled)}",f"Ranges: {len(r.probe_ranges)}"]
         if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
         if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
+        if r.container.get("muxing_app"):lines.append(f"Muxing app: {_safe(r.container['muxing_app'])}")
+        if r.container.get("writing_app"):lines.append(f"Writing app: {_safe(r.container['writing_app'])}")
+        if r.container.get("date_utc"):lines.append(f"Encoded date: {_safe(r.container['date_utc'])}")
         if r.probe_ranges:lines += ["","Probe map:"]+[f"• {_safe(x)}" for x in r.probe_ranges]
         return "\n".join(lines)
     return format_report(r)
