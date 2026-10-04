@@ -438,26 +438,82 @@ async def render_owner_users(event, owner_id: int, page: int = 0) -> None:
     buttons.append([Button.inline("👑 Dashboard", b"owner:dashboard")])
     await event.edit("\n".join(lines) + f"\n\nPage {page + 1}/{max_page + 1}", parse_mode="html", buttons=buttons)
 
-async def render_owner_user_scans(event, owner_id: int, target_user_id: int) -> None:
+async def render_owner_user_scans(
+    event,
+    owner_id: int,
+    target_user_id: int,
+    page: int = 0,
+) -> None:
     if not _owner_allowed(owner_id):
         await event.answer("Owner access only.", alert=True)
         return
-    records = await owner_user_scans(int(target_user_id), 7, 40)
-    if not records:
-        await event.edit(f"📁 <b>User {int(target_user_id)} — Scan Files</b>\n\nNo scans in the last 7 days.", parse_mode="html", buttons=[[Button.inline("⬅️ Users", b"owner:users:0")]])
+
+    page_size = 15
+    page = max(0, int(page))
+    records = await owner_user_scans(
+        int(target_user_id),
+        7,
+        page_size,
+        page * page_size,
+    )
+
+    if not records and page == 0:
+        await event.edit(
+            f"📁 <b>User {int(target_user_id)} — Scan Files</b>\n\n"
+            "No scans in the last 7 days.",
+            parse_mode="html",
+            buttons=[[Button.inline("⬅️ Users", b"owner:users:0")]],
+        )
         return
-    lines = [f"📁 <b>User {int(target_user_id)} — Scan Files</b>", "📅 Last 7 Days", ""]
-    for index, item in enumerate(records, 1):
+
+    lines = [
+        f"📁 <b>User {int(target_user_id)} — Scan Files</b>",
+        "📅 Last 7 Days",
+        "",
+    ]
+    for index, item in enumerate(records, page * page_size + 1):
         filename = str(item.get("filename") or "telegram_file")
         status = str(item.get("status") or "unknown")
         when = item.get("created_at")
-        when_text = when.strftime("%d %b %H:%M UTC") if isinstance(when, datetime) else "Unknown"
+        when_text = (
+            when.strftime("%d %b %H:%M UTC")
+            if isinstance(when, datetime)
+            else "Unknown"
+        )
         source = str(item.get("source_bot") or BOT_USERNAME)
-        lines.append(f"{index}. <b>{html.escape(filename[:110])}</b>\n   {html.escape(status)} • {html.escape(source)} • {html.escape(when_text)}")
-    text = "\n".join(lines)
-    if len(text) > 3900:
-        text = text[:3860] + "\n\n…showing the newest scan files."
-    await event.edit(text, parse_mode="html", buttons=[[Button.inline("⬅️ Users", b"owner:users:0")], [Button.inline("👑 Dashboard", b"owner:dashboard")]])
+        lines.append(
+            f"{index}. <b>{html.escape(filename[:110])}</b>\n"
+            f"   {html.escape(status)} • {html.escape(source)} • "
+            f"{html.escape(when_text)}"
+        )
+
+    buttons = []
+    nav = []
+    if page > 0:
+        nav.append(
+            Button.inline(
+                "◀️ Previous",
+                f"owner:user:{int(target_user_id)}:{page - 1}".encode("ascii"),
+            )
+        )
+    if len(records) == page_size:
+        nav.append(
+            Button.inline(
+                "Next ▶️",
+                f"owner:user:{int(target_user_id)}:{page + 1}".encode("ascii"),
+            )
+        )
+    if nav:
+        buttons.append(nav)
+    buttons.append([Button.inline("⬅️ Users", b"owner:users:0")])
+    buttons.append([Button.inline("👑 Dashboard", b"owner:dashboard")])
+
+    await event.edit(
+        "\n".join(lines) + f"\n\nPage {page + 1}",
+        parse_mode="html",
+        buttons=buttons,
+    )
+
 
 async def remove_clone_as_owner(owner_id: int, clone_id: int) -> bool:
     if not _owner_allowed(owner_id):
@@ -1327,12 +1383,19 @@ async def handle_callback(
         if not _owner_allowed(user_id):
             await event.answer("Owner access only.", alert=True)
             return
+        parts = data.split(":")
         try:
-            target_user_id = int(data.split(":", 2)[2])
+            target_user_id = int(parts[2])
+            page = int(parts[3]) if len(parts) > 3 else 0
         except ValueError:
             await event.answer("Invalid user.", alert=True)
             return
-        await render_owner_user_scans(event, int(user_id), target_user_id)
+        await render_owner_user_scans(
+            event,
+            int(user_id),
+            target_user_id,
+            page,
+        )
         return
 
     if data == "home:clones":
