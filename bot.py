@@ -30,6 +30,8 @@ from mongo_store import (
     get_user_clone,
     list_user_clones,
     mark_clone_removed,
+    owner_7day_summary,
+    owner_user_scans,
     record_clone_request,
     record_scan,
     record_user,
@@ -58,6 +60,11 @@ PUBLIC_WEB_URL = (
 )
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
+OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
+MAX_LIVE_CLONES = max(1, min(int(os.getenv("MAX_LIVE_CLONES", "20")), 50))
+MAX_CLONES_PER_USER = max(1, min(int(os.getenv("MAX_CLONES_PER_USER", "3")), 10))
+MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
+SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "10")), 60))
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -121,6 +128,7 @@ pending_scans: dict[str, PendingScan] = {}
 active_scans: dict[str, asyncio.Task] = {}
 active_scan_users: dict[str, int | None] = {}
 clone_setup_pending: dict[int, float] = {}
+last_scan_by_user: dict[int, float] = {}
 CLONE_SETUP_TTL_SECONDS = 5 * 60
 
 def _new_clone_stats() -> dict[str, Any]:
