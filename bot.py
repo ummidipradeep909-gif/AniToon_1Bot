@@ -284,7 +284,8 @@ HELP_TEXT = (
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Wait for the metadata scan to finish.\n"
-    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
+    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n"
+    "🗄️ Scanned media is automatically copied to the configured private storage channel.\n\n"
     "🤖 <b>Clone Bots</b>\n"
     "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
     "📋 <b>Commands</b>\n"
@@ -2502,6 +2503,7 @@ PRIVACY_TEXT = (
     "🔐 <b>AniToon Privacy</b>\n\n"
     "🛡️ Media is inspected with bounded reads instead of creating a full local copy.\n"
     "📊 Scan history is stored in MongoDB for the owner/user statistics.\n"
+    "🗄️ Scanned media is copied to the configured private storage channel for archiving.\n"
     "🔑 Clone BotFather tokens are encrypted before being stored.\n"
     "🗑️ Removing a clone removes its stored credential and disconnects the clone."
 )
@@ -4189,6 +4191,10 @@ async def main():
             if mongo_ok:
                 from mongo_store import purge_expired_web_reports
                 await purge_expired_web_reports()
+            try:
+                await _resolve_storage_peer(bot)
+            except Exception:
+                log.warning("Storage channel startup check failed", exc_info=True)
         except Exception:
             mongo_ok = False
             log.exception("MongoDB startup check failed")
