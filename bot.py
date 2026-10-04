@@ -447,7 +447,7 @@ def _fmt_clone_time(value: Any) -> str:
     elif isinstance(value, (int, float)):
         dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
     else:
-        return "Unknown"
+        return "Not available"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M UTC")
@@ -3072,8 +3072,6 @@ def web_page(report: Report, report_token: str | None = None) -> bytes:
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
     sampled = f"{report.sampled / 1024 / 1024:.2f} MiB"
-    wallpaper_seed = html.escape(report_token or secrets.token_urlsafe(10))
-    wallpaper_url = f"https://picsum.photos/seed/{wallpaper_seed}/1920/1080"
     audio_names = [str(t.get("name")) for t in audio if t.get("name")]
     subtitle_names = [str(t.get("name")) for t in subtitles if t.get("name")]
 
@@ -3111,10 +3109,9 @@ body::before {{
   inset: 0;
   z-index: -2;
   background:
-    linear-gradient(180deg, rgba(4,8,18,.72), rgba(4,8,18,.92)),
-    url("{wallpaper_url}") center/cover no-repeat;
-  filter: saturate(1.08) contrast(1.03);
-  transform: scale(1.03);
+    radial-gradient(900px 520px at 12% -5%, rgba(125,211,252,.15), transparent 62%),
+    radial-gradient(900px 520px at 100% 0%, rgba(168,85,247,.13), transparent 64%),
+    linear-gradient(180deg, #070b14, #0a0f1b 55%, #070b14);
 }}
 body::after {{
   content: "";
@@ -3227,9 +3224,10 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
   </nav>
 <div class="wrap">
   <header class="hero">
-    <div class="logo">AniToons File Intelligence</div>
+    <div class="logo">AniToon Media Info</div>
     <h1>Media Metadata Report</h1>
     <div class="file">{filename}</div>
+    <div class="source-line">🧠 Sources: Telegram metadata • Deep container parser • FFmpeg/PyAV</div>
     <div class="meta">
       <span class="pill">Generated {generated_text}</span>
       <span class="pill">⏳ Link valid for <span id="countdown" class="countdown">05:00</span></span>
