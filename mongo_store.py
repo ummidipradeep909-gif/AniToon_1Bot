@@ -166,42 +166,8 @@ async def record_clone_request(
     clone_first_name: str | None,
     token: str,
 ) -> None:
-    db = await _get_db()
-    if db is None or clone_id is None:
-        return
-
-    try:
-        now = datetime.now(timezone.utc)
-        await asyncio.to_thread(
-            db.clones.update_one,
-            {"user_id": int(user_id), "clone_id": int(clone_id)},
-            {
-                "$set": {
-                    "user_id": int(user_id),
-                    "clone_id": int(clone_id),
-                    "clone_username": clone_username,
-                    "clone_first_name": clone_first_name,
-                    "status": "online",
-                    "last_activity": now,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {
-                    "created_at": now,
-                    "messages_received": 0,
-                    "scans_started": 0,
-                    "scans_completed": 0,
-                    "scans_failed": 0,
-                    "scans_cancelled": 0,
-                },
-                "$unset": {
-                    "token_encrypted": "",
-                    "token_persistence": "",
-                },
-            },
-            upsert=True,
-        )
-    except Exception:
-        log.exception("Failed to store clone metadata")
+    # Clone bots are runtime-only. The BotFather token is never persisted.
+    return
 
 
 async def purge_clone_tokens() -> None:
@@ -232,135 +198,36 @@ async def update_clone_stats(
     scans_cancelled: int = 0,
     status: str = "online",
 ) -> None:
-    db = await _get_db()
-    if db is None:
-        return
-
-    increments = {
-        "messages_received": int(messages_received),
-        "scans_started": int(scans_started),
-        "scans_completed": int(scans_completed),
-        "scans_failed": int(scans_failed),
-        "scans_cancelled": int(scans_cancelled),
-    }
-    increments = {key: value for key, value in increments.items() if value}
-    try:
-        update = {
-            "$set": {
-                "status": status,
-                "last_activity": datetime.now(timezone.utc),
-                "updated_at": datetime.now(timezone.utc),
-            }
-        }
-        if increments:
-            update["$inc"] = increments
-        await asyncio.to_thread(
-            db.clones.update_one,
-            {"clone_id": int(clone_id), "status": {"$ne": "removed"}},
-            update,
-        )
-    except Exception:
-        log.exception("Failed to update clone stats")
+    # Clone statistics are runtime-only.
+    return
 
 
 async def list_user_clones(user_id: int) -> list[dict[str, Any]]:
-    db = await _get_db()
-    if db is None:
-        return []
-
-    try:
-        return await asyncio.to_thread(
-            lambda: list(
-                db.clones.find(
-                    {
-                        "user_id": int(user_id),
-                        "status": {"$in": ["online", "validated"]},
-                    },
-                    {
-                        "user_id": 1,
-                        "clone_id": 1,
-                        "clone_username": 1,
-                        "clone_first_name": 1,
-                        "status": 1,
-                        "created_at": 1,
-                        "last_activity": 1,
-                        "messages_received": 1,
-                        "scans_started": 1,
-                        "scans_completed": 1,
-                        "scans_failed": 1,
-                        "scans_cancelled": 1,
-                    },
-                ).sort("created_at", -1)
-            )
-        )
-    except Exception:
-        log.exception("Failed to list user's clone bots")
-        return []
+    return []
 
 
 async def get_user_clone(user_id: int, clone_id: int) -> dict[str, Any] | None:
-    db = await _get_db()
-    if db is None:
-        return None
-
-    try:
-        return await asyncio.to_thread(
-            db.clones.find_one,
-            {
-                "user_id": int(user_id),
-                "clone_id": int(clone_id),
-                "status": {"$in": ["online", "validated"]},
-            },
-            {
-                "user_id": 1,
-                "clone_id": 1,
-                "clone_username": 1,
-                "clone_first_name": 1,
-                "status": 1,
-                "created_at": 1,
-                "last_activity": 1,
-                "messages_received": 1,
-                "scans_started": 1,
-                "scans_completed": 1,
-                "scans_failed": 1,
-                "scans_cancelled": 1,
-            },
-        )
-    except Exception:
-        log.exception("Failed to load clone")
-        return None
+    return None
 
 
 async def mark_clone_removed(user_id: int, clone_id: int) -> None:
-    db = await _get_db()
-    if db is None:
-        return
-
-    try:
-        now = datetime.now(timezone.utc)
-        await asyncio.to_thread(
-            db.clones.update_one,
-            {"user_id": int(user_id), "clone_id": int(clone_id)},
-            {
-                "$set": {
-                    "status": "removed",
-                    "removed_at": now,
-                    "updated_at": now,
-                },
-                "$unset": {
-                    "token_encrypted": "",
-                    "token_persistence": "",
-                },
-            },
-        )
-    except Exception:
-        log.exception("Failed to remove clone from persistent storage")
-
+    return
 
 
 async def load_clone_requests() -> list[dict[str, Any]]:
-    # Clone credentials are intentionally not persisted.
+    # Clone credentials are intentionally not persisted and are not restored.
     return []
+
+
+async def clear_clone_records() -> None:
+    db = await _get_db()
+    if db is None:
+        return
+    try:
+        await asyncio.to_thread(db.clones.delete_many, {})
+        log.info("Cleared persistent clone records; clones are runtime-only")
+    except Exception:
+        log.exception("Failed to clear old persistent clone records")
 
 
 async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
