@@ -81,6 +81,9 @@ async def _get_db():
             await asyncio.to_thread(
                 _db.clones.create_index([("user_id", 1), ("status", 1), ("created_at", -1)])
             )
+            await asyncio.to_thread(
+                _db.reports.create_index("expires_at", expireAfterSeconds=0)
+            )
             log.info("MongoDB connected | database=%s", _database_name())
             return _db
         except Exception:
@@ -591,3 +594,58 @@ async def owner_recent_users(days: int = 7, limit: int = 100) -> list[dict[str, 
     except Exception:
         log.exception("Failed to load owner recent users")
         return []
+
+
+
+async def save_web_report(token: str, report_data: dict[str, Any], expires_at: datetime) -> None:
+    db = await _get_db()
+    if db is None:
+        return
+    try:
+        await asyncio.to_thread(
+            db.reports.update_one,
+            {"_id": str(token)},
+            {
+                "$set": {
+                    "report": _json_clean(report_data),
+                    "expires_at": expires_at,
+                    "updated_at": datetime.now(timezone.utc),
+                },
+                "$setOnInsert": {"created_at": datetime.now(timezone.utc)},
+            },
+            upsert=True,
+        )
+    except Exception:
+        log.exception("Failed to persist web report")
+
+
+async def load_web_report(token: str) -> dict[str, Any] | None:
+    db = await _get_db()
+    if db is None:
+        return None
+    try:
+        row = await asyncio.to_thread(
+            db.reports.find_one,
+            {
+                "_id": str(token),
+                "expires_at": {"$gt": datetime.now(timezone.utc)},
+            },
+            {"report": 1, "expires_at": 1},
+        )
+        return row.get("report") if row else None
+    except Exception:
+        log.exception("Failed to load web report")
+        return None
+
+
+async def purge_expired_web_reports() -> None:
+    db = await _get_db()
+    if db is None:
+        return
+    try:
+        await asyncio.to_thread(
+            db.reports.delete_many,
+            {"expires_at": {"$lte": datetime.now(timezone.utc)}},
+        )
+    except Exception:
+        log.exception("Failed to purge expired web reports")
