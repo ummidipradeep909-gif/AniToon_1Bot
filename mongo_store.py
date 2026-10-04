@@ -187,47 +187,66 @@ async def record_bot_user(
         )
 
 
-async def list_bot_users(bot_id: int, limit: int = 1000000) -> list[int]:
-    """Return distinct user ids who have interacted with this exact bot."""
+async def list_bot_users(
+    bot_id: int,
+    bot_username: str | None = None,
+    limit: int = 1000000,
+) -> list[int]:
+    """Return distinct private-user ids for one exact bot audience."""
     db = await _get_db()
     if db is None:
         return []
     try:
+        ids: set[int] = set()
+
         rows = await asyncio.to_thread(
             lambda: db.bot_users.find(
                 {"bot_id": int(bot_id)},
                 {"user_id": 1, "_id": 0},
             ).sort("last_seen", -1).limit(int(limit))
         )
-        ids = {
+        ids.update(
             int(row["user_id"])
             for row in rows
             if row.get("user_id") is not None
-        }
-
-        # Backfill users from older scan history so a newly enabled broadcast
-        # does not lose clone users who interacted before bot_users existed.
-        legacy_user_ids = await asyncio.to_thread(
-            lambda: db.scans.distinct(
-                "user_id",
-                {"source_bot": {"$exists": True, "$ne": None}},
-            )
         )
-        # Preserve bot-specific filtering from source_bot where possible. The
-        # caller's bot_id is the primary audience index; legacy rows are only
-        # safe to merge when the bot audience record is already present or when
-        # this is the main bot's audience.
-        if not ids:
-            legacy_ids = [int(uid) for uid in legacy_user_ids if uid is not None]
-            if legacy_ids:
-                profile_ids = await asyncio.to_thread(
-                    lambda: db.users.distinct("_id", {"_id": {"$in": legacy_ids}})
+
+        # Backfill historical users who interacted with this bot before
+        # bot_users tracking was introduced. Scan history stores source_bot.
+        username = str(bot_username or "").strip().lstrip("@")
+        if username:
+            legacy_ids = await asyncio.to_thread(
+                lambda: db.scans.distinct(
+                    "user_id",
+                    {
+                        "source_bot": {
+                            "$regex": f"^@?{username}$",
+                            "$options": "i",
+                        },
+                        "user_id": {"$ne": None},
+                    },
                 )
-                ids.update(int(uid) for uid in profile_ids if uid is not None)
+            )
+            ids.update(int(uid) for uid in legacy_ids if uid is not None)
+
+        # Main-bot users are also represented in users; only merge these
+        # profiles for the exact main-bot username.
+        if username:
+            main_ids = await asyncio.to_thread(
+                lambda: db.users.distinct(
+                    "_id",
+                    {"_id": {"$in": list(ids)}},
+                )
+            )
+            ids.update(int(uid) for uid in main_ids if uid is not None)
 
         return list(ids)[:int(limit)]
     except Exception:
-        log.exception("Failed to load bot audience | bot_id=%s", bot_id)
+        log.exception(
+            "Failed to load bot audience | bot_id=%s | bot_username=%s",
+            bot_id,
+            bot_username,
+        )
         return []
 
 
