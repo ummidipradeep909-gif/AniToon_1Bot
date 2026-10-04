@@ -36,8 +36,8 @@ CODEC_NAMES = {
     "hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub",
 }
 
-DEFAULT_RANGE_CHUNK = 256 * 1024
-DEFAULT_BUDGET = 8 * 1024 * 1024
+DEFAULT_RANGE_CHUNK = 512 * 1024
+DEFAULT_BUDGET = 4 * 1024 * 1024
 RANGE_TOKEN_TTL = 10 * 60
 
 
@@ -282,19 +282,32 @@ def _language_name(code: str | None) -> str | None:
     if not code:
         return None
     value = code.strip().lower().replace("_", "-")
+    if value in {"und", "unknown", "unk"}:
+        return None
     return LANG_NAMES.get(value) or LANG_NAMES.get(value.split("-")[0])
 
 
 def _codec_name(stream: Any) -> str:
+    candidates = []
     try:
-        short = str(stream.codec_context.name or "").lower()
+        candidates.append(str(stream.codec_context.name or "").strip().lower())
     except Exception:
-        short = ""
+        pass
     try:
-        long_name = str(stream.codec_context.codec.long_name or "")
+        candidates.append(str(stream.codec_context.codec.name or "").strip().lower())
     except Exception:
-        long_name = ""
-    return CODEC_NAMES.get(short) or long_name or short or "Unknown"
+        pass
+    try:
+        candidates.append(str(stream.codec_context.codec.long_name or "").strip())
+    except Exception:
+        pass
+    for value in candidates:
+        if value:
+            short = value.lower()
+            return CODEC_NAMES.get(short) or value
+    return "Audio" if getattr(stream, "type", "") == "audio" else (
+        "Subtitle" if getattr(stream, "type", "") == "subtitle" else "Video"
+    )
 
 
 def _flag(disposition: Any, name: str) -> str:
@@ -321,9 +334,20 @@ def _stream_track(stream: Any) -> dict[str, Any]:
     )
     codec_name = _codec_name(stream)
 
-    # Player-like label priority: explicit track title first, then language,
-    # then codec. This mirrors the metadata concepts used by media players.
-    display_name = title or language_name or codec_name
+    # Prefer a meaningful embedded name, then language + codec.
+    # A known media type should never be displayed as a bare "Unknown".
+    clean_title = title.strip() if title else None
+    if clean_title and clean_title.lower() in {"unknown", "und", "undefined", "audio", "track"}:
+        clean_title = None
+    if clean_title:
+        display_name = clean_title
+        display_source = "embedded track title"
+    elif language_name:
+        display_name = f"{language_name} • {codec_name}"
+        display_source = "embedded language + codec"
+    else:
+        display_name = codec_name or ("Audio" if stream.type == "audio" else str(stream.type).title())
+        display_source = "codec metadata" if codec_name else "stream type fallback"
 
     track = {
         "type": str(stream.type),
@@ -460,8 +484,8 @@ def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = No
     # PyAV accepts seekable Python file-like objects. This removes the fragile
     # HTTP-proxy behavior and lets FFmpeg issue real seek/read operations.
     options = {
-        "probesize": str(2 * 1024 * 1024),
-        "analyzeduration": "3000000",
+        "probesize": str(768 * 1024),
+        "analyzeduration": "1500000",
         "fflags": "+genpts",
     }
 
