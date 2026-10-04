@@ -72,6 +72,15 @@ async def _get_db():
             )
             await asyncio.to_thread(_client.admin.command, "ping")
             _db = _client[_database_name()]
+            await asyncio.to_thread(
+                _db.scans.create_index([("user_id", 1), ("created_at", -1)])
+            )
+            await asyncio.to_thread(
+                _db.scans.create_index([("created_at", -1)])
+            )
+            await asyncio.to_thread(
+                _db.clones.create_index([("user_id", 1), ("status", 1), ("created_at", -1)])
+            )
             log.info("MongoDB connected | database=%s", _database_name())
             return _db
         except Exception:
