@@ -19,7 +19,15 @@ _init_lock: asyncio.Lock | None = None
 
 
 def _uri() -> str:
-    return os.getenv("MONGODB_URI", "").strip()
+    for key in ("MONGODB_URI", "MONGO_URI", "MONGODB_URL"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def mongodb_is_configured() -> bool:
+    return bool(_uri())
 
 
 def _database_name() -> str:
