@@ -3492,7 +3492,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
   {f'''<section class="section">
     <div class="section-head">
       <h2>🎞️ Video previews</h2>
-      <span id="preview-status" class="pill">10% → 90%</span>
+      <span id="preview-status" class="pill">50% snapshot</span>
     </div>
     <div id="preview-grid" class="preview-grid">{preview_cards or '<div class="preview-loading"><span></span><span></span><span></span><span></span><span></span></div>'}</div>
   </section>''' if video else ""}
@@ -3548,7 +3548,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 
   const render = (items) => {{
     const cards = items.slice(0,5).map((p, i) => {{
-      const ratio = Number(p.ratio || ([10,30,50,70,90][i] || 10));
+      const ratio = Number(p.ratio || 50);
       const seconds = Math.max(0, Math.floor(Number(p.seconds || 0)));
       const mm = Math.floor(seconds / 60);
       const ss = seconds % 60;
