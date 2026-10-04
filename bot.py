@@ -1395,7 +1395,11 @@ async def handle_callback(
             "The scan starts only after you press <b>📥 Download Metadata</b>.\n\n"
             "🛡️ Large files are inspected with bounded byte-range reads.",
             parse_mode="html",
-            buttons=help_buttons(bot_username, include_clone=include_clone),
+            buttons=help_buttons(
+                bot_username,
+                include_clone=include_clone,
+                user_id=getattr(await event.get_sender(), "id", None),
+            ),
         )
         return
 
@@ -1438,7 +1442,11 @@ async def handle_callback(
         await event.edit(
             ABOUT_TEXT,
             parse_mode="html",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                user_id=getattr(await event.get_sender(), "id", None),
+            ),
         )
         return
 
