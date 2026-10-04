@@ -315,14 +315,63 @@ ABOUT_TEXT = (
 
 
 def _coerce_report(value: Any) -> Report:
-    """Normalize current/legacy scan return values before web rendering."""
+    """Normalize current/legacy scan state so web rendering never depends on a preview."""
     if isinstance(value, Report):
-        return value
-    if isinstance(value, tuple) and value and isinstance(value[0], Report):
-        return value[0]
-    if isinstance(value, dict):
-        return Report(**value)
-    raise TypeError(f"Unsupported report state type: {type(value).__name__}")
+        report = value
+    elif isinstance(value, tuple) and value and isinstance(value[0], Report):
+        report = value[0]
+    elif isinstance(value, dict):
+        allowed = {
+            "filename", "size", "mime", "ext", "detected", "media_kind",
+            "sampled", "sample_hash", "notes", "video", "audio",
+            "subtitles", "container", "probe_ranges", "previews",
+        }
+        report = Report(**{key: value.get(key) for key in allowed if key in value})
+    else:
+        raise TypeError(f"Unsupported report state type: {type(value).__name__}")
+
+    # Repair legacy/malformed nested values instead of allowing one bad field
+    # to abort the entire /report/<token> response.
+    if not isinstance(report.video, dict):
+        report.video = {"tracks": report.video} if isinstance(report.video, list) else {}
+    if not isinstance(report.audio, dict):
+        report.audio = {"tracks": report.audio} if isinstance(report.audio, list) else {}
+    if not isinstance(report.container, dict):
+        report.container = {}
+
+    video_tracks = report.video.get("tracks", [])
+    audio_tracks = report.audio.get("tracks", [])
+    subtitles = report.subtitles
+    previews = report.previews
+
+    if not isinstance(video_tracks, list):
+        video_tracks = []
+    if not isinstance(audio_tracks, list):
+        audio_tracks = []
+    if not isinstance(subtitles, list):
+        subtitles = []
+    if not isinstance(previews, list):
+        previews = [previews] if isinstance(previews, dict) else []
+
+    report.video["tracks"] = [item for item in video_tracks if isinstance(item, dict)]
+    report.audio["tracks"] = [item for item in audio_tracks if isinstance(item, dict)]
+    report.subtitles = [item for item in subtitles if isinstance(item, dict)]
+    report.previews = [
+        item for item in previews
+        if isinstance(item, dict) and str(item.get("data") or "").strip()
+    ][:1]
+
+    if isinstance(report.notes, str):
+        report.notes = [report.notes]
+    elif not isinstance(report.notes, list):
+        report.notes = []
+
+    if isinstance(report.probe_ranges, str):
+        report.probe_ranges = [report.probe_ranges]
+    elif not isinstance(report.probe_ranges, list):
+        report.probe_ranges = []
+
+    return report
 
 
 def cache_state(
@@ -1735,36 +1784,50 @@ async def _resolve_storage_peer(client: Any) -> Any | None:
     key = id(client)
     if key in storage_peers:
         return storage_peers[key]
-    if not STORAGE_CHANNEL:
-        return None
 
-    invite_hash = _storage_invite_hash(STORAGE_CHANNEL)
-    try:
-        if invite_hash:
-            checked = await asyncio.wait_for(
-                client(functions.messages.CheckChatInviteRequest(invite_hash)),
-                timeout=12,
-            )
-            peer = getattr(checked, "chat", None)
-            if peer is not None:
+    configured_id = os.getenv("STORAGE_CHANNEL_ID", "").strip()
+    targets: list[Any] = []
+    if configured_id:
+        try:
+            targets.append(int(configured_id))
+        except ValueError:
+            log.warning("Invalid STORAGE_CHANNEL_ID configuration")
+    if STORAGE_CHANNEL:
+        targets.append(STORAGE_CHANNEL)
+
+    last_error: Exception | None = None
+    for target in targets:
+        try:
+            if isinstance(target, int):
+                peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
                 storage_peers[key] = peer
                 return peer
 
-        target: Any = STORAGE_CHANNEL
-        if isinstance(target, str) and target.lstrip("-").isdigit():
-            target = int(target)
-        peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
-        storage_peers[key] = peer
-        return peer
-    except Exception:
-        log.warning(
-            "Storage channel unavailable | bot=%s | configured_target=%s | "
-            "the bot must already be a member with permission to post",
-            _bot_id_for_client(client) or "main",
-            STORAGE_CHANNEL,
-            exc_info=True,
-        )
-        return None
+            invite_hash = _storage_invite_hash(str(target))
+            if invite_hash:
+                checked = await asyncio.wait_for(
+                    client(functions.messages.CheckChatInviteRequest(invite_hash)),
+                    timeout=12,
+                )
+                peer = getattr(checked, "chat", None)
+                if peer is not None:
+                    storage_peers[key] = peer
+                    return peer
+
+            peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
+            storage_peers[key] = peer
+            return peer
+        except Exception as exc:
+            last_error = exc
+
+    log.warning(
+        "Storage channel unavailable | bot=%s | configured_target=%s | error=%s",
+        _bot_id_for_client(client) or "main",
+        STORAGE_CHANNEL,
+        type(last_error).__name__ if last_error else "not_configured",
+        exc_info=last_error is not None,
+    )
+    return None
 
 
 async def archive_scanned_file(
@@ -2664,6 +2727,15 @@ async def handle_new_message(
 
     if include_clone and await handle_clone_token_message(event):
         return
+
+    # Archive every incoming media message silently, before command/caption
+    # handling. This also covers clone bots because they share this handler.
+    with suppress(Exception):
+        _schedule_storage_archive(
+            event,
+            client=client,
+            bot_username=bot_username,
+        )
 
     if include_clone:
         sender_for_broadcast = await event.get_sender()
@@ -3958,6 +4030,55 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     return document.encode("utf-8")
 
 
+def minimal_web_report_page(
+    report: Report,
+    report_token: str | None = None,
+    expires_at: datetime | None = None,
+) -> bytes:
+    """Last-resort report renderer independent of the advanced HTML template."""
+    safe = _coerce_report(report)
+    filename = html.escape(safe.filename or "Telegram media file")
+    summary = html.escape(format_report(safe)).replace("\n", "<br>")
+    sections = []
+    for section, title in (
+        ("video", "🎬 Video"),
+        ("audio", "🎧 Audio"),
+        ("subs", "💬 Subtitles"),
+        ("technical", "⚙️ Technical"),
+    ):
+        with suppress(Exception):
+            content = web_section(safe, section)
+            sections.append(
+                f"<section><h2>{html.escape(title)}</h2><div>{content}</div></section>"
+            )
+    expiry_text = (
+        expires_at.strftime("%d %b %Y %H:%M UTC")
+        if isinstance(expires_at, datetime)
+        else "Not available"
+    )
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AniToon • {filename}</title>
+<style>
+body{{margin:0;padding:24px;background:#080918;color:#f7f7fb;font:14px/1.55 system-ui,sans-serif}}
+main{{max-width:980px;margin:auto}}
+section{{margin-top:14px;padding:16px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(255,255,255,.04);overflow:auto}}
+h1{{overflow-wrap:anywhere}} h2{{font-size:17px}} .summary{{color:#b9bfd8}}
+</style>
+</head>
+<body><main>
+<h1>⛩ AniToon Media Intelligence</h1>
+<p><strong>{filename}</strong></p>
+<p class="summary">{summary}</p>
+{''.join(sections)}
+<p class="summary">Report expires: {html.escape(expiry_text)} · ID: {html.escape((report_token or "local")[:16])}</p>
+</main></body></html>"""
+    return document.encode("utf-8")
+
+
 async def health_server():
     port = int(os.getenv("PORT", "10000"))
 
@@ -4151,7 +4272,11 @@ async def health_server():
                 preview_items = []
                 state = web_states.get(token)
                 if state is not None:
-                    preview_items = list(getattr(state.report, "previews", []) or [])[:1]
+                    candidates = list(getattr(state.report, "previews", []) or [])
+                    preview_items = [
+                        item for item in candidates
+                        if isinstance(item, dict) and str(item.get("data") or "").strip()
+                    ][:1]
                 else:
                     try:
                         stored_payload = await load_web_report(token)
@@ -4159,7 +4284,11 @@ async def health_server():
                         stored_payload = None
                     if stored_payload:
                         report_payload = stored_payload.get("report") if isinstance(stored_payload, dict) else {}
-                        preview_items = list((report_payload or {}).get("previews") or [])[:1]
+                        candidates = list((report_payload or {}).get("previews") or [])
+                        preview_items = [
+                            item for item in candidates
+                            if isinstance(item, dict) and str(item.get("data") or "").strip()
+                        ][:1]
                 body = json.dumps(
                     {
                         "ready": len(preview_items) >= 1,
@@ -4215,7 +4344,18 @@ async def health_server():
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"404 Not Found"
                 else:
-                    body = web_page(state.report, token, state.expires_at)
+                    try:
+                        body = web_page(state.report, token, state.expires_at)
+                    except Exception:
+                        log.exception(
+                            "Web report render failed; using safe fallback | token=%s",
+                            token,
+                        )
+                        body = minimal_web_report_page(
+                            state.report,
+                            token,
+                            state.expires_at,
+                        )
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"200 OK"
 
@@ -4253,6 +4393,21 @@ async def health_server():
 
         except Exception:
             log.exception("Health/web request failed")
+            with suppress(Exception):
+                body = (
+                    b"<!doctype html><html><head><meta charset=\"utf-8\"><title>"
+                    b"AniToon Web Error</title></head><body style=\"font-family:system-ui;padding:32px\">"
+                    b"<h2>AniToon Web</h2><p>The requested page could not be rendered.</p>"
+                    b"</body></html>"
+                )
+                writer.write(
+                    b"HTTP/1.1 500 Internal Server Error\r\n"
+                    b"Content-Type: text/html; charset=utf-8\r\n"
+                    + f"Content-Length: {len(body)}\r\n".encode("ascii")
+                    + b"Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+                    + body
+                )
+                await writer.drain()
         finally:
             writer.close()
             with suppress(Exception):
