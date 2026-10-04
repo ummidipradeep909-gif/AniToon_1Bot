@@ -724,6 +724,16 @@ async def analyze_source(
     filename = safe_filename(source_message)
 
     outcome = "failed"
+
+    async def persist_outcome(status: str) -> None:
+        await record_scan(
+            user_id=user_id,
+            source_message=source_message,
+            report=None,
+            status=status,
+            source_bot=bot_username,
+        )
+
     try:
         async with check_semaphore:
             report = await run_scan(
@@ -771,6 +781,7 @@ async def analyze_source(
         raise
 
     except ProbeBudgetExceeded:
+        await persist_outcome("failed")
         checks_failed += 1
         await edit_status(
             status_message,
@@ -780,6 +791,7 @@ async def analyze_source(
         )
 
     except ProbeCancelled:
+        await persist_outcome("cancelled")
         checks_failed += 1
         await edit_status(
             status_message,
@@ -788,6 +800,7 @@ async def analyze_source(
         )
 
     except asyncio.TimeoutError:
+        await persist_outcome("failed")
         checks_failed += 1
         await edit_status(
             status_message,
@@ -796,6 +809,7 @@ async def analyze_source(
         )
 
     except errors.FloodWaitError as exc:
+        await persist_outcome("failed")
         checks_failed += 1
         await edit_status(
             status_message,
@@ -804,6 +818,7 @@ async def analyze_source(
         )
 
     except Exception as exc:
+        await persist_outcome("failed")
         checks_failed += 1
         log.exception("File metadata scan failed for %s", filename)
         await edit_status(
