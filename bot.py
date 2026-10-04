@@ -66,6 +66,7 @@ PUBLIC_WEB_URL = (
     .strip()
     .rstrip("/")
 )
+PROJECT_GITHUB_URL = "https://github.com/ummidipradeep909-gif/AniToons_1Bot"
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
@@ -122,6 +123,7 @@ class PendingScan:
     client: Any = None
     bot_username: str = BOT_USERNAME
     include_clone: bool = False
+    show_privacy: bool = True
     busy: bool = False
 
 
@@ -157,19 +159,35 @@ def safe_filename(message: Any) -> str:
 
 
 def metadata_button(token: str):
-    return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
+    return [[Button.inline("🔎 Scan File Info", f"scan:{token}".encode("ascii"))]]
 
 
 def cancel_button(token: str):
     return [[Button.inline("❌ Cancel Scan", f"cancel:{token}".encode("ascii"))]]
 
 
-def clone_buttons():
+def clone_setup_buttons():
     return [
         [Button.inline("🔐 Enter Clone Token", b"clone:token")],
         [Button.url("🤖 Open @BotFather", "https://t.me/BotFather")],
-        [Button.inline("⬅️ Home", b"home:back")],
+        [Button.inline("⬅️ Cancel", b"clone:cancel")],
     ]
+
+def clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
+    buttons: list[list[Any]] = []
+    for record in records[:2]:
+        clone_id = int(record["clone_id"])
+        username = str(record.get("clone_username") or "").strip().lstrip("@")
+        if username:
+            buttons.append([Button.url(f"🤖 @{username}", f"https://t.me/{username}")])
+        buttons.append([
+            Button.inline("📊 Stats", f"clone:stats:{clone_id}".encode("ascii")),
+            Button.inline("🗑 Remove", f"clone:remove:{clone_id}".encode("ascii")),
+        ])
+    if len(records) < 2:
+        buttons.append([Button.inline("🧬 Create Clone", b"clone:create")])
+    buttons.append([Button.inline("⬅️ Home", b"home:back")])
+    return buttons
 
 
 def web_report_button(
@@ -208,11 +226,11 @@ HOME_TEXT = (
 HELP_TEXT = (
     "📖 <b>How to Use AniToon</b>\n\n"
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
-    "2️⃣ Press <b>📥 Download Metadata</b>.\n"
+    "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Wait for the metadata scan to finish.\n"
     "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
     "🤖 <b>Clone Bots</b>\n"
-    "Use <code>/clone</code> or <b>🧬 Create Clone</b>, then send the BotFather token. "
+    "Use <code>/clone</code> or <b>🤖 Clone Manager</b>, then send the BotFather token. "
     "Each account can manage up to <b>2</b> clones.\n\n"
     "📋 <b>Commands</b>\n"
     "/start — Open Home\n"
@@ -229,9 +247,17 @@ HELP_TEXT = (
 )
 
 ABOUT_TEXT = (
-    "ℹ️ <b>About AniToon</b>\n\n"
-    "AniToon scans Telegram media without intentionally downloading complete large files.\n"
-    "It uses bounded range reads to inspect container, video, audio and subtitle metadata."
+    "✨ <b>AniToon • File Intelligence</b> ✨\n\n"
+    "🎬 <b>Smart Telegram Metadata Scanner</b>\n"
+    "Inspect video, audio, subtitles, documents and more using bounded remote reads.\n\n"
+    "🛡️ <b>Privacy-first inspection</b>\n"
+    "Large files are not intentionally downloaded in full. Scans are bounded for safer resource use.\n\n"
+    "🌐 <b>Web Reports</b>\n"
+    "Open the generated File Info page to view the complete metadata report.\n\n"
+    "🤖 <b>Clone Bots</b>\n"
+    "Create and manage up to <b>2 clone bots per user</b>. Clone credentials are encrypted before MongoDB storage.\n\n"
+    "⚡ <b>Fast & Clean</b>\n"
+    "Queued scans • bounded inspection • persistent clone configuration"
 )
 
 
@@ -285,19 +311,24 @@ def home_buttons(
     *,
     include_clone: bool = True,
     user_id: int | None = None,
+    show_privacy: bool = True,
 ):
     buttons = [
         [Button.inline("🔎 Scan Files", b"home:scan")],
+    ]
+    if include_clone:
+        buttons.append([Button.inline("🤖 Clone Manager", b"home:clones")])
+    buttons.extend([
         [Button.inline("📊 My Stats", b"home:stats")],
         [Button.inline("💚 Bot Status", b"home:status")],
-        [Button.inline("🔐 Privacy", b"home:privacy")],
+    ])
+    if show_privacy:
+        buttons.append([Button.inline("🔐 Privacy", b"home:privacy")])
+    buttons.extend([
         [Button.inline("📖 Help", b"home:help")],
         [Button.inline("ℹ️ About", b"home:about")],
         [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
-    ]
-    if include_clone:
-        buttons.insert(1, [Button.inline("🤖 My Clones", b"home:clones")])
-        buttons.insert(2, [Button.inline("🧬 Create Clone", b"home:clone")])
+    ])
     if include_clone and _owner_allowed(user_id):
         buttons.insert(-1, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
     return buttons
@@ -439,19 +470,7 @@ async def _user_clone_records(user_id: int) -> list[dict[str, Any]]:
 
 
 def _clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
-    buttons: list[list[Any]] = []
-    for record in records[:20]:
-        clone_id = int(record["clone_id"])
-        username = str(record.get("clone_username") or "").strip().lstrip("@")
-        if username:
-            buttons.append([Button.url(f"🤖 @{username}", f"https://t.me/{username}")])
-        buttons.append([
-            Button.inline("📊 Stats", f"clone:stats:{clone_id}".encode("ascii")),
-            Button.inline("🗑 Remove", f"clone:remove:{clone_id}".encode("ascii")),
-        ])
-    buttons.append([Button.inline("➕ Create Clone", b"home:clone")])
-    buttons.append([Button.inline("⬅️ Home", b"home:back")])
-    return buttons
+    return clone_manager_buttons(records)
 
 
 async def render_clone_list(event, user_id: int, *, edit: bool = True) -> None:
@@ -1413,7 +1432,7 @@ async def handle_clone_token_message(event) -> bool:
             "❌ <b>Invalid BotFather token.</b>\n\n"
             "Please send the token exactly as provided by @BotFather.",
             parse_mode="html",
-            buttons=clone_buttons(),
+            buttons=clone_setup_buttons(),
         )
         return True
 
@@ -1430,11 +1449,12 @@ async def handle_clone_token_message(event) -> bool:
     }
     if len(live_owned | runtime_owned) >= 2:
         await event.reply(
-            "⚠️ <b>You already have 2 connected clone bots.</b>\n\n"
-            "Remove one before creating another.",
+            "⚠️ <b>Clone limit reached</b>\n\n"
+            "You already have <b>2/2 clone bots</b>.\n"
+            "Remove one clone before creating another.",
             parse_mode="html",
             buttons=[
-                [Button.inline("🤖 My Clones", b"home:clones")],
+                [Button.inline("🤖 Clone Manager", b"home:clones")],
                 [Button.inline("⬅️ Home", b"home:back")],
             ],
         )
@@ -1463,7 +1483,7 @@ async def handle_clone_token_message(event) -> bool:
             "❌ <b>Clone bot could not be started.</b>\n\n"
             "Please check the BotFather token and make sure the bot is active.",
             parse_mode="html",
-            buttons=clone_buttons(),
+            buttons=clone_setup_buttons(),
         )
         return True
 
