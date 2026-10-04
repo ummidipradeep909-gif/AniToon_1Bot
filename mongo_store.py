@@ -93,6 +93,11 @@ async def _get_db():
             return None
 
 
+async def ensure_mongodb() -> bool:
+    """Connect/ping MongoDB eagerly at startup so persistence failures are visible."""
+    return (await _get_db()) is not None
+
+
 async def record_user(event) -> None:
     db = await _get_db()
     if db is None:
@@ -467,6 +472,40 @@ async def load_clone_requests() -> list[dict[str, Any]]:
 async def clear_clone_records() -> None:
     # Compatibility stub. Clone records must NOT be cleared on restart.
     return
+
+
+async def user_scan_summary(user_id: int, days: int = 7) -> dict[str, Any]:
+    db = await _get_db()
+    if db is None:
+        return {"available": False, "scans": 0, "completed": 0, "failed": 0, "cancelled": 0}
+
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
+        rows = await asyncio.to_thread(
+            lambda: list(
+                db.scans.aggregate([
+                    {"$match": {"user_id": int(user_id), "created_at": {"$gte": cutoff}}},
+                    {"$group": {
+                        "_id": None,
+                        "scans": {"$sum": 1},
+                        "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                        "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}},
+                        "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+                    }},
+                ])
+            )
+        )
+        row = rows[0] if rows else {}
+        return {
+            "available": True,
+            "scans": int(row.get("scans", 0) or 0),
+            "completed": int(row.get("completed", 0) or 0),
+            "failed": int(row.get("failed", 0) or 0),
+            "cancelled": int(row.get("cancelled", 0) or 0),
+        }
+    except Exception:
+        log.exception("Failed to load user scan summary")
+        return {"available": False, "scans": 0, "completed": 0, "failed": 0, "cancelled": 0}
 
 
 async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
