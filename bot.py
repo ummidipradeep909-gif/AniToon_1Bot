@@ -927,6 +927,15 @@ async def _start_clone_bot(token: str, owner_user_id: int):
     client = TelegramClient(MemorySession(), API_ID, API_HASH)
     client.flood_sleep_threshold = 15 * 60
 
+    if len(clone_clients) >= MAX_LIVE_CLONES:
+        raise RuntimeError("Clone capacity reached. Please remove an unused clone first.")
+    user_clone_count = sum(
+        1 for owner in clone_owners.values()
+        if int(owner) == int(owner_user_id)
+    )
+    if user_clone_count >= MAX_CLONES_PER_USER:
+        raise RuntimeError("Your clone limit has been reached. Remove an unused clone first.")
+
     try:
         await asyncio.wait_for(client.start(bot_token=token), timeout=30)
         me = await asyncio.wait_for(client.get_me(), timeout=15)
