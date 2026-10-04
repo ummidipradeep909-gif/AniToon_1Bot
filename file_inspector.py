@@ -409,7 +409,8 @@ def _mp4_handler(data:bytes,s:int,e:int)->tuple[str|None,str|None]:
 def _mp4_language(data:bytes,s:int,e:int)->str|None:
     if s>=e:return None
     version=data[s]
-    lang_pos=s+12 if version==0 else s+20
+    # mdhd: language follows creation/modification, timescale and duration.
+    lang_pos=s+20 if version==0 else s+32
     if lang_pos+2>e:return None
     packed=int.from_bytes(data[lang_pos:lang_pos+2],"big")
     chars=[]
