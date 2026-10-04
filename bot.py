@@ -2260,13 +2260,13 @@ def web_section(report: Report, section: str) -> str:
 
 def home_page(report_token: str | None = None) -> bytes:
     channels = [
-        ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1", False),
-        ("🍿", "All Animes Channel", "https://t.me/anitoons_ani", False),
+        ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1"),
+        ("🍿", "All Animes Channel", "https://t.me/anitoons_ani"),
         ("🎧", "Dual Content Channel", "https://t.me/ani_engjaphin"),
-        ("📚", "Manga Channel", "https://t.me/mangauniverse_ani", False),
-        ("🏴‍☠️", "One Piece All New Episodes", "https://t.me/ani_pocket_monster", False),
-        ("⚔️", "Jujutsu Kaisen Channel", "https://t.me/jjk_anitoon", False),
-        ("🍥", "Naruto Shippuden Channel", "https://t.me/naruto_shippuden_in_telugudub", False),
+        ("📚", "Manga Channel", "https://t.me/mangauniverse_ani"),
+        ("🏴‍☠️", "One Piece All New Episodes", "https://t.me/ani_pocket_monster"),
+        ("⚔️", "Jujutsu Kaisen Channel", "https://t.me/jjk_anitoon"),
+        ("🍥", "Naruto Shippuden Channel", "https://t.me/naruto_shippuden_in_telugudub"),
     ]
 
     completed = [
