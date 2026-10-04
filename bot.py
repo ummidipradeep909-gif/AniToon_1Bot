@@ -2771,275 +2771,155 @@ def web_section(report: Report, section: str) -> str:
 
 def home_page(report_token: str | None = None) -> bytes:
     channels = [
-        ("🎬", "Movies Channel", "https://t.me/+KEz_Up14hfFhOTI1"),
-        ("🍿", "All Animes Channel", "https://t.me/anitoons_ani"),
-        ("🎧", "Dual Content Channel", "https://t.me/ani_engjaphin"),
-        ("📚", "Manga Channel", "https://t.me/mangauniverse_ani"),
-        ("🏴‍☠️", "One Piece All New Episodes", "https://t.me/ani_pocket_monster"),
-        ("⚔️", "Jujutsu Kaisen Channel", "https://t.me/jjk_anitoon"),
-        ("🍥", "Naruto Shippuden Channel", "https://t.me/naruto_shippuden_in_telugudub"),
+        ("🎬", "Movies", "https://t.me/+KEz_Up14hfFhOTI1"),
+        ("🍿", "All Animes", "https://t.me/anitoons_ani"),
+        ("🎧", "Dual Content", "https://t.me/ani_engjaphin"),
+        ("📚", "Manga", "https://t.me/mangauniverse_ani"),
+        ("🏴‍☠️", "One Piece", "https://t.me/ani_pocket_monster"),
+        ("⚔️", "Jujutsu Kaisen", "https://t.me/jjk_anitoon"),
+        ("🍥", "Naruto Shippuden", "https://t.me/naruto_shippuden_in_telugudub"),
     ]
-
     completed = [
-        ("🤖", "Doraemon All Movies & Seasons", "https://t.me/ani_seas"),
-        ("🌻", "Shin-Chan All Seasons & Movies", "https://t.me/shin_seas"),
-        ("⚡", "Beyblade Channel", "https://t.me/Ani_beyblade"),
-        ("⚡", "Pokemon All Seasons & Movies", "https://t.me/poketmonster_01"),
+        ("🤖", "Doraemon", "https://t.me/ani_seas"),
+        ("🌻", "Shin-Chan", "https://t.me/shin_seas"),
+        ("⚡", "Beyblade", "https://t.me/Ani_beyblade"),
+        ("⚡", "Pokemon", "https://t.me/poketmonster_01"),
     ]
 
-    def card(icon, name, url):
-        return f"""
-        <a class="channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">
-          <span class="icon">{icon}</span>
-          <span class="name">{html.escape(name)}</span>
-          <span class="arrow">↗</span>
-        </a>
-        """
+    def card(icon: str, name: str, url: str) -> str:
+        return (
+            f'<a class="channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+            f'<span class="channel-icon">{icon}</span>'
+            f'<span class="channel-name">{html.escape(name)}</span>'
+            f'<span class="channel-arrow">↗</span>'
+            f'</a>'
+        )
 
     current_html = "".join(card(*item) for item in channels)
     completed_html = "".join(card(*item) for item in completed)
 
     report_embed = ""
     if report_token:
-        report_embed = f"""<section class="section">
-    <div class="section-title"><span>🔬 File Metadata</span><span class="line"></span></div>
-    <div style="border:1px solid var(--border);border-radius:20px;overflow:hidden;background:var(--panel)">
-      <iframe src="/report/{html.escape(report_token)}?embed=1" title="AniToons File Metadata" style="display:block;width:100%;height:1800px;border:0;background:#070b14"></iframe>
-    </div>
-  </section>"""
-    
+        safe_token = html.escape(report_token)
+        report_embed = f"""
+        <section class="section report-section">
+          <div class="section-head">
+            <div>
+              <small>LIVE REPORT</small>
+              <h2>🔬 File Intelligence</h2>
+            </div>
+            <a class="mini-link" href="/report/{safe_token}">Open ↗</a>
+          </div>
+          <iframe src="/report/{safe_token}?embed=1" title="AniToon Media Metadata" loading="lazy"></iframe>
+        </section>
+        """
+
     document = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080b16">
-<meta name="description" content="AniToon's official channel list and AniToons File Intelligence.">
-<title>⛩ AniToon's List ⛩</title>
+<meta name="theme-color" content="#050611">
+<meta name="description" content="AniToon Media Info — creative media channels and file intelligence.">
+<title>AniToon Media Info</title>
 <style>
 :root {{
-  color-scheme: dark;
-  --bg:#070a12;
-  --panel:#0f1422;
-  --panel2:#12192a;
-  --border:rgba(255,255,255,.09);
-  --text:#f6f7fb;
-  --muted:#98a3b8;
-  --accent:#f5c76a;
-  --accent2:#8b5cf6;
-  --danger:#ff8a8a;
+  color-scheme:dark;
+  --bg:#04050d;--panel:rgba(11,14,31,.72);--line:rgba(255,255,255,.09);
+  --text:#f7f7fb;--muted:#9ba2bd;--a:#9a8cff;--b:#5ee7ff;--good:#7cf4b0;
 }}
-* {{ box-sizing:border-box; }}
-html {{ scroll-behavior:smooth; }}
-body {{
-  margin:0;
-  min-height:100vh;
-  background:
-    radial-gradient(800px 420px at 50% -10%, rgba(139,92,246,.18), transparent 65%),
-    radial-gradient(700px 360px at 100% 20%, rgba(245,199,106,.10), transparent 70%),
-    var(--bg);
-  color:var(--text);
-  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-}}
-.wrap {{ max-width:900px; margin:auto; padding:18px 14px 50px; }}
-.hero {{
-  position:relative;
-  text-align:center;
-  padding:28px 18px 22px;
-  border:1px solid var(--border);
-  border-radius:24px;
-  background:linear-gradient(145deg,rgba(19,24,38,.96),rgba(10,14,25,.92));
-  box-shadow:0 20px 70px rgba(0,0,0,.35);
-  overflow:hidden;
-}}
-.hero:after {{
-  content:"";
-  position:absolute; inset:auto 8% -40px;
-  height:90px;
-  background:radial-gradient(circle,rgba(245,199,106,.12),transparent 70%);
-  pointer-events:none;
-}}
-.kicker {{
-  color:var(--accent);
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:.18em;
-  text-transform:uppercase;
-}}
-h1 {{
-  margin:8px 0 5px;
-  font-size:clamp(26px,6vw,42px);
-  line-height:1.08;
-}}
-.subtitle {{ color:var(--muted); font-size:13px; }}
-.quick {{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:10px;
-  margin-top:16px;
-}}
-.quick a {{
-  text-decoration:none;
-  color:var(--text);
-  border:1px solid var(--border);
-  border-radius:15px;
-  padding:12px 10px;
-  background:rgba(255,255,255,.035);
-  font-weight:700;
-  font-size:12px;
-}}
-.quick a:hover,.channel:hover {{ transform:translateY(-1px); background:rgba(255,255,255,.06); }}
-.section {{ margin-top:16px; }}
-.section-title {{
-  display:flex; align-items:center; gap:10px;
-  padding:14px 2px 10px;
-  font-size:17px; font-weight:850;
-}}
-.line {{
-  height:1px; flex:1;
-  background:linear-gradient(90deg,rgba(255,255,255,.16),transparent);
-}}
-.list {{ display:grid; gap:9px; }}
-.channel {{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  text-decoration:none;
-  color:var(--text);
-  min-height:58px;
-  padding:12px 13px;
-  border-radius:16px;
-  border:1px solid var(--border);
-  background:linear-gradient(135deg,rgba(18,25,42,.92),rgba(12,17,29,.92));
-  transition:.15s ease;
-}}
-.icon {{
-  width:36px; height:36px; flex:0 0 auto;
-  display:grid; place-items:center;
-  border-radius:12px;
-  background:rgba(245,199,106,.08);
-  border:1px solid rgba(245,199,106,.12);
-  font-size:18px;
-}}
-.name {{ flex:1; min-width:0; font-weight:700; line-height:1.3; }}
-.arrow {{ color:var(--muted); font-size:18px; }}
-.info-grid {{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:10px;
-}}
-.info-card {{
-  display:block;
-  padding:15px;
-  border:1px solid var(--border);
-  border-radius:16px;
-  color:var(--text);
-  text-decoration:none;
-  background:var(--panel);
-}}
-.info-card b {{ display:block; margin-bottom:3px; }}
-.info-card span {{ color:var(--muted); font-size:12px; }}
-.footer {{
-  text-align:center;
-  margin-top:24px;
-  color:var(--muted);
-  font-size:11px;
-}}
-.footer a {{ color:var(--accent); text-decoration:none; }}
-@media(prefers-reduced-motion: reduce) {{
-  .live-dot {{ animation:none; }}
-}}
-@keyframes reportReveal {{
-  from {{ opacity:0; transform:translateY(14px); filter:blur(5px); }}
-  to {{ opacity:1; transform:translateY(0); filter:blur(0); }}
-}}
-.hero-actions {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }}
-.action-btn {{
-  appearance:none; border:1px solid var(--border); border-radius:12px;
-  background:rgba(148,163,184,.07); color:var(--text); padding:9px 12px;
-  font:inherit; font-size:12px; font-weight:750; cursor:pointer;
-  transition:transform .18s ease, background-color .18s ease, border-color .18s ease;
-}}
-.action-btn:hover {{ transform:translateY(-1px); background:rgba(148,163,184,.12); border-color:rgba(125,211,252,.35); }}
-.action-btn:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
-.copy-status {{ min-height:18px; color:var(--good); font-size:12px; margin-top:5px; }}
-.section {{ animation:reportReveal .65s cubic-bezier(.2,1,.2,1) both; }}
-@media (prefers-reduced-motion: reduce) {{
-  *, *::before, *::after {{
-    scroll-behavior:auto !important;
-    animation:none !important;
-    transition:none !important;
-  }}
-}}
-@media print {{
-  body::before, body::after {{ display:none !important; }}
-  .site-nav, .hero-actions, .copy-status {{ display:none !important; }}
-  .section, .hero {{ box-shadow:none !important; break-inside:avoid; }}
-}}
-@media(max-width:650px) {{
-  .quick,.info-grid {{ grid-template-columns:1fr; }}
-  .wrap {{ padding-left:10px; padding-right:10px; }}
-}}
+*{{box-sizing:border-box}}
+html{{scroll-behavior:smooth}}
+body{{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:hidden}}
+body::before{{content:"";position:fixed;inset:0;z-index:-4;background:
+radial-gradient(900px 620px at 8% 2%,rgba(106,89,255,.22),transparent 68%),
+radial-gradient(760px 520px at 94% 10%,rgba(45,216,255,.16),transparent 70%),
+radial-gradient(1000px 680px at 50% 100%,rgba(191,67,255,.10),transparent 72%),
+linear-gradient(180deg,#080918 0%,#050611 55%,#03040a 100%)}}
+body::after{{content:"";position:fixed;inset:-35%;z-index:-3;background:conic-gradient(from 0deg,transparent 0 20%,rgba(154,140,255,.11) 28%,transparent 38% 56%,rgba(94,231,255,.09) 64%,transparent 78%);filter:blur(40px);animation:spin 26s linear infinite;pointer-events:none}}
+.grid{{position:fixed;inset:0;z-index:-2;opacity:.20;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:38px 38px;mask-image:linear-gradient(to bottom,black,transparent 88%)}}
+.float{{position:fixed;width:250px;height:250px;border-radius:50%;z-index:-1;pointer-events:none;filter:blur(8px);opacity:.35}}
+.float.a{{left:-120px;top:22%;background:radial-gradient(circle,rgba(154,140,255,.42),transparent 70%);animation:float1 16s ease-in-out infinite}}
+.float.b{{right:-120px;top:62%;background:radial-gradient(circle,rgba(94,231,255,.34),transparent 70%);animation:float2 20s ease-in-out infinite}}
+.topline{{height:3px;background:linear-gradient(90deg,transparent,var(--a),var(--b),transparent);background-size:200% 100%;animation:flow 5s linear infinite}}
+.wrap{{max-width:1100px;margin:auto;padding:18px 14px 48px}}
+.nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--line);border-radius:16px;background:rgba(8,10,24,.68);backdrop-filter:blur(16px)}}
+.brand{{font-weight:900;letter-spacing:.08em;text-transform:uppercase;font-size:11px}}
+.nav-link{{color:var(--muted);text-decoration:none;font-size:12px;font-weight:800}}
+.hero{{position:relative;overflow:hidden;margin-top:14px;padding:30px 24px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,rgba(15,18,43,.87),rgba(7,9,21,.58));box-shadow:0 30px 90px rgba(0,0,0,.38);backdrop-filter:blur(22px);animation:reveal .8s cubic-bezier(.2,1,.2,1) both}}
+.hero::before{{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent,rgba(255,255,255,.045),transparent);transform:translateX(-110%);animation:sheen 9s ease-in-out infinite;pointer-events:none}}
+.eyebrow{{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:999px;background:rgba(124,244,176,.06);border:1px solid rgba(124,244,176,.14);color:var(--good);font-size:9px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}}
+.dot{{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 16px rgba(124,244,176,.7);animation:pulse 1.8s ease-in-out infinite}}
+h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacing:-.045em}}
+.lead{{max-width:720px;color:#c3c7da;font-size:14px}}
+.cta-row{{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}}
+.cta{{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:10px 13px;border-radius:13px;font-weight:850;font-size:12px;border:1px solid var(--line);color:var(--text);background:rgba(255,255,255,.045);transition:.2s ease}}
+.cta.primary{{background:linear-gradient(135deg,rgba(154,140,255,.23),rgba(94,231,255,.11));border-color:rgba(154,140,255,.28)}}
+.cta:hover{{transform:translateY(-2px);border-color:rgba(154,140,255,.34);background:rgba(255,255,255,.07)}}
+.section{{margin-top:18px;border:1px solid var(--line);border-radius:22px;background:var(--panel);backdrop-filter:blur(18px);box-shadow:0 22px 56px rgba(0,0,0,.22);overflow:hidden;animation:reveal .7s cubic-bezier(.2,1,.2,1) both}}
+.section-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,rgba(255,255,255,.035),transparent)}}
+.section-head small{{display:block;color:var(--a);font-size:9px;font-weight:900;letter-spacing:.14em}}
+.section-head h2{{margin:2px 0 0;font-size:18px}}
+.mini-link{{color:var(--b);text-decoration:none;font-size:11px;font-weight:850}}
+.list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px}}
+.channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
+.channel:hover{{transform:translateY(-3px);border-color:rgba(154,140,255,.30);box-shadow:0 14px 30px rgba(0,0,0,.22)}}
+.channel-icon{{width:36px;height:36px;display:grid;place-items:center;flex:0 0 auto;border-radius:12px;background:rgba(154,140,255,.08);border:1px solid rgba(154,140,255,.13);font-size:18px}}
+.channel-name{{flex:1;min-width:0;font-weight:800}}
+.channel-arrow{{color:var(--muted);font-size:18px}}
+.report-section iframe{{display:block;width:100%;height:1900px;border:0;background:#050611}}
+.footer{{display:flex;justify-content:space-between;gap:12px;margin-top:18px;color:#777d98;font-size:10px;padding:0 4px}}
+.footer b{{color:#b7b8ca}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+@keyframes float1{{0%,100%{{transform:translate3d(0,0,0)}}50%{{transform:translate3d(70px,45px,0) scale(1.08)}}}}
+@keyframes float2{{0%,100%{{transform:translate3d(0,0,0)}}50%{{transform:translate3d(-75px,-30px,0) scale(1.1)}}}}
+@keyframes pulse{{0%,100%{{transform:scale(.85);opacity:.8}}50%{{transform:scale(1.15);opacity:1}}}}
+@keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
+@keyframes sheen{{0%,100%{{transform:translateX(-110%)}}50%{{transform:translateX(100%)}}}}
+@keyframes reveal{{from{{opacity:0;transform:translateY(16px);filter:blur(6px)}}to{{opacity:1;transform:none;filter:none}}}}
+@media(max-width:700px){{.list{{grid-template-columns:1fr}}.hero{{padding:24px 18px;border-radius:22px}}.footer{{flex-direction:column;align-items:flex-start}}.report-section iframe{{height:2050px}}}}
+@media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
 <body>
+<div class="topline"></div><div class="grid"></div><div class="float a"></div><div class="float b"></div>
 <div class="wrap">
+  <nav class="nav">
+    <div class="brand">AniToon Media Info</div>
+    <a class="nav-link" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">Open Bot ↗</a>
+  </nav>
+
   <header class="hero">
-    <div class="kicker">AniToon's</div>
-    <h1>⛩ AniToon's List ⛩</h1>
-    <div class="subtitle">Official channels, groups and social links</div>
-    <div class="quick">
-      <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
+    <span class="eyebrow"><span class="dot"></span> Media intelligence</span>
+    <h1>⛩ AniToon</h1>
+    <div class="lead">A focused media hub for discovering AniToon channels and inspecting video, audio, subtitle and technical metadata.</div>
+    <div class="cta-row">
+      <a class="cta primary" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
+      <a class="cta" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">👥 Community</a>
     </div>
   </header>
 
   {report_embed}
 
   <section class="section">
-    <div class="section-title"><span>📡 Active Channels</span><span class="line"></span></div>
+    <div class="section-head"><div><small>NOW LIVE</small><h2>🎞️ Channels</h2></div></div>
     <div class="list">{current_html}</div>
   </section>
 
   <section class="section">
-    <div class="section-title"><span>✅ Completed Channels of Us</span><span class="line"></span></div>
+    <div class="section-head"><div><small>ARCHIVE</small><h2>✅ Completed collections</h2></div></div>
     <div class="list">{completed_html}</div>
   </section>
 
-  <section class="section">
-    <div class="section-title"><span>👥 Community & Support</span><span class="line"></span></div>
-    <div class="info-grid">
-      <a class="info-card" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">
-        <b>👉 Main Group Chats</b><span>AniToon's Group ↗</span>
-      </a>
-      <a class="info-card" href="https://t.me/Anitoon_edit" target="_blank" rel="noopener noreferrer">
-        <b>👉 BackUp Channel</b><span>@Anitoon_edit ↗</span>
-      </a>
-      <a class="info-card" href="https://t.me/Anitoon_edit/155?single" target="_blank" rel="noopener noreferrer">
-        <b>👉 Tutorial To Clear Ads</b><span>Watch Video ↗</span>
-      </a>
-    </div>
-  </section>
-
-  <section class="section">
-    <div class="section-title"><span>↗️ Follow Us</span><span class="line"></span></div>
-    <div class="info-grid">
-      <a class="info-card" href="https://www.instagram.com/ani_toon_edits?igsh=Y2syejF5bG1wN3ps" target="_blank" rel="noopener noreferrer">
-        <b>Instagram</b><span>@ani_toon_edits ↗</span>
-      </a>
-      <a class="info-card" href="https://youtube.com/@teluguanitoons-a?si=HMMXIAjTbwgyKSZk" target="_blank" rel="noopener noreferrer">
-        <b>YouTube</b><span>Telugu AniToons ↗</span>
-      </a>
-    </div>
-  </section>
-
-  <div class="footer">
-    ⛩ AniToon's • Official Bot & Web
-  </div>
+  <footer class="footer">
+    <span><b>AniToon</b> • Media intelligence</span>
+    <span>Official Bot & Web</span>
+  </footer>
 </div>
-
 </body>
 </html>"""
     return document.encode("utf-8")
+
 
 def web_page(report: Report, report_token: str | None = None) -> bytes:
     filename = html.escape(report.filename or "Telegram media file")
