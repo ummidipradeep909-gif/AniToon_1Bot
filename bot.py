@@ -3459,246 +3459,114 @@ def web_page(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#070816">
-<title>AniToon Media Intelligence — {filename}</title>
+<title>AniToon • {filename}</title>
 <style>
 :root {{
-  color-scheme: dark;
-  --bg:#050611;
-  --panel:rgba(12,15,34,.72);
-  --panel-strong:rgba(15,19,43,.88);
-  --line:rgba(255,255,255,.10);
-  --line-strong:rgba(139,124,255,.32);
-  --text:#f7f7fb;
-  --muted:#9ea4bf;
-  --accent:#9a8cff;
-  --accent-2:#5ee7ff;
-  --good:#7cf4b0;
-  --shadow:0 28px 80px rgba(0,0,0,.42);
+  color-scheme:dark;
+  --bg:#050611;--panel:rgba(12,15,34,.76);--line:rgba(255,255,255,.10);
+  --line2:rgba(155,140,255,.28);--text:#f7f7fb;--muted:#9fa6c1;
+  --accent:#9b8cff;--cyan:#5ee7ff;--good:#7cf4b0;--shadow:0 28px 80px rgba(0,0,0,.38);
 }}
-* {{ box-sizing:border-box; }}
-html {{ scroll-behavior:smooth; }}
-body {{
-  margin:0;
-  min-height:100vh;
-  color:var(--text);
-  background:var(--bg);
-  font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  overflow-x:hidden;
-}}
-.anime-wallpaper {{ position:fixed; inset:0; z-index:-5; background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat; opacity:.30; filter:saturate(1.08) contrast(1.04); transform:scale(1.03); animation:wallpaperZoom 20s ease-in-out infinite alternate; pointer-events:none; }}
-body::before {{
-  content:"";
-  position:fixed;
-  inset:0;
-  z-index:-4;
-  background:
-    radial-gradient(900px 620px at 8% 5%, rgba(110,95,255,.24), transparent 68%),
-    radial-gradient(780px 560px at 92% 10%, rgba(49,224,255,.17), transparent 70%),
-    radial-gradient(900px 680px at 50% 100%, rgba(176,76,255,.12), transparent 72%),
-    linear-gradient(180deg,#070816 0%,#050611 55%,#03040b 100%);
-}}
-body::after {{
-  content:"";
-  position:fixed;
-  inset:-35%;
-  z-index:-3;
-  background:
-    conic-gradient(from 0deg at 50% 50%, transparent 0 18%, rgba(114,99,255,.12) 25%, transparent 35% 55%, rgba(70,229,255,.10) 63%, transparent 75% 100%);
-  filter:blur(34px);
-  animation:aurora 24s linear infinite;
-  pointer-events:none;
-}}
-.bg-grid {{
-  position:fixed;
-  inset:0;
-  z-index:-2;
-  opacity:.23;
-  background-image:
-    linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
-  background-size:36px 36px;
-  mask-image:linear-gradient(to bottom,black 0%,transparent 85%);
-}}
-.orb {{
-  position:fixed;
-  width:260px;height:260px;border-radius:50%;
-  z-index:-1;pointer-events:none;
-  filter:blur(2px);
-  opacity:.42;
-  mix-blend-mode:screen;
-}}
-.orb.a {{
-  top:12%;left:-110px;
-  background:radial-gradient(circle at 50% 50%,rgba(157,122,255,.38),transparent 68%);
-  animation:floatA 16s ease-in-out infinite;
-}}
-.orb.b {{
-  top:58%;right:-120px;
-  background:radial-gradient(circle at 50% 50%,rgba(56,215,255,.28),transparent 68%);
-  animation:floatB 20s ease-in-out infinite;
-}}
-.top-glow {{
-  position:fixed;top:0;left:0;right:0;height:3px;z-index:20;
-  background:linear-gradient(90deg,transparent,var(--accent),var(--accent-2),transparent);
-  background-size:200% 100%;
-  animation:scanline 5s linear infinite;
-}}
-.wrap {{ max-width:1120px; margin:auto; padding:22px 16px 54px; }}
-.nav {{
-  display:flex;justify-content:space-between;align-items:center;gap:12px;
-  margin-bottom:16px;padding:10px 13px;
-  border:1px solid var(--line);border-radius:16px;
-  background:rgba(9,11,25,.66);backdrop-filter:blur(18px);
-}}
-.nav .brand {{font-weight:900;letter-spacing:.08em;text-transform:uppercase;font-size:11px;color:#dddafe;}}
-.nav a {{color:var(--muted);text-decoration:none;font-size:12px;font-weight:750;}}
-.nav-tools{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
-.display-controls{{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.035);backdrop-filter:blur(10px)}}
-.display-controls button{{border:0;border-radius:8px;padding:6px 8px;background:transparent;color:var(--text);font:800 11px/1 system-ui;cursor:pointer}}
-.display-controls button:hover{{background:rgba(255,255,255,.08)}}
-.display-controls #zoom-label{{min-width:44px;color:var(--muted)}}
-.hero {{
-  position:relative;overflow:hidden;
-  padding:26px;border:1px solid var(--line);border-radius:28px;
-  background:linear-gradient(145deg,rgba(15,18,43,.86),rgba(8,10,23,.60));
-  box-shadow:var(--shadow);
-  backdrop-filter:blur(22px);
-  animation:reveal .75s cubic-bezier(.2,1,.2,1) both;
-}}
-.hero::before {{
-  content:"";position:absolute;inset:0;pointer-events:none;
-  background:
-    linear-gradient(110deg,transparent 0%,rgba(255,255,255,.04) 28%,transparent 48%),
-    radial-gradient(420px 180px at 0% 0%,rgba(154,140,255,.15),transparent 72%);
-  transform:translateX(-20%);
-  animation:sheen 9s ease-in-out infinite;
-}}
-.eyebrow {{
-  display:inline-flex;align-items:center;gap:8px;
-  padding:7px 10px;border:1px solid rgba(124,244,176,.16);border-radius:999px;
-  background:rgba(124,244,176,.07);color:var(--good);
-  font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;
-}}
-.dot {{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 16px rgba(124,244,176,.7);animation:pulse 1.8s ease-in-out infinite;}}
-h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-spacing:-.035em; }}
-.file {{color:#c7cbe1;overflow-wrap:anywhere;font-size:13px;max-width:850px;}}
-.hero-meta {{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}}
-.pill {{display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:11px;}}
-.summary {{
-  display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:18px;
-}}
-.stat {{
-  position:relative;padding:14px;border:1px solid var(--line);border-radius:17px;
-  background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.015));
-  overflow:hidden;transition:transform .2s ease,border-color .2s ease,background .2s ease;
-}}
-.stat:hover {{transform:translateY(-3px);border-color:var(--line-strong);background:rgba(255,255,255,.065);}}
-.stat::after {{
-  content:"";position:absolute;width:70px;height:70px;right:-20px;top:-24px;border-radius:50%;
-  background:radial-gradient(circle,rgba(154,140,255,.17),transparent 70%);
-}}
-.stat b {{display:block;font-size:21px;letter-spacing:-.02em;}}
-.stat span {{color:var(--muted);font-size:11px;}}
-.section {{
-  margin-top:16px;border:1px solid var(--line);border-radius:22px;
-  background:var(--panel);backdrop-filter:blur(18px);box-shadow:0 20px 50px rgba(0,0,0,.20);
-  overflow:hidden;animation:reveal .7s cubic-bezier(.2,1,.2,1) both;
-}}
-.section:nth-of-type(2){{animation-delay:.08s}} .section:nth-of-type(3){{animation-delay:.14s}}
-.section:nth-of-type(4){{animation-delay:.20s}} .section:nth-of-type(5){{animation-delay:.26s}}
-.section-head {{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:16px 18px;border-bottom:1px solid var(--line);
-  background:linear-gradient(90deg,rgba(255,255,255,.035),transparent);
-}}
-.section-head h2 {{margin:0;font-size:17px;letter-spacing:-.02em;}}
-.section-body {{padding:14px;}}
-.track-card {{
-  display:flex;gap:14px;padding:16px;border:1px solid var(--line);border-radius:18px;
-  background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));
-  margin-bottom:10px;transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;
-}}
-.track-card:last-child {{margin-bottom:0;}}
-.track-card:hover {{transform:translateY(-2px);border-color:rgba(154,140,255,.30);box-shadow:0 16px 35px rgba(0,0,0,.22);}}
-.track-orb {{
-  width:46px;height:46px;border-radius:15px;display:grid;place-items:center;flex:0 0 auto;
-  background:radial-gradient(circle at 30% 20%,rgba(154,140,255,.24),rgba(94,231,255,.08));
-  border:1px solid rgba(154,140,255,.20);font-size:20px;
-}}
-.track-content {{min-width:0;flex:1;}}
-.track-heading {{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}}
-.track-number {{color:var(--accent);font-size:10px;font-weight:900;letter-spacing:.12em;}}
-.track-heading h3 {{margin:2px 0 1px;font-size:16px;overflow-wrap:anywhere;}}
-.track-heading p {{margin:0;color:var(--muted);font-size:11px;}}
-.badges {{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;}}
-.badge {{padding:4px 7px;border-radius:999px;border:1px solid rgba(124,244,176,.15);background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:900;letter-spacing:.08em;}}
-.spec-grid {{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px;}}
-.spec {{display:flex;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:11px;background:rgba(255,255,255,.035);}}
-.spec span {{color:var(--muted);font-size:11px;}}
-.spec strong {{font-size:11px;text-align:right;overflow-wrap:anywhere;}}
-.empty-state {{display:flex;gap:12px;align-items:center;padding:14px;border:1px dashed rgba(255,255,255,.10);border-radius:16px;background:rgba(255,255,255,.02);}}
-.empty-icon {{font-size:20px;opacity:.7;}}
-.empty-state strong {{font-size:13px;}}
-.empty-state p {{margin:2px 0 0;color:var(--muted);font-size:11px;}}
-.preview-grid {{display:grid;grid-template-columns:minmax(0,760px);justify-content:start;gap:10px;padding:14px;}}
-.preview-loading {{display:grid;grid-template-columns:minmax(0,760px);gap:10px;grid-column:1/-1}}
-.preview-loading span {{display:block;aspect-ratio:16/9;border-radius:16px;background:linear-gradient(90deg,rgba(255,255,255,.035),rgba(255,255,255,.08),rgba(255,255,255,.035));background-size:200% 100%;animation:loading 1.4s linear infinite}}
-.preview-grid {{display:grid;grid-template-columns:minmax(0,760px);justify-content:start;gap:10px;padding:14px;}}
-.preview-card {{overflow:hidden;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.025);transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;}}
-.preview-card:hover {{transform:translateY(-3px);border-color:rgba(94,231,255,.28);box-shadow:0 14px 30px rgba(0,0,0,.22);}}
-.preview-frame {{aspect-ratio:16/9;background:#070816;overflow:hidden;}}
-.preview-frame img {{display:block;width:100%;height:100%;object-fit:cover;}}
-.preview-meta {{display:flex;justify-content:space-between;gap:6px;padding:9px 10px;font-size:10px;}}
-.preview-meta b {{font-size:11px;}}
-.preview-meta span {{color:var(--muted);text-align:right;}}
-.tech-grid {{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;}}
-.tech {{
-  padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.028);
-}}
-.tech small {{display:block;color:var(--muted);font-size:10px;margin-bottom:4px;}}
-.tech b {{display:block;font-size:12px;overflow-wrap:anywhere;}}
-.footer {{
-  display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:18px;
-  color:#7f849d;font-size:10px;padding:0 3px;
-}}
-.footer strong {{color:#b9bad0;}}
-.countdown {{color:var(--accent-2);font-weight:900;}}
-.reveal-line {{height:1px;background:linear-gradient(90deg,transparent,rgba(154,140,255,.45),transparent);margin:2px 0 0;}}
-@keyframes wallpaperZoom {{from {{transform:scale(1.03)}}to {{transform:scale(1.08)}}}}
-@keyframes aurora {{to {{transform:rotate(360deg)}}}}
-@keyframes floatA {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(80px,40px,0) scale(1.12)}}}}
-@keyframes floatB {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(-80px,-30px,0) scale(1.10)}}}}
-@keyframes pulse {{0%,100%{{transform:scale(.85);opacity:.8}}50%{{transform:scale(1.15);opacity:1}}}}
-@keyframes scanline {{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
-@keyframes sheen {{0%,100%{{transform:translateX(-25%)}}50%{{transform:translateX(45%)}}}}
-@keyframes loading{{from{{background-position:200% 0}}to{{background-position:-200% 0}}}}
-@keyframes reveal {{from{{opacity:0;transform:translateY(18px);filter:blur(7px)}}to{{opacity:1;transform:none;filter:none}}}}
-@media(max-width:860px){{.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:1000px){{.preview-grid{{grid-template-columns:minmax(0,1fr)}}}}
-@media(max-width:620px){{.preview-grid{{grid-template-columns:1fr}}.wrap{{padding:12px 10px 35px}}.hero{{padding:20px;border-radius:22px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-card{{padding:13px}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.footer{{flex-direction:column;align-items:flex-start}}}}
-html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.78);--panel-strong:rgba(255,255,255,.88);--line:rgba(37,45,80,.12);--line-strong:rgba(103,87,232,.28);--text:#18203b;--muted:#5c6686;--accent:#6757e8;--accent-2:#0b7ea0;--good:#128b52;--shadow:0 24px 65px rgba(44,55,100,.14)}}
-html[data-theme="light"] body::before{{background:linear-gradient(180deg,rgba(247,249,255,.88),rgba(228,234,255,.84))}}
-html[data-theme="light"] body::after{{opacity:.18}}
-html[data-theme="light"] .nav,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.74);box-shadow:0 22px 50px rgba(44,55,100,.12)}}
-html[data-theme="light"] .track-card,html[data-theme="light"] .stat,html[data-theme="light"] .tech,html[data-theme="light"] .spec{{background:rgba(255,255,255,.66)}}
-html[data-theme="light"] .file,html[data-theme="light"] .lead{{color:#4e5878}}
-html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
+*{{box-sizing:border-box}}
+html{{scroll-behavior:smooth}}
+body{{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-x:hidden}}
+.anime-wallpaper{{position:fixed;inset:0;z-index:-6;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.22;filter:saturate(1.05) contrast(1.03);transform:scale(1.04);animation:wall 24s ease-in-out infinite alternate;pointer-events:none}}
+body::before{{content:"";position:fixed;inset:0;z-index:-5;background:radial-gradient(780px 520px at 0 0,rgba(126,107,255,.20),transparent 70%),radial-gradient(700px 480px at 100% 10%,rgba(42,217,255,.12),transparent 72%),linear-gradient(180deg,#070816 0%,#050611 52%,#03040a 100%);pointer-events:none}}
+.bg-grid{{position:fixed;inset:0;z-index:-4;opacity:.15;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 88%);pointer-events:none}}
+.topline{{position:fixed;top:0;left:0;right:0;height:3px;z-index:40;background:linear-gradient(90deg,transparent,var(--accent),var(--cyan),transparent);background-size:200% 100%;animation:scan 5s linear infinite}}
+.wrap{{max-width:1180px;margin:auto;padding:18px 16px 56px}}
+.nav{{position:sticky;top:10px;z-index:30;display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;padding:10px 12px;border:1px solid var(--line);border-radius:18px;background:rgba(8,10,23,.72);backdrop-filter:blur(20px);box-shadow:0 14px 36px rgba(0,0,0,.16)}}
+.brand{{font-size:11px;font-weight:950;letter-spacing:.11em;text-transform:uppercase;color:#e5e0ff}}
+.nav-tools{{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}}
+.nav a{{color:var(--muted);text-decoration:none;font-size:11px;font-weight:850}}
+.controls{{display:flex;align-items:center;gap:3px;padding:3px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.035)}}
+.controls button{{border:0;border-radius:8px;background:transparent;color:var(--text);padding:6px 8px;font:850 11px/1 system-ui;cursor:pointer}}
+.controls button:hover{{background:rgba(255,255,255,.08)}}
+.controls #zoom-label{{min-width:44px;color:var(--muted)}}
+.hero{{position:relative;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:18px;overflow:hidden;padding:20px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:var(--shadow);backdrop-filter:blur(22px)}}
+.hero-copy{{min-width:0;padding:5px 2px}}
+.eyebrow{{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid rgba(124,244,176,.15);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.13em;text-transform:uppercase}}
+.eyebrow i{{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 14px rgba(124,244,176,.70);animation:pulse 1.8s ease-in-out infinite}}
+h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-spacing:-.045em}}
+.file{{max-width:850px;color:#cbd0e4;font-size:13px;overflow-wrap:anywhere}}
+.hero-pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px}}
+.pill{{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:10px}}
+.countdown{{color:var(--cyan);font-weight:950}}
+.hero-media{{position:relative;min-height:230px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
+.hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.58));pointer-events:none}}
+.hero-media img{{display:block;width:100%;height:100%;min-height:230px;object-fit:cover}}
+.media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
+.summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
+.stat{{padding:12px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.03);transition:.2s ease}}
+.stat:hover{{transform:translateY(-2px);border-color:var(--line2)}}
+.stat b{{display:block;font-size:18px;letter-spacing:-.02em;overflow-wrap:anywhere}}
+.stat span{{color:var(--muted);font-size:10px}}
+.quick{{position:sticky;top:78px;z-index:20;display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:7px;border:1px solid var(--line);border-radius:15px;background:rgba(7,9,21,.60);backdrop-filter:blur(16px)}}
+.quick a{{padding:6px 9px;border-radius:9px;color:var(--muted);text-decoration:none;font-size:10px;font-weight:900}}
+.quick a:hover{{background:rgba(255,255,255,.06);color:var(--text)}}
+.section{{margin-top:12px;border:1px solid var(--line);border-radius:20px;background:var(--panel);backdrop-filter:blur(18px);box-shadow:0 18px 46px rgba(0,0,0,.18);overflow:hidden}}
+.section summary{{list-style:none;cursor:pointer}}
+.section summary::-webkit-details-marker{{display:none}}
+.section-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,rgba(255,255,255,.035),transparent)}}
+.section-head h2{{margin:0;font-size:16px;letter-spacing:-.02em}}
+.chev{{color:var(--muted);transition:transform .2s ease}}
+.section[open] .chev{{transform:rotate(180deg)}}
+.section-body{{padding:12px}}
+.toolbar{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
+.search{{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.035);color:var(--text);outline:none;font:700 11px system-ui}}
+.search:focus{{border-color:var(--line2);box-shadow:0 0 0 3px rgba(155,140,255,.08)}}
+.track-card{{display:flex;gap:12px;padding:13px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.032),rgba(255,255,255,.012));margin-bottom:8px;transition:.18s ease}}
+.track-card:last-child{{margin-bottom:0}}
+.track-card:hover{{transform:translateY(-1px);border-color:rgba(155,140,255,.28)}}
+.track-orb{{width:42px;height:42px;flex:0 0 auto;border-radius:13px;display:grid;place-items:center;background:radial-gradient(circle at 30% 20%,rgba(155,140,255,.22),rgba(94,231,255,.07));border:1px solid rgba(155,140,255,.18);font-size:18px}}
+.track-content{{min-width:0;flex:1}}
+.track-heading{{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}}
+.track-number{{color:var(--accent);font-size:9px;font-weight:950;letter-spacing:.12em}}
+.track-heading h3{{margin:2px 0 1px;font-size:14px;overflow-wrap:anywhere}}
+.track-heading p{{margin:0;color:var(--muted);font-size:10px}}
+.badges{{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}}
+.badge{{padding:4px 6px;border-radius:999px;border:1px solid rgba(124,244,176,.14);background:rgba(124,244,176,.05);color:var(--good);font-size:8px;font-weight:950;letter-spacing:.07em}}
+.spec-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:10px}}
+.spec{{display:flex;justify-content:space-between;gap:10px;padding:8px 9px;border-radius:10px;background:rgba(255,255,255,.028)}}
+.spec span{{color:var(--muted);font-size:10px}}
+.spec strong{{font-size:10px;text-align:right;overflow-wrap:anywhere}}
+.empty{{padding:14px;border:1px dashed rgba(255,255,255,.11);border-radius:14px;color:var(--muted);font-size:11px}}
+.preview-section{{display:none}}
+.preview-section.visible{{display:block}}
+.preview-card{{overflow:hidden;border:1px solid var(--line2);border-radius:18px;background:rgba(255,255,255,.025)}}
+.preview-frame{{aspect-ratio:16/9;background:#070816;overflow:hidden}}
+.preview-frame img{{display:block;width:100%;height:100%;object-fit:cover}}
+.preview-meta{{display:flex;justify-content:space-between;gap:8px;padding:9px 11px;font-size:10px}}
+.preview-meta span{{color:var(--muted);text-align:right}}
+.tech-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
+.tech{{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.028)}}
+.tech small{{display:block;color:var(--muted);font-size:9px;margin-bottom:4px}}
+.tech b{{display:block;font-size:11px;overflow-wrap:anywhere}}
+.footer{{display:flex;justify-content:space-between;gap:10px;margin-top:15px;padding:0 3px;color:#777e9a;font-size:9px}}
+.footer strong{{color:#bdc2d8}}
+html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.80);--line:rgba(37,45,80,.12);--line2:rgba(103,87,232,.27);--text:#18203b;--muted:#5d6788;--accent:#6757e8;--cyan:#0b7ea0;--good:#128b52;--shadow:0 24px 65px rgba(44,55,100,.14)}}
+html[data-theme="light"] body::before{{background:linear-gradient(180deg,rgba(247,249,255,.90),rgba(228,234,255,.88))}}
+html[data-theme="light"] .anime-wallpaper{{opacity:.12}}
+html[data-theme="light"] .nav,html[data-theme="light"] .quick,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.78)}}
+html[data-theme="light"] .file{{color:#4e5878}}
+html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
+@keyframes wall{{from{{transform:scale(1.04)}}to{{transform:scale(1.08)}}}}
+@keyframes scan{{0%{{background-position:0%}}100%{{background-position:200%}}}}
+@keyframes pulse{{0%,100%{{transform:scale(.86);opacity:.78}}50%{{transform:scale(1.16);opacity:1}}}}
+@media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media,.hero-media img{{min-height:210px}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media,.hero-media img{{min-height:180px}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
 <body>
-<div class="anime-wallpaper"></div>
-<div class="top-glow"></div>
-<div class="bg-grid"></div>
-<div class="orb a"></div><div class="orb b"></div>
-
+<div class="anime-wallpaper"></div><div class="bg-grid"></div><div class="topline"></div>
 <div class="wrap">
   <nav class="nav">
-    <div class="brand">AniToon Media Intelligence</div>
+    <div class="brand">AniToon • Media Intelligence</div>
     <div class="nav-tools">
       <a href="/">Home ↗</a>
-      <div class="display-controls" aria-label="Display controls">
-        <button type="button" id="theme-toggle" title="Toggle dark/light theme">☀️ Light</button>
+      <div class="controls">
+        <button type="button" id="theme-toggle">☀️ Light</button>
         <button type="button" id="zoom-out" title="Zoom out">−</button>
         <button type="button" id="zoom-label" title="Reset zoom">100%</button>
         <button type="button" id="zoom-in" title="Zoom in">+</button>
@@ -3707,62 +3575,68 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
   </nav>
 
   <header class="hero">
-    <span class="eyebrow"><span class="dot"></span> Analysis Complete</span>
-    <h1>Media Metadata Report</h1>
-    <div class="file">{filename}</div>
-    {f'<div class="pill" style="margin-top:10px;display:inline-flex;">🎞️ {esc(title)}</div>' if title else ''}
-    <div class="hero-meta">
-      <span class="pill">📦 {esc(container_name)}</span>
-      <span class="pill">📏 {esc(size_text)}</span>
-      <span class="pill">⏳ Expires in <span id="countdown" class="countdown">--:--</span></span>
+    <div class="hero-copy">
+      <span class="eyebrow"><i></i> Analysis Complete</span>
+      <h1>Media Intelligence</h1>
+      <div class="file">{filename}</div>
+      {f'<div class="hero-pills"><span class="pill">🎞️ {esc(title)}</span></div>' if title else ''}
+      <div class="hero-pills">
+        <span class="pill">📦 {esc(container_name)}</span>
+        <span class="pill">📏 {esc(size_text)}</span>
+        <span class="pill">⏱️ <span id="countdown" class="countdown">--:--</span></span>
+      </div>
     </div>
-
-    <div class="summary">
-      <div class="stat"><b>{len(video)}</b><span>Video</span></div>
-      <div class="stat"><b>{len(audio)}</b><span>Audio</span></div>
-      <div class="stat"><b>{len(subtitles)}</b><span>Subtitles</span></div>
-      <div class="stat"><b>{esc(quality)}</b><span>Quality</span></div>
-      <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
-    </div>
+    {f'<div class="hero-media" id="hero-media"><img src="data:image/jpeg;base64,{str(previews[0].get("data") or "")}" alt="Telegram thumbnail" loading="eager"><span class="media-label">🎞️ Telegram thumbnail</span></div>' if previews and previews[0].get("data") else ''}
   </header>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>🎬 Video</h2>
-      <span class="pill">{esc(primary_codec)}</span>
-    </div>
-    <div class="section-body">{track_cards(video, "Video")}</div>
-  </section>
+  <div class="summary" id="overview">
+    <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
+    <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
+    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
+    <div class="stat"><b>{esc(quality)}</b><span>Primary quality</span></div>
+    <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
+  </div>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>🎧 Audio</h2>
-      <span class="pill">{len(audio)} track{'s' if len(audio) != 1 else ''}</span>
-    </div>
-    <div class="section-body">{track_cards(audio, "Audio")}</div>
-  </section>
+  <nav class="quick" aria-label="Quick navigation">
+    <a href="#overview">Overview</a>
+    {f'<a href="#preview-section" id="preview-nav">Thumbnail</a>' if video else ''}
+    <a href="#video-section">Video</a>
+    <a href="#audio-section">Audio</a>
+    <a href="#subs-section">Subtitles</a>
+    <a href="#technical-section">Technical</a>
+  </nav>
 
-  <section class="section">
-    <div class="section-head">
-      <h2>💬 Subtitles</h2>
-      <span class="pill">{len(subtitles)} track{'s' if len(subtitles) != 1 else ''}</span>
-    </div>
-    <div class="section-body">{track_cards(subtitles, "Subtitle")}</div>
-  </section>
-
-  {f'''<section class="section">
-    <div class="section-head">
-      <h2>🎞️ Video previews</h2>
-      <span id="preview-status" class="pill">1 preview</span>
-    </div>
-    <div id="preview-grid" class="preview-grid">{preview_cards or '<div class="preview-loading"><span></span></div>'}</div>
+  {f'''<section id="preview-section" class="section preview-section{' visible' if preview_cards else ''}">
+    <div class="section-head"><h2>🎞️ Thumbnail preview</h2><span class="pill">1 image</span></div>
+    <div class="section-body" id="preview-grid">{preview_cards}</div>
   </section>''' if video else ""}
 
-  <section class="section">
-    <div class="section-head">
-      <h2>⚙️ Technical</h2>
-      <span class="pill">ID {report_id}</span>
+  <details id="video-section" class="section" open>
+    <summary class="section-head"><h2>🎬 Video</h2><span class="pill">{len(video)} track{'s' if len(video)!=1 else ''} <span class="chev">⌄</span></span></summary>
+    <div class="section-body">
+      <div class="toolbar"><input class="search" data-filter="video" placeholder="Filter video tracks…"></div>
+      <div data-track-list="video">{track_cards(video,"Video")}</div>
     </div>
+  </details>
+
+  <details id="audio-section" class="section" open>
+    <summary class="section-head"><h2>🎧 Audio</h2><span class="pill">{len(audio)} track{'s' if len(audio)!=1 else ''} <span class="chev">⌄</span></span></summary>
+    <div class="section-body">
+      <div class="toolbar"><input class="search" data-filter="audio" placeholder="Filter audio by language, codec, name…"></div>
+      <div data-track-list="audio">{track_cards(audio,"Audio")}</div>
+    </div>
+  </details>
+
+  <details id="subs-section" class="section" open>
+    <summary class="section-head"><h2>💬 Subtitles</h2><span class="pill">{len(subtitles)} track{'s' if len(subtitles)!=1 else ''} <span class="chev">⌄</span></span></summary>
+    <div class="section-body">
+      <div class="toolbar"><input class="search" data-filter="subtitle" placeholder="Filter subtitle tracks…"></div>
+      <div data-track-list="subtitle">{track_cards(subtitles,"Subtitle")}</div>
+    </div>
+  </details>
+
+  <details id="technical-section" class="section" open>
+    <summary class="section-head"><h2>⚙️ Technical</h2><span class="pill">ID {report_id} <span class="chev">⌄</span></span></summary>
     <div class="section-body">
       <div class="tech-grid">
         <div class="tech"><small>Container</small><b>{esc(container_name)}</b></div>
@@ -3773,112 +3647,84 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.78)}}
         <div class="tech"><small>Metadata sampled</small><b>{esc(sampled_text)}</b></div>
       </div>
     </div>
-  </section>
+  </details>
 
-  <div class="footer">
-    <span><strong>AniToon</strong> • Media intelligence</span>
-    <span>Generated {generated_text} • Secure report link</span>
-  </div>
+  <div class="footer"><span><strong>AniToon</strong> • Advanced media report</span><span>Generated {generated_text} • Secure report</span></div>
 </div>
 
 <script>
 (() => {{
-  const expiresAt = {int(expires_at.timestamp() * 1000) if expires_at else 0};
+  const expiresAt = {int(expires_at.timestamp()*1000) if expires_at else 0};
   const countdown = document.getElementById("countdown");
   const tick = () => {{
     if (!countdown) return;
-    if (!expiresAt) {{
-      countdown.textContent = "ACTIVE";
-      return;
-    }}
-    const left = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-    const m = Math.floor(left / 60);
-    const s = left % 60;
-    countdown.textContent = String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
-    if (left > 0) setTimeout(tick,1000);
-    else countdown.textContent = "EXPIRED";
+    if (!expiresAt) {{ countdown.textContent="ACTIVE"; return; }}
+    const left = Math.max(0, Math.floor((expiresAt-Date.now())/1000));
+    countdown.textContent = String(Math.floor(left/60)).padStart(2,"0")+":"+String(left%60).padStart(2,"0");
+    if(left>0) setTimeout(tick,1000); else countdown.textContent="EXPIRED";
   }};
   tick();
 }})();
 
 (() => {{
-  const token = "{html.escape(report_token or "")}";
-  const grid = document.getElementById("preview-grid");
-  const status = document.getElementById("preview-status");
-  if (!token || !grid) return;
-
-  const render = (items) => {{
-    const cards = items.slice(0,1).map((p, i) => {{
-      const ratio = Number(p.ratio || 0);
-      const previewLabel = String(p.label || "").trim() || (ratio ? ratio + "%" : "Telegram thumbnail");
-      const seconds = Math.max(0, Math.floor(Number(p.seconds || 0)));
-      const mm = Math.floor(seconds / 60);
-      const ss = seconds % 60;
-      const stamp = mm >= 60
-        ? Math.floor(mm / 60) + ":" + String(mm % 60).padStart(2,"0") + ":" + String(ss).padStart(2,"0")
-        : mm + ":" + String(ss).padStart(2,"0");
-      return '<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,' +
-        String(p.data || '') + '" alt="Video preview ' + (i + 1) + '" loading="lazy"></div>' +
-        '<div class="preview-meta"><b>Preview ' + (i + 1) + '</b><span>' + previewLabel + ' • ' + stamp + '</span></div></article>';
-    }}).join("");
-    if (cards) {{
-      grid.innerHTML = cards;
-      if (status) status.textContent = items.length ? "1 snapshot" : "Waiting…";
-    }}
-  }};
-
-  let attempts = 0;
-  const poll = async () => {{
-    if (attempts++ > 20) {{
-      if (status) status.textContent = "Preview unavailable";
-      return;
-    }}
-    try {{
-      const response = await fetch("/preview/" + encodeURIComponent(token), {{cache:"no-store"}});
-      if (response.ok) {{
-        const payload = await response.json();
-        if (payload.previews && payload.previews.length) {{
-          render(payload.previews);
-          if (payload.ready) return;
-        }}
-      }}
-    }} catch (_) {{}}
-    setTimeout(poll, 1500);
-  }};
-  poll();
+  const root=document.documentElement, wrap=document.querySelector(".wrap");
+  const themeBtn=document.getElementById("theme-toggle"), zo=document.getElementById("zoom-out"), zi=document.getElementById("zoom-in"), zl=document.getElementById("zoom-label");
+  const read=(k,f)=>{{try{{return localStorage.getItem(k)??f}}catch(_){{return f}}}};
+  const write=(k,v)=>{{try{{localStorage.setItem(k,v)}}catch(_){{}}}};
+  const applyTheme=t=>{{root.dataset.theme=t;if(themeBtn)themeBtn.textContent=t==="light"?"🌙 Dark":"☀️ Light";write("anitoon-theme",t)}};
+  const applyZoom=v=>{{const z=Math.max(.80,Math.min(1.20,Number(v)||1));if(wrap)wrap.style.zoom=z;if(zl)zl.textContent=Math.round(z*100)+"%";write("anitoon-zoom",String(z))}};
+  applyTheme(read("anitoon-theme","dark")==="light"?"light":"dark"); applyZoom(Number(read("anitoon-zoom","1")));
+  themeBtn?.addEventListener("click",()=>applyTheme(root.dataset.theme==="light"?"dark":"light"));
+  zo?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))-.10));
+  zi?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))+.10));
+  zl?.addEventListener("click",()=>applyZoom(1));
 }})();
 
 (() => {{
-  const root = document.documentElement;
-  const wrap = document.querySelector(".wrap");
-  const themeBtn = document.getElementById("theme-toggle");
-  const zoomOut = document.getElementById("zoom-out");
-  const zoomIn = document.getElementById("zoom-in");
-  const zoomLabel = document.getElementById("zoom-label");
-  const read = (key, fallback) => {{ try {{ return localStorage.getItem(key) ?? fallback; }} catch (_) {{ return fallback; }} }};
-  const write = (key, value) => {{ try {{ localStorage.setItem(key, value); }} catch (_) {{}} }};
-  const applyTheme = (theme) => {{
-    root.dataset.theme = theme;
-    if (themeBtn) themeBtn.textContent = theme === "light" ? "🌙 Dark" : "☀️ Light";
-    write("anitoon-theme", theme);
+  document.querySelectorAll("[data-filter]").forEach(input=>{{
+    input.addEventListener("input",()=>{{
+      const q=input.value.trim().toLowerCase(), key=input.dataset.filter;
+      const list=document.querySelector('[data-track-list="'+key+'"]');
+      if(!list)return;
+      list.querySelectorAll(".track-card").forEach(card=>{{card.style.display=!q||card.textContent.toLowerCase().includes(q)?"":"none"}});
+    }});
+  }});
+}})();
+
+(() => {{
+  const token="{html.escape(report_token or "")}", section=document.getElementById("preview-section"), grid=document.getElementById("preview-grid");
+  if(!token||!section||!grid)return;
+  const render=item=>{{
+    if(!item||!item.data)return;
+    const label=String(item.label||"").trim()||"Telegram thumbnail";
+    grid.innerHTML='<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,'+String(item.data)+'" alt="Telegram thumbnail" loading="lazy"></div><div class="preview-meta"><b>Thumbnail</b><span>'+label+'</span></div></article>';
+    section.classList.add("visible");
+    if(!document.getElementById("hero-media")){{
+      const hero=document.querySelector(".hero");
+      if(hero){{
+        const media=document.createElement("div"); media.className="hero-media"; media.id="hero-media";
+        media.innerHTML='<img src="data:image/jpeg;base64,'+String(item.data)+'" alt="Telegram thumbnail" loading="eager"><span class="media-label">🎞️ '+label+'</span>';
+        hero.appendChild(media);
+      }}
+    }}
   }};
-  const applyZoom = (value) => {{
-    const zoom = Math.max(0.80, Math.min(1.20, Number(value) || 1));
-    if (wrap) wrap.style.zoom = zoom;
-    if (zoomLabel) zoomLabel.textContent = Math.round(zoom * 100) + "%";
-    write("anitoon-zoom", String(zoom));
+  let attempts=0;
+  const poll=async()=>{{
+    if(attempts++>12)return;
+    try{{
+      const r=await fetch("/preview/"+encodeURIComponent(token),{{cache:"no-store"}});
+      if(r.ok){{
+        const p=await r.json();
+        if(p.previews&&p.previews.length){{render(p.previews[0]);return;}}
+      }}
+    }}catch(_ ){{}}
+    setTimeout(poll,1200);
   }};
-  applyTheme(read("anitoon-theme", "dark") === "light" ? "light" : "dark");
-  applyZoom(Number(read("anitoon-zoom", "1")));
-  themeBtn?.addEventListener("click", () => applyTheme(root.dataset.theme === "light" ? "dark" : "light"));
-  zoomOut?.addEventListener("click", () => applyZoom(Number(read("anitoon-zoom","1")) - 0.10));
-  zoomIn?.addEventListener("click", () => applyZoom(Number(read("anitoon-zoom","1")) + 0.10));
-  zoomLabel?.addEventListener("click", () => applyZoom(1));
+  poll();
 }})();
 </script>
 </body>
-</html>"""
-    return document.encode("utf-8")
+</html>"""    return document.encode("utf-8")
 
 
 async def health_server():
