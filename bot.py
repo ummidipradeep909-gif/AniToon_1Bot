@@ -1221,15 +1221,19 @@ def _clean_bot_token(value: str) -> str:
 
 async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
     commands = [
-        types.BotCommand(command="start", description="Open the bot"),
-        types.BotCommand(command="help", description="Show help"),
+        types.BotCommand(command="start", description="Open Home"),
+        types.BotCommand(command="help", description="How to use AniToon"),
+        types.BotCommand(command="stats", description="View your 7-day stats"),
+        types.BotCommand(command="status", description="View bot and queue status"),
+        types.BotCommand(command="privacy", description="View data handling"),
         types.BotCommand(command="about", description="About AniToons"),
         types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-        types.BotCommand(command="clones", description="View your clone bots and stats"),
-        types.BotCommand(command="cancel", description="Cancel your running scan"),
+        types.BotCommand(command="clones", description="View your clone bots"),
+        types.BotCommand(command="myclones", description="View your clone bots"),
+        types.BotCommand(command="cancel", description="Cancel your scan"),
     ]
     if include_clone:
-        commands.insert(4, types.BotCommand(command="clone", description="Create a clone bot"))
+        commands.insert(8, types.BotCommand(command="clone", description="Create a clone bot"))
 
     await client(functions.bots.SetBotCommandsRequest(
         scope=types.BotCommandScopeDefault(),
@@ -1927,6 +1931,29 @@ async def handle_callback(
         )
         return
 
+    if data == "home:stats":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None:
+            return
+        await render_user_stats(event, int(user_id))
+        return
+
+    if data == "home:status":
+        await event.answer()
+        await render_public_status(event)
+        return
+
+    if data == "home:privacy":
+        await event.answer()
+        await event.edit(
+            PRIVACY_TEXT,
+            parse_mode="html",
+            buttons=back_buttons(),
+        )
+        return
+
     if data == "home:help":
         await event.answer()
         text = HELP_TEXT if include_clone else HELP_TEXT.replace(
@@ -1935,11 +1962,7 @@ async def handle_callback(
         await event.edit(
             text,
             parse_mode="html",
-            buttons=help_buttons(
-                bot_username,
-                include_clone=include_clone,
-                user_id=getattr(await event.get_sender(), "id", None),
-            ),
+            buttons=help_buttons(),
         )
         return
 
@@ -1951,11 +1974,7 @@ async def handle_callback(
             "The scan starts only after you press <b>📥 Download Metadata</b>.\n\n"
             "🛡️ Large files are inspected with bounded byte-range reads.",
             parse_mode="html",
-            buttons=help_buttons(
-                bot_username,
-                include_clone=include_clone,
-                user_id=getattr(await event.get_sender(), "id", None),
-            ),
+            buttons=scan_page_buttons(),
         )
         return
 
@@ -1998,11 +2017,7 @@ async def handle_callback(
         await event.edit(
             ABOUT_TEXT,
             parse_mode="html",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                user_id=getattr(await event.get_sender(), "id", None),
-            ),
+            buttons=back_buttons(),
         )
         return
 
