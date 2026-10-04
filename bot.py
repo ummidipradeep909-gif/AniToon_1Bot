@@ -32,6 +32,7 @@ from mongo_store import (
     list_user_clones,
     mark_clone_removed,
     owner_7day_summary,
+    owner_clone_records,
     owner_user_scans,
     load_web_report,
     record_clone_request,
@@ -67,6 +68,7 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 # Clone bots are live in memory only; scan execution is globally queued.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
 SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")), 10))
+WEB_EGRESS_GUARD_BYTES = 4 * 1024 * 1024 * 1024
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -570,7 +572,7 @@ def runtime_resource_stats() -> dict[str, Any]:
     uptime_hours = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600.0
     uptime_pct = min(100.0, uptime_hours / 750.0 * 100.0)
     egress_gb = web_bytes_sent / (1024**3)
-    egress_pct = min(100.0, egress_gb / 5.0 * 100.0)
+    egress_pct = min(100.0, egress_gb / 4.0 * 100.0)
 
     return {
         "rss_mb": rss_mb,
@@ -609,7 +611,7 @@ async def render_owner_resources(event, user_id: int) -> None:
     text = (
         "🖥️ <b>Render Free Resource Guard</b>\n\n"
         f"🧠 RAM: <b>{stats['rss_mb']:.1f} / 512 MB</b> • <b>{stats['ram_pct']:.1f}%</b> {ram_state}\n"
-        f"📡 Tracked web egress: <b>{stats['web_egress_gb']:.3f} / 5 GB</b> • <b>{stats['web_egress_pct']:.1f}%</b> {egress_state}\n"
+        f"📡 Tracked web egress: <b>{stats['web_egress_gb']:.3f} / 4 GB app guard</b> • <b>{stats['web_egress_pct']:.1f}%</b> {egress_state}\n"
         f"⏱️ Current process uptime: <b>{stats['uptime_hours']:.2f} h</b>\n"
         f"📊 Uptime vs 750h allowance: <b>{stats['uptime_pct']:.1f}%</b>\n"
         f"💾 Local filesystem currently used: <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n\n"
@@ -793,19 +795,37 @@ async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
         await event.answer("Owner access only.", alert=True)
         return
 
-    items = []
-    for clone_id, clone_owner_id in clone_owners.items():
-        clone_id = int(clone_id)
-        client = clone_clients.get(clone_id)
-        items.append({
-            "clone_id": clone_id,
-            "clone_username": clone_usernames.get(clone_id),
-            "owner_id": int(clone_owner_id),
-            "owner_name": clone_owner_names.get(clone_id) or f"User {clone_owner_id}",
-            "online": bool(client and client.is_connected()),
+    persisted = await owner_clone_records()
+    by_id: dict[int, dict[str, Any]] = {
+        int(item["clone_id"]): dict(item)
+        for item in persisted
+        if item.get("clone_id") is not None
+    }
+
+    for clone_id, owner_user_id in clone_owners.items():
+        cid = int(clone_id)
+        item = by_id.setdefault(cid, {})
+        item.update({
+            "clone_id": cid,
+            "user_id": int(owner_user_id),
+            "clone_username": clone_usernames.get(cid),
+            "owner_name": clone_owner_names.get(cid) or item.get("owner_name") or f"User {owner_user_id}",
+            "status": "online",
         })
 
-    items.sort(key=lambda x: x["clone_id"], reverse=True)
+    items = []
+    for cid, item in by_id.items():
+        client = clone_clients.get(cid)
+        item["clone_username"] = item.get("clone_username") or clone_usernames.get(cid)
+        item["owner_name"] = item.get("owner_name") or f"User {int(item.get('user_id') or 0)}"
+        item["online"] = bool(client and client.is_connected())
+        items.append(item)
+
+    items.sort(
+        key=lambda x: x.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
     page_size = 5
     max_page = max(0, (len(items) - 1) // page_size)
     page = max(0, min(int(page), max_page))
@@ -813,60 +833,47 @@ async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
 
     if not items:
         await event.edit(
-            "👑 <b>Clone Bots of AniToon</b>\n\nNo active clone bots.",
+            "👑 <b>Clone Bots of AniToon</b>\n\nNo connected clone bots.",
             parse_mode="html",
-            buttons=[
-                [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
-            ],
+            buttons=[[Button.inline("⬅️ Dashboard", b"owner:dashboard")]],
         )
         return
 
     lines = [
-        f"👑 <b>Clone Bots of AniToon</b> — {len(items)} active",
+        f"👑 <b>Clone Bots of AniToon</b> — {len(items)} registered",
         "",
     ]
     buttons = []
 
     for item in chunk:
-        clone_username = str(item.get("clone_username") or "").lstrip("@")
-        owner_id = int(item["owner_id"])
-        owner_name = html.escape(str(item["owner_name"]))
-        status = "🟢 Online" if item["online"] else "🔴 Offline"
-
+        clone_id = int(item["clone_id"])
+        username = str(item.get("clone_username") or "").lstrip("@")
+        owner_id = int(item.get("user_id") or 0)
+        owner_name = html.escape(str(item.get("owner_name") or f"User {owner_id}"))
+        online = bool(item.get("online"))
+        status = "🟢 Online" if online else "🔴 Offline"
         lines.append(
-            f"🤖 <b>@{html.escape(clone_username or 'unknown')}</b> — {status}\n"
+            f"🤖 <b>@{html.escape(username or 'unknown')}</b> — {status}\n"
             f"👤 <a href=\"tg://user?id={owner_id}\">{owner_name}</a>"
         )
-
-        if clone_username:
+        if username:
             buttons.append([
-                Button.url("🤖 Open Clone", f"https://t.me/{clone_username}")
+                Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")
             ])
         buttons.append([
             Button.inline(
                 "🗑 Remove Clone",
-                f"owner:clone_remove:{int(item['clone_id'])}".encode("ascii"),
+                f"owner:clone_remove:{clone_id}".encode("ascii"),
             )
         ])
 
     nav = []
     if page > 0:
-        nav.append(
-            Button.inline(
-                "◀️ Previous",
-                f"owner:clones:{page - 1}".encode("ascii"),
-            )
-        )
+        nav.append(Button.inline("◀️ Previous", f"owner:clones:{page-1}".encode("ascii")))
     if page < max_page:
-        nav.append(
-            Button.inline(
-                "Next ▶️",
-                f"owner:clones:{page + 1}".encode("ascii"),
-            )
-        )
+        nav.append(Button.inline("Next ▶️", f"owner:clones:{page+1}".encode("ascii")))
     if nav:
         buttons.append(nav)
-
     buttons.append([Button.inline("🔄 Refresh", f"owner:clones:{page}".encode("ascii"))])
     buttons.append([Button.inline("⬅️ Dashboard", b"owner:dashboard")])
 
@@ -2887,6 +2894,13 @@ async def health_server():
                 head = b"Content-Type: text/plain; charset=utf-8\r\n"
                 code = b"404 Not Found"
 
+            if web_bytes_sent + len(body) > WEB_EGRESS_GUARD_BYTES:
+                body = (
+                    "Web response guard reached its 4 GB app budget. "
+                    "Please use the Telegram report again later."
+                ).encode("utf-8")
+                head = b"Content-Type: text/plain; charset=utf-8\r\n"
+                code = b"503 Service Unavailable"
             web_bytes_sent += len(body)
             writer.write(
                 b"HTTP/1.1 " + code + b"\r\n" + head
