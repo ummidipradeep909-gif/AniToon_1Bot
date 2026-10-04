@@ -119,6 +119,7 @@ clone_owners: dict[int, int] = {}
 clone_usernames: dict[int, str] = {}
 clone_client_ids: dict[int, int] = {}
 clone_stats: dict[int, dict[str, Any]] = {}
+clone_message_pending: dict[int, int] = {}
 active_scan_clients: dict[str, Any] = {}
 
 
@@ -172,9 +173,20 @@ async def bump_clone_stat(client: Any, field: str, amount: int = 1) -> None:
     clone_id = _clone_id_for_client(client)
     if clone_id is None:
         return
+
     stats = _ensure_clone_stats(clone_id)
     stats[field] = int(stats.get(field, 0)) + int(amount)
     stats["last_activity"] = datetime.now(timezone.utc)
+
+    # Batch high-frequency message counters to reduce database traffic.
+    if field == "messages_received":
+        pending = clone_message_pending.get(clone_id, 0) + int(amount)
+        clone_message_pending[clone_id] = pending
+        if pending < 20:
+            return
+        clone_message_pending[clone_id] = 0
+        amount = pending
+
     try:
         await update_clone_stats(clone_id=clone_id, **{field: int(amount)})
     except Exception:
@@ -343,6 +355,7 @@ async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
     clone_owners.pop(int(clone_id), None)
     clone_usernames.pop(int(clone_id), None)
     clone_stats.pop(int(clone_id), None)
+    clone_message_pending.pop(int(clone_id), None)
 
     if client is not None:
         clone_client_ids.pop(id(client), None)
