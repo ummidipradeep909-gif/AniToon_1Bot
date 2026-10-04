@@ -76,6 +76,10 @@ PUBLIC_WEB_URL = (
     .strip()
     .rstrip("/")
 )
+
+# Private Telegram channel used for automatic media archiving.
+STORAGE_CHANNEL = os.getenv("STORAGE_CHANNEL", "https://t.me/+TlTvvw02fcViNjM9").strip()
+STORAGE_SEND_TIMEOUT = 20
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
@@ -158,6 +162,7 @@ owner_broadcast_pending: dict[int, float] = {}
 group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
 bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 preview_tasks: set[asyncio.Task] = set()
+storage_peers: dict[int, Any] = {}
 
 
 scan_states: dict[tuple[int, int], ScanState] = {}
@@ -1420,6 +1425,21 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
+        archive_ok = await archive_scanned_file(
+            client,
+            source_message,
+            user_id=user_id,
+            bot_username=bot_username,
+        )
+        resend_ok = False
+        if user_id is not None:
+            resend_ok = await resend_scanned_file(
+                client,
+                int(user_id),
+                source_message,
+                filename=filename,
+            )
+
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
             scan_token,
@@ -1431,7 +1451,9 @@ async def analyze_source(
         # hide the final result behind the temporary 99% processing message.
         try:
             final_message = await status_message.reply(
-                final_result_text,
+                final_result_text
+                + ("\n\n📤 <b>Your file copy was sent.</b>" if resend_ok else "\n\n⚠️ <b>File copy could not be sent.</b>")
+                + ("\n🗄️ <b>Archived in private storage.</b>" if archive_ok else "\n🗄️ <b>Storage archive unavailable.</b>"),
                 parse_mode="html",
                 buttons=result_buttons,
             )
@@ -1600,7 +1622,8 @@ async def analyze(
     await event.reply(
         "📦 <b>FILE DETECTED</b>\n\n"
         f"📄 <code>{filename}</code>\n"
-        "🔎 Click below to check the file information.",
+        "🔎 Click below to check the file information.\n"
+        "🗄️ Scanned files are automatically copied to the private AniToon storage channel.",
         parse_mode="html",
         buttons=metadata_button(token),
     )
@@ -1661,6 +1684,94 @@ GROUP_ONBOARDING_MESSAGES = (
 
 def _bot_id_for_client(client: Any) -> int | None:
     return bot_identity_ids.get(id(client))
+
+async def _resolve_storage_peer(client: Any) -> Any | None:
+    key = id(client)
+    if key in storage_peers:
+        return storage_peers[key]
+    if not STORAGE_CHANNEL:
+        return None
+    try:
+        peer = await asyncio.wait_for(client.get_entity(STORAGE_CHANNEL), timeout=12)
+        storage_peers[key] = peer
+        return peer
+    except Exception:
+        log.warning(
+            "Storage channel unavailable | bot=%s | bot must be a member with post permission | %s",
+            _bot_id_for_client(client) or "main",
+            STORAGE_CHANNEL,
+        )
+        return None
+
+
+async def archive_scanned_file(
+    client: Any,
+    source_message: Any,
+    *,
+    user_id: int | None,
+    bot_username: str,
+) -> bool:
+    media = getattr(source_message, "media", None)
+    if not media:
+        return False
+    peer = await _resolve_storage_peer(client)
+    if peer is None:
+        return False
+
+    filename = safe_filename(source_message)
+    source_name = str(bot_username).lstrip("@") or "AniToon"
+    caption = (
+        "📦 <b>AniToon Storage</b>\n"
+        f"📄 <code>{html.escape(filename)}</code>\n"
+        f"🤖 <b>@{html.escape(source_name)}</b>"
+    )
+    if user_id is not None:
+        caption += f"\n🆔 User ID: <code>{int(user_id)}</code>"
+
+    try:
+        await asyncio.wait_for(
+            client.send_file(
+                peer,
+                media,
+                caption=caption,
+                parse_mode="html",
+                allow_cache=True,
+            ),
+            timeout=STORAGE_SEND_TIMEOUT,
+        )
+        return True
+    except Exception:
+        log.warning("Storage archive failed | file=%s", filename, exc_info=True)
+        return False
+
+
+async def resend_scanned_file(
+    client: Any,
+    destination: Any,
+    source_message: Any,
+    *,
+    filename: str,
+) -> bool:
+    media = getattr(source_message, "media", None)
+    if destination is None or not media:
+        return False
+    try:
+        await asyncio.wait_for(
+            client.send_file(
+                destination,
+                media,
+                caption=f"📁 <b>Your scanned file</b>\n<code>{html.escape(filename)}</code>",
+                parse_mode="html",
+                allow_cache=True,
+            ),
+            timeout=STORAGE_SEND_TIMEOUT,
+        )
+        return True
+    except Exception:
+        log.warning("Resend file failed | file=%s", filename, exc_info=True)
+        return False
+
+
 
 async def _ensure_bot_identity(client: Any) -> int | None:
     existing = _bot_id_for_client(client)
