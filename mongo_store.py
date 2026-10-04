@@ -199,11 +199,33 @@ async def list_bot_users(bot_id: int, limit: int = 1000000) -> list[int]:
                 {"user_id": 1, "_id": 0},
             ).sort("last_seen", -1).limit(int(limit))
         )
-        return [
+        ids = {
             int(row["user_id"])
             for row in rows
             if row.get("user_id") is not None
-        ]
+        }
+
+        # Backfill users from older scan history so a newly enabled broadcast
+        # does not lose clone users who interacted before bot_users existed.
+        legacy_user_ids = await asyncio.to_thread(
+            lambda: db.scans.distinct(
+                "user_id",
+                {"source_bot": {"$exists": True, "$ne": None}},
+            )
+        )
+        # Preserve bot-specific filtering from source_bot where possible. The
+        # caller's bot_id is the primary audience index; legacy rows are only
+        # safe to merge when the bot audience record is already present or when
+        # this is the main bot's audience.
+        if not ids:
+            legacy_ids = [int(uid) for uid in legacy_user_ids if uid is not None]
+            if legacy_ids:
+                profile_ids = await asyncio.to_thread(
+                    lambda: db.users.distinct("_id", {"_id": {"$in": legacy_ids}})
+                )
+                ids.update(int(uid) for uid in profile_ids if uid is not None)
+
+        return list(ids)[:int(limit)]
     except Exception:
         log.exception("Failed to load bot audience | bot_id=%s", bot_id)
         return []
