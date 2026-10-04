@@ -354,6 +354,38 @@ async def mark_clone_removed(user_id: int, clone_id: int) -> None:
         log.exception("Failed to mark clone removed")
 
 
+async def owner_clone_records() -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+    try:
+        return await asyncio.to_thread(
+            lambda: list(
+                db.clones.find(
+                    {"status": {"$in": ["online", "validated", "offline"]}},
+                    {
+                        "user_id": 1,
+                        "clone_id": 1,
+                        "clone_username": 1,
+                        "clone_first_name": 1,
+                        "owner_name": 1,
+                        "status": 1,
+                        "created_at": 1,
+                        "last_activity": 1,
+                        "messages_received": 1,
+                        "scans_started": 1,
+                        "scans_completed": 1,
+                        "scans_failed": 1,
+                        "scans_cancelled": 1,
+                    },
+                ).sort("created_at", -1)
+            )
+        )
+    except Exception:
+        log.exception("Failed to load owner clone records")
+        return []
+
+
 async def load_clone_requests() -> list[dict[str, Any]]:
     db = await _get_db()
     if db is None:
