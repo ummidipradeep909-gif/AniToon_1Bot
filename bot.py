@@ -1144,7 +1144,7 @@ async def run_scan(
             source_message,
             scan_token,
             progress=progress,
-            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "33554432")),
+            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", str(2_560 * 1024))),
             port=int(os.getenv("PORT", "10000")),
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
@@ -2957,7 +2957,10 @@ async def handle_callback(
         task = active_scans.get(token)
 
         if not task:
-            await event.answer("This scan is no longer running.", alert=True)
+            if token in web_states:
+                await event.answer("✅ This scan has already finished. Open the File Info report.", alert=True)
+            else:
+                await event.answer("ℹ️ This scan already stopped. Send the file again to start a fresh scan.", alert=True)
             return
 
         if active_scan_clients.get(token) is not client:
