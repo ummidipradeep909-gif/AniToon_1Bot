@@ -93,6 +93,10 @@ async def _get_db():
             return None
 
 
+def mongodb_is_connected() -> bool:
+    return _db is not None
+
+
 async def ensure_mongodb() -> bool:
     """Connect/ping MongoDB eagerly at startup so persistence failures are visible."""
     return (await _get_db()) is not None
