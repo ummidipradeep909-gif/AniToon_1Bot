@@ -3231,7 +3231,6 @@ body {{
   margin:0;
   min-height:100vh;
   color:var(--text);
-.anime-wallpaper {{ position:fixed; inset:0; z-index:-5; background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat; opacity:.30; filter:saturate(1.08) contrast(1.04); transform:scale(1.03); animation:wallpaperZoom 20s ease-in-out infinite alternate; pointer-events:none; }}
   background:var(--bg);
   font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   overflow-x:hidden;
@@ -3763,6 +3762,31 @@ async def health_server():
                 }
                 body = json.dumps(
                     payload,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                head = b"Content-Type: application/json; charset=utf-8\r\n"
+                code = b"200 OK"
+
+            elif path.startswith("/preview/"):
+                _purge_states()
+                token = path[len("/preview/"):].strip("/")
+                preview_items = []
+                state = web_states.get(token)
+                if state is not None:
+                    preview_items = list(getattr(state.report, "previews", []) or [])[:5]
+                else:
+                    try:
+                        stored_payload = await load_web_report(token)
+                    except Exception:
+                        stored_payload = None
+                    if stored_payload:
+                        report_payload = stored_payload.get("report") if isinstance(stored_payload, dict) else {}
+                        preview_items = list((report_payload or {}).get("previews") or [])[:5]
+                body = json.dumps(
+                    {
+                        "ready": len(preview_items) >= 5,
+                        "previews": preview_items,
+                    },
                     separators=(",", ":"),
                 ).encode("utf-8")
                 head = b"Content-Type: application/json; charset=utf-8\r\n"
