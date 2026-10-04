@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -88,6 +89,7 @@ check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 scan_queue_lock = asyncio.Lock()
 active_processes = 0
 queued_processes = 0
+web_bytes_sent = 0
 started_at = datetime.now(timezone.utc)
 
 checks_total = 0
@@ -528,6 +530,51 @@ async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
     return True
 
 
+def runtime_resource_stats() -> dict[str, Any]:
+    """Return app-local resource signals; exact workspace billing remains in Render."""
+    rss_mb = 0.0
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    rss_mb = float(line.split()[1]) / 1024.0
+                    break
+    except (OSError, ValueError):
+        pass
+
+    ram_limit_mb = 512.0
+    ram_pct = (rss_mb / ram_limit_mb * 100.0) if ram_limit_mb else 0.0
+
+    try:
+        disk = shutil.disk_usage("/")
+        disk_used_pct = disk.used / disk.total * 100.0 if disk.total else 0.0
+        disk_used_gb = disk.used / (1024**3)
+    except OSError:
+        disk_used_pct = 0.0
+        disk_used_gb = 0.0
+
+    uptime_hours = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600.0
+    uptime_pct = min(100.0, uptime_hours / 750.0 * 100.0)
+    egress_gb = web_bytes_sent / (1024**3)
+    egress_pct = min(100.0, egress_gb / 5.0 * 100.0)
+
+    return {
+        "rss_mb": rss_mb,
+        "ram_limit_mb": ram_limit_mb,
+        "ram_pct": ram_pct,
+        "disk_used_pct": disk_used_pct,
+        "disk_used_gb": disk_used_gb,
+        "uptime_hours": uptime_hours,
+        "uptime_pct": uptime_pct,
+        "web_egress_gb": egress_gb,
+        "web_egress_pct": egress_pct,
+    }
+
+
+def memory_pressure_high() -> bool:
+    return runtime_resource_stats()["ram_pct"] >= 80.0
+
+
 def _owner_allowed(user_id: int | None) -> bool:
     return OWNER_ID > 0 and user_id is not None and int(user_id) == OWNER_ID
 
@@ -535,6 +582,36 @@ def _owner_user_label(record: dict[str, Any]) -> str:
     username = str(record.get("username") or "").strip().lstrip("@")
     name = " ".join(str(record.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     return f"@{username}" if username else (name or f"User {record.get('user_id', '?')}")
+
+async def render_owner_resources(event, user_id: int) -> None:
+    if not _owner_allowed(user_id):
+        await event.answer("Owner access only.", alert=True)
+        return
+
+    stats = runtime_resource_stats()
+    ram_state = "🟢 Normal" if stats["ram_pct"] < 70 else ("🟡 Watch" if stats["ram_pct"] < 80 else "🔴 High")
+    egress_state = "🟢 Low" if stats["web_egress_pct"] < 70 else ("🟡 Watch" if stats["web_egress_pct"] < 85 else "🔴 High")
+
+    text = (
+        "🖥️ <b>Render Free Resource Guard</b>\n\n"
+        f"🧠 RAM: <b>{stats['rss_mb']:.1f} / 512 MB</b> • <b>{stats['ram_pct']:.1f}%</b> {ram_state}\n"
+        f"📡 Tracked web egress: <b>{stats['web_egress_gb']:.3f} / 5 GB</b> • <b>{stats['web_egress_pct']:.1f}%</b> {egress_state}\n"
+        f"⏱️ Current process uptime: <b>{stats['uptime_hours']:.2f} h</b>\n"
+        f"📊 Uptime vs 750h allowance: <b>{stats['uptime_pct']:.1f}%</b>\n"
+        f"💾 Local filesystem currently used: <b>{stats['disk_used_gb']:.2f} GB</b> • {stats['disk_used_pct']:.1f}%\n\n"
+        "🛡️ New heavy scans are paused when RAM pressure reaches 80%.\n"
+        "⚠️ Render's exact workspace billing meter is still shown in Render Billing/Metrics; "
+        "the egress figure above is only traffic tracked by this process."
+    )
+    await event.edit(
+        text,
+        parse_mode="html",
+        buttons=[
+            [Button.inline("🔄 Refresh", b"owner:resources")],
+            [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
+        ],
+    )
+
 
 async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> None:
     if not _owner_allowed(user_id):
@@ -582,7 +659,7 @@ async def render_owner_users(event, owner_id: int, page: int = 0) -> None:
     buttons = []
     for item in chunk:
         name = _owner_user_label(item)
-        lines.append(f"👤 <b>{html.escape(name)}</b> — 📁 {int(item.get('scans', 0) or 0)}")
+        lines.append(f"👤 <b>{html.escape(name)}</b> — 📁 {int(item.get('scans', 0) or 0)} • ID {int(item['user_id'])}")
         buttons.append([Button.inline(f"📁 {name[:28]}", f"owner:user:{int(item['user_id'])}".encode("ascii"))])
     nav = []
     if page > 0:
@@ -1188,7 +1265,7 @@ async def _start_clone_bot(
             clone_id=int(clone_id),
             clone_username=username,
             clone_first_name=getattr(me, "first_name", None),
-            owner_name=sender_name,
+            owner_name=owner_name,
             token=token,
         )
         log.info("Clone bot online as @%s | owner_id=%s", username, owner_user_id)
@@ -1567,6 +1644,16 @@ async def handle_callback(
                 [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
             ],
         )
+        return
+
+    if data == "owner:resources":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        await render_owner_resources(event, int(user_id))
         return
 
     if data == "owner:dashboard":
@@ -2623,6 +2710,8 @@ async def health_server():
                     "active_scans": active_processes,
                     "queued_scans": queued_processes,
                     "max_active_scans": MAX_CONCURRENT_CHECKS,
+                    "ram_pct": runtime_resource_stats()["ram_pct"],
+                    "web_egress_gb": runtime_resource_stats()["web_egress_gb"],
                     "uptime_seconds": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                     ),
@@ -2683,6 +2772,7 @@ async def health_server():
                 head = b"Content-Type: text/plain; charset=utf-8\r\n"
                 code = b"404 Not Found"
 
+            web_bytes_sent += len(body)
             writer.write(
                 b"HTTP/1.1 " + code + b"\r\n" + head
                 + f"Content-Length: {len(body)}\r\n".encode("ascii")
@@ -2729,12 +2819,6 @@ async def main():
             await _set_bot_commands(bot, include_clone=True)
         except Exception:
             log.exception("Failed to set command menu for main bot")
-
-        try:
-            from mongo_store import clear_clone_records
-            await clear_clone_records()
-        except Exception:
-            log.exception("Failed to clear old persistent clone records")
 
         restored = 0
 
