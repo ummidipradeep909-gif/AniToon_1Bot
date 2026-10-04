@@ -246,109 +246,11 @@ def web_report_button(
 
 
 def compact_scan_result(report: Report) -> str:
-    video_tracks = list(report.video.get("tracks", []) or [])
-    audio_tracks = list(report.audio.get("tracks", []) or [])
-    subtitle_tracks = list(report.subtitles or [])
-
-    def value(track: dict[str, Any], *keys: str) -> str | None:
-        for key in keys:
-            v = track.get(key)
-            if v not in (None, ""):
-                return str(v)
-        return None
-
-    lines = [
-        "✅ <b>METADATA SCAN COMPLETE</b>",
-        "",
-        f"📄 <b>{html.escape(str(report.filename or 'Telegram media file'))}</b>",
-        f"📦 {html.escape(str(report.detected or 'Detected media'))}",
-        f"📏 {html.escape(format_report(report).split('📏 ', 1)[1].splitlines()[0])}" if "📏 " in format_report(report) else "",
-    ]
-
-    runtime = report.container.get("runtime")
-    if runtime:
-        lines.append(f"⏱ <b>Runtime:</b> {html.escape(str(runtime))}")
-
-    first_video = video_tracks[0] if video_tracks else {}
-    quality = value(first_video, "dimensions")
-    frame_rate = value(first_video, "frame_rate")
-    video_codec = value(first_video, "codec_name", "codec")
-    bitrate = report.container.get("average_bitrate")
-
-    if first_video or report.video.get("dimensions"):
-        lines.append("")
-        lines.append("🎬 <b>VIDEO QUALITY</b>")
-        if quality:
-            lines.append(f"🖼 Pixels / resolution: <b>{html.escape(quality)}</b>")
-        elif report.video.get("dimensions"):
-            lines.append(f"🖼 Pixels / resolution: <b>{html.escape(str(report.video['dimensions']))}</b>")
-        if frame_rate:
-            lines.append(f"🎞 Frame rate: {html.escape(frame_rate)}")
-        if video_codec:
-            lines.append(f"🧬 Codec: {html.escape(video_codec)}")
-        if bitrate:
-            lines.append(f"📶 Average bitrate: {html.escape(str(bitrate))}")
-
-    lines += [
-        "",
-        f"🎬 Video tracks: <b>{len(video_tracks)}</b>",
-        f"🔊 Audio tracks: <b>{len(audio_tracks)}</b>",
-        f"💬 Subtitle tracks: <b>{len(subtitle_tracks)}</b>",
-    ]
-
-    if video_tracks:
-        lines.append("")
-        lines.append("🎥 <b>VIDEO TRACKS</b>")
-        for i, track in enumerate(video_tracks, 1):
-            name = value(track, "name", "display_name") or f"Video Track {i}"
-            parts = [name]
-            for label, keys in (
-                ("res", ("dimensions",)),
-                ("fps", ("frame_rate",)),
-                ("codec", ("codec_name", "codec")),
-                ("scan", ("scan_type",)),
-            ):
-                v = value(track, *keys)
-                if v:
-                    parts.append(f"{label}={v}")
-            lines.append(f"• <b>{i}.</b> {html.escape(' • '.join(parts))}")
-
-    if audio_tracks:
-        lines.append("")
-        lines.append("🔊 <b>ALL AUDIO TRACKS</b>")
-        for i, track in enumerate(audio_tracks, 1):
-            name = value(track, "name", "display_name") or f"Audio Track {i}"
-            lang = value(track, "language_name", "language")
-            codec = value(track, "codec_name", "codec")
-            channels = value(track, "channels")
-            sample = value(track, "sample_rate", "output_sample_rate")
-            parts = [name]
-            if lang: parts.append(f"lang={lang}")
-            if codec: parts.append(f"codec={codec}")
-            if channels: parts.append(f"channels={channels}")
-            if sample: parts.append(f"rate={sample}")
-            lines.append(f"• <b>{i}.</b> {html.escape(' • '.join(parts))}")
-
-    if subtitle_tracks:
-        lines.append("")
-        lines.append("💬 <b>ALL SUBTITLE TRACKS</b>")
-        for i, track in enumerate(subtitle_tracks, 1):
-            name = value(track, "name", "display_name") or f"Subtitle Track {i}"
-            lang = value(track, "language_name", "language")
-            fmt = value(track, "subtitle_format", "format", "codec_name", "codec")
-            parts = [name]
-            if lang: parts.append(f"lang={lang}")
-            if fmt: parts.append(f"format={fmt}")
-            if value(track, "forced") == "yes": parts.append("forced=yes")
-            lines.append(f"• <b>{i}.</b> {html.escape(' • '.join(parts))}")
-
-    lines += [
-        "",
-        "🌐 <b>Web report:</b> complete metadata, technical details and the Telegram thumbnail.",
-        "⏳ This web link expires 5 minutes after the scan is created.",
-    ]
-    return "\n".join(x for x in lines if x)
-
+    return (
+        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
+        "🖼️ The Telegram thumbnail is shown here when available.\n"
+        "🌐 Tap <b>Open File Info</b> to view all video, audio, subtitle and technical metadata."
+    )
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
@@ -1535,6 +1437,26 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
+        # Fetch exactly one Telegram-generated thumbnail before sending the final
+        # result so the bot message itself can contain the image. This never
+        # seeks or downloads the source video.
+        previews: list[dict[str, Any]] = []
+        with suppress(Exception):
+            if getattr(source_message, "media", None):
+                previews = await generate_video_previews(
+                    client,
+                    source_message,
+                    scan_token,
+                )
+        if previews:
+            state.report.previews = previews[:1]
+            with suppress(Exception):
+                await save_web_report(
+                    scan_token,
+                    asdict(state.report),
+                    expires_at,
+                )
+
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
             scan_token,
@@ -1542,31 +1464,46 @@ async def analyze_source(
             include_clone=include_clone,
         )
 
-        # Completion is sent as a fresh message so the edit throttle can never
-        # hide the final result behind the temporary 99% processing message.
+        # Completion is sent as a fresh message. Detailed metadata stays on
+        # the web report; Telegram only gets the clean completion message and,
+        # when Telegram supplied one, exactly one thumbnail.
         try:
-            final_message = await status_message.reply(
-                final_result_text,
-                parse_mode="html",
-                buttons=result_buttons,
-            )
+            thumbnail_raw = None
+            if previews:
+                data = str(previews[0].get("data") or "")
+                if data:
+                    with suppress(Exception):
+                        thumbnail_raw = base64.b64decode(data, validate=True)
+
+            if thumbnail_raw:
+                final_message = await client.send_file(
+                    status_message.chat_id,
+                    file=thumbnail_raw,
+                    caption=final_result_text,
+                    parse_mode="html",
+                    reply_to=status_message.id,
+                    buttons=result_buttons,
+                    force_document=False,
+                )
+            else:
+                final_message = await status_message.reply(
+                    final_result_text,
+                    parse_mode="html",
+                    buttons=result_buttons,
+                )
+
             if final_message is not None:
-                log.info("Final scan result sent | token=%s", scan_token)
+                log.info(
+                    "Final scan result sent | token=%s | thumbnail=%s",
+                    scan_token,
+                    bool(thumbnail_raw),
+                )
         except Exception:
             log.exception("Failed to send final scan result message | token=%s", scan_token)
             raise
 
         with suppress(Exception):
             await status_message.delete()
-
-        if getattr(source_message, "media", None):
-            _schedule_preview_generation(
-                client,
-                source_message,
-                scan_token,
-                state,
-                expires_at,
-            )
 
         checks_ok += 1
         outcome = "completed"
