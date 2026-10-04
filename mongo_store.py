@@ -117,6 +117,7 @@ async def record_scan(
     source_message: Any,
     report: Any,
     status: str,
+    source_bot: str | None = None,
 ) -> None:
     db = await _get_db()
     if db is None:
@@ -135,6 +136,7 @@ async def record_scan(
             "message_id": getattr(source_message, "id", None),
             "filename": str(filename),
             "status": str(status),
+            "source_bot": str(source_bot) if source_bot else None,
             "created_at": datetime.now(timezone.utc),
             "container": _json_clean(container),
             "audio": _json_clean(audio),
