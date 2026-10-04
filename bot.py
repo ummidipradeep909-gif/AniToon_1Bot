@@ -745,6 +745,7 @@ async def analyze_source(
                 source_message=source_message,
                 report=report,
                 status="completed",
+                source_bot=bot_username,
             )
             await edit_status(
                 status_message,
