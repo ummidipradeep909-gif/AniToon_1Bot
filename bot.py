@@ -233,7 +233,7 @@ def web_report_button(
     include_clone: bool = True,
 ):
     buttons = [
-        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}?embed=1")],
+        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
     ]
     if include_clone and CLONE_BOT_USERNAME:
         buttons.append([
@@ -285,8 +285,7 @@ HELP_TEXT = (
     "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Wait for the metadata scan to finish.\n"
-    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n"
-    "🗄️ Scanned media is automatically copied to the configured private storage channel.\n\n"
+    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
     "🤖 <b>Clone Bots</b>\n"
     "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
     "📋 <b>Commands</b>\n"
@@ -1236,7 +1235,7 @@ async def run_scan(
                 deep=False,
             )
 
-        report = await asyncio.wait_for(
+        report, _probe_bytes = await asyncio.wait_for(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
@@ -1607,8 +1606,7 @@ async def analyze(
     await event.reply(
         "📦 <b>FILE DETECTED</b>\n\n"
         f"📄 <code>{filename}</code>\n"
-        "🔎 Click below to check the file information.\n"
-        "🗄️ Scanned files are automatically copied to the private AniToon storage channel.",
+        "🔎 Click below to check the file information.",
         parse_mode="html",
         buttons=metadata_button(token),
     )
