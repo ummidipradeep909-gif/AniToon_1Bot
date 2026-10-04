@@ -484,86 +484,37 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     mime=getattr(f,"mime_type",None)
     _,kind=magic(b,name,mime)
 
-    if kind=="mkv" and deep:
-        await say("🎯 Stage 2/4 • locating the Matroska Tracks index…")
-
-        # SeekHead is the fastest path when the release contains it.
+    if kind=="mkv":
+        await say("🎯 Stage 2/4 • reading Matroska TrackEntry metadata…")
         targets=_seek_targets(b)
+        if 0x1654AE6B not in targets:
+            local=b.find(b"\x16\x54\xAE\x6B")
+            if local>=0:
+                targets[0x1654AE6B]=local
+        if 0x1549A966 not in targets:
+            local=b.find(b"\x15\x49\xA9\x66")
+            if local>=0:
+                targets[0x1549A966]=local
         for off,n,label in _probe_ranges(total,budget,initial,targets):
             x,_=await _read_range(client,media,total,off,n)
             if x:
                 parts.append(ProbePiece(off,x,label))
                 used+=len(x)
-
-        current=_report(message,parts)
-
-        # Codec hints such as "ASS" are not proof of an embedded subtitle
-        # TrackEntry. Deep search must continue until real TrackEntry metadata
-        # is found.
-        def has_real_tracks(report:Report)->bool:
-            return bool(
-                isinstance(report.audio.get("tracks"), list) and report.audio.get("tracks")
-            ) or bool(
-                isinstance(report.video.get("tracks"), list) and report.video.get("tracks")
-            ) or any(
-                item.get("source") not in {"codec marker in sample", "sample entry", "filename extension"}
-                and item.get("codec")
-                for item in report.subtitles
-            )
-
-        if not has_real_tracks(current):
-            await say("🔎 Stage 3/4 • adaptively searching deeper ranges for real TrackEntry names…")
-
-            for off,n,label in _adaptive_ranges(total,budget,used,initial):
-                x,_=await _read_range(client,media,total,off,n)
-                if not x:
-                    continue
-
-                parts.append(ProbePiece(off,x,label))
-                used+=len(x)
-
-                # If Tracks/Info starts near a window boundary, fetch exactly the
-                # remaining bytes needed to complete that metadata element.
-                for element_id,element_label in (
-                    (b"\x16\x54\xAE\x6B","Matroska Tracks continuation"),
-                    (b"\x15\x49\xA9\x66","Matroska Info continuation"),
-                ):
-                    local=x.find(element_id)
-                    if local<0:
-                        continue
-                    required_end=_required_element_end(x,local)
-                    if required_end is None:
-                        continue
-                    if required_end>len(x) and used<budget:
-                        extra=min(
-                            required_end-len(x),
-                            budget-used,
-                            max(0,(total or 0)-(off+len(x))),
-                        )
-                        if extra>0:
-                            extra_data,_=await _read_range(
-                                client,
-                                media,
-                                total,
-                                off+len(x),
-                                extra,
-                            )
-                            if extra_data:
-                                parts[-1]=ProbePiece(
-                                    off,
-                                    x+extra_data,
-                                    f"{label} + continuation",
-                                )
-                                used+=len(extra_data)
-
-                current=_report(message,parts)
-                if has_real_tracks(current):
-                    break
-
-        await say("🧩 Stage 4/4 • extracting final audio/subtitle names and metadata…")
+        await say("🧩 Stage 3/4 • extracting all detected video, audio and subtitle tracks…")
+    elif kind=="mp4":
+        await say("🧩 Stage 2/2 • reading MP4 metadata and bounded tail index…")
+        if total and used<budget:
+            tail_window=min(512*1024,budget-used,total)
+            tail_offset=max(initial,total-tail_window)
+            if tail_offset>=initial:
+                x,_=await _read_range(client,media,total,tail_offset,tail_window)
+                if x:
+                    parts.append(ProbePiece(tail_offset,x,"MP4 tail metadata"))
+                    used+=len(x)
     else:
         await say("🧩 Stage 2/2 • reading available media metadata…")
 
+    await say("🧪 Stage 4/4 • assembling the final metadata report…")
     return _report(message,parts),used
 
 def _safe(v:Any)->str:return html.escape(str(v))
