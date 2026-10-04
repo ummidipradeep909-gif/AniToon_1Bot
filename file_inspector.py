@@ -594,7 +594,7 @@ def format_report(r:Report)->str:
     return "\n".join(lines)
 
 
-def format_sectiondef format_section(r:Report,section:str)->str:
+def format_section(r:Report,section:str)->str:
     if section=="audio":
         tracks=r.audio.get("tracks",[]);lines=["🔊 <b>AUDIO TRACKS</b>",""]
         if tracks:
