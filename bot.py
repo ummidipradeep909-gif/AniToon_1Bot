@@ -3236,6 +3236,7 @@ body {{
   font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   overflow-x:hidden;
 }}
+.anime-wallpaper {{ position:fixed; inset:0; z-index:-5; background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat; opacity:.30; filter:saturate(1.08) contrast(1.04); transform:scale(1.03); animation:wallpaperZoom 20s ease-in-out infinite alternate; pointer-events:none; }}
 body::before {{
   content:"";
   position:fixed;
@@ -3386,6 +3387,9 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 .empty-state strong {{font-size:13px;}}
 .empty-state p {{margin:2px 0 0;color:var(--muted);font-size:11px;}}
 .preview-grid {{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px;}}
+.preview-loading {{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;grid-column:1/-1}}
+.preview-loading span {{display:block;aspect-ratio:16/9;border-radius:16px;background:linear-gradient(90deg,rgba(255,255,255,.035),rgba(255,255,255,.08),rgba(255,255,255,.035));background-size:200% 100%;animation:loading 1.4s linear infinite}}
+.preview-grid {{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px;}}
 .preview-card {{overflow:hidden;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.025);transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;}}
 .preview-card:hover {{transform:translateY(-3px);border-color:rgba(94,231,255,.28);box-shadow:0 14px 30px rgba(0,0,0,.22);}}
 .preview-frame {{aspect-ratio:16/9;background:#070816;overflow:hidden;}}
@@ -3413,6 +3417,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 @keyframes pulse {{0%,100%{{transform:scale(.85);opacity:.8}}50%{{transform:scale(1.15);opacity:1}}}}
 @keyframes scanline {{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
 @keyframes sheen {{0%,100%{{transform:translateX(-25%)}}50%{{transform:translateX(45%)}}}}
+@keyframes loading{{from{{background-position:200% 0}}to{{background-position:-200% 0}}}}
 @keyframes reveal {{from{{opacity:0;transform:translateY(18px);filter:blur(7px)}}to{{opacity:1;transform:none;filter:none}}}}
 @media(max-width:860px){{.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:1000px){{.preview-grid{{grid-template-columns:repeat(3,minmax(0,1fr))}}}}
@@ -3479,10 +3484,10 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
   {f'''<section class="section">
     <div class="section-head">
       <h2>🎞️ Video previews</h2>
-      <span class="pill">10% → 90%</span>
+      <span id="preview-status" class="pill">10% → 90%</span>
     </div>
-    <div class="preview-grid">{preview_cards}</div>
-  </section>''' if preview_cards else ""}
+    <div id="preview-grid" class="preview-grid">{preview_cards or '<div class="preview-loading"><span></span><span></span><span></span><span></span><span></span></div>'}</div>
+  </section>''' if video else ""}
 
   <section class="section">
     <div class="section-head">
@@ -3525,6 +3530,52 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
     else countdown.textContent = "EXPIRED";
   }};
   tick();
+}})();
+
+(() => {{
+  const token = "{html.escape(report_token or "")}";
+  const grid = document.getElementById("preview-grid");
+  const status = document.getElementById("preview-status");
+  if (!token || !grid) return;
+
+  const render = (items) => {{
+    const cards = items.slice(0,5).map((p, i) => {{
+      const ratio = Number(p.ratio || ([10,30,50,70,90][i] || 10));
+      const seconds = Math.max(0, Math.floor(Number(p.seconds || 0)));
+      const mm = Math.floor(seconds / 60);
+      const ss = seconds % 60;
+      const stamp = mm >= 60
+        ? Math.floor(mm / 60) + ":" + String(mm % 60).padStart(2,"0") + ":" + String(ss).padStart(2,"0")
+        : mm + ":" + String(ss).padStart(2,"0");
+      return '<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,' +
+        String(p.data || '') + '" alt="Video preview ' + (i + 1) + '" loading="lazy"></div>' +
+        '<div class="preview-meta"><b>Preview ' + (i + 1) + '</b><span>' + ratio + '% • ' + stamp + '</span></div></article>';
+    }}).join("");
+    if (cards) {{
+      grid.innerHTML = cards;
+      if (status) status.textContent = items.length >= 5 ? "5 snapshots" : items.length + "/5";
+    }}
+  }};
+
+  let attempts = 0;
+  const poll = async () => {{
+    if (attempts++ > 20) {{
+      if (status) status.textContent = "Preview unavailable";
+      return;
+    }}
+    try {{
+      const response = await fetch("/preview/" + encodeURIComponent(token), {{cache:"no-store"}});
+      if (response.ok) {{
+        const payload = await response.json();
+        if (payload.previews && payload.previews.length) {{
+          render(payload.previews);
+          if (payload.ready) return;
+        }}
+      }}
+    }} catch (_) {{}}
+    setTimeout(poll, 1500);
+  }};
+  poll();
 }})();
 </script>
 </body>
