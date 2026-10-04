@@ -10,9 +10,10 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-MAX_INITIAL_PROBE = 2 * 1024 * 1024
-MAX_DEEP_PROBE = 64 * 1024 * 1024
-DEFAULT_CHUNK = 1 * 1024 * 1024
+# Keep the total source-media read safely below 4 MB.
+MAX_INITIAL_PROBE = 1 * 1024 * 1024
+MAX_DEEP_PROBE = 2_560 * 1024
+DEFAULT_CHUNK = 512 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -37,7 +38,7 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",32*1024*1024,2*1024*1024,MAX_DEEP_PROBE)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",2_560*1024,2*1024*1024,MAX_DEEP_PROBE)
 def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,128*1024,DEFAULT_CHUNK)
 
 @dataclass(slots=True)
