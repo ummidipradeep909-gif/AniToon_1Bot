@@ -1798,22 +1798,9 @@ async def _resolve_storage_peer(client: Any) -> Any | None:
     last_error: Exception | None = None
     for target in targets:
         try:
-            if isinstance(target, int):
-                peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
-                storage_peers[key] = peer
-                return peer
-
-            invite_hash = _storage_invite_hash(str(target))
-            if invite_hash:
-                checked = await asyncio.wait_for(
-                    client(functions.messages.CheckChatInviteRequest(invite_hash)),
-                    timeout=12,
-                )
-                peer = getattr(checked, "chat", None)
-                if peer is not None:
-                    storage_peers[key] = peer
-                    return peer
-
+            # Bot accounts cannot use the invite-check API. Resolve a concrete
+            # numeric channel ID when configured; otherwise try the supplied
+            # entity directly (which works for public usernames and cached peers).
             peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
             storage_peers[key] = peer
             return peer
