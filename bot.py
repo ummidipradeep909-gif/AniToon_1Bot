@@ -1532,7 +1532,6 @@ PRIVACY_TEXT = (
 
 
 async def handle_new_message(
-async def handle_new_message(
     event,
     *,
     client: Any = bot,
@@ -1561,7 +1560,15 @@ async def handle_new_message(
     if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(home_text, parse_mode="html", buttons=back_buttons())
+        await event.reply(
+            home_text,
+            parse_mode="html",
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                user_id=getattr(sender, "id", None),
+            ),
+        )
         return
 
     if command == "/help":
@@ -1581,10 +1588,13 @@ async def handle_new_message(
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
-            buttons=[[Button.url(
-                "➕ Add Me to Your Group",
-                add_to_group_url(bot_username),
-            )]],
+            buttons=[
+                [Button.url(
+                    "➕ Add Me to Your Group",
+                    add_to_group_url(bot_username),
+                )],
+                [Button.inline("⬅️ Back", b"home:back")],
+            ],
         )
         return
 
@@ -1596,10 +1606,13 @@ async def handle_new_message(
             await event.reply(
                 f"🧬 Clone creation is managed by @{html.escape(BOT_USERNAME)}.",
                 parse_mode="html",
-                buttons=[[Button.url(
-                    "🤖 Open AniToon",
-                    f"https://t.me/{BOT_USERNAME}",
-                )]],
+                buttons=[
+                    [Button.url(
+                        "🤖 Open AniToon",
+                        f"https://t.me/{BOT_USERNAME}",
+                    )],
+                    [Button.inline("⬅️ Back", b"home:back")],
+                ],
             )
         return
 
