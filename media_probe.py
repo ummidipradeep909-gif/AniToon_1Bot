@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import html
 import io
+import logging
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,6 +14,8 @@ import av
 from file_inspector import inspect_telegram_message
 
 from file_inspector import Report
+
+log = logging.getLogger("anitoons-media-probe")
 
 LANG_NAMES = {
     "eng": "English", "en": "English", "jpn": "Japanese", "ja": "Japanese",
