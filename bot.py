@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
-import io
 import json
 import logging
 import os
@@ -22,7 +21,6 @@ from telethon.sessions import MemorySession
 
 from file_inspector import Report, format_report, format_section
 from media_probe import (
-    create_video_previews,
     ProbeBudgetExceeded,
     ProbeCancelled,
     cancel_probe,
@@ -236,53 +234,6 @@ def compact_scan_result(report: Report) -> str:
         "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
         "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
     )
-
-
-async def send_video_previews(
-    client: Any,
-    source_message: Any,
-    scan_token: str,
-) -> int:
-    """Create and send five timeline preview images for a video."""
-    try:
-        previews = await create_video_previews(client, source_message, scan_token)
-        if not previews:
-            return 0
-
-        files = []
-        captions = []
-        for index, (data, seconds) in enumerate(previews, 1):
-            image = io.BytesIO(data)
-            image.name = f"AniToon_Preview_{index}.jpg"
-            files.append(image)
-
-            total_seconds = max(0, int(seconds))
-            minutes, secs = divmod(total_seconds, 60)
-            hours, minutes = divmod(minutes, 60)
-            stamp = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
-            ratio = (index * 20) - 10
-            captions.append(
-                f"🎞️ <b>Preview {index}/5</b> • {ratio}%\n"
-                f"⏱️ {stamp} into video"
-            )
-
-        await client.send_file(
-            source_message.chat_id,
-            files,
-            caption=captions,
-            parse_mode="html",
-            reply_to=source_message.id,
-        )
-        return len(files)
-    except (ProbeBudgetExceeded, ProbeCancelled):
-        return 0
-    except Exception:
-        log.exception("Failed to send video previews")
-        return 0
-    finally:
-        for image in locals().get("files", []):
-            with suppress(Exception):
-                image.close()
 
 
 HOME_TEXT = (
@@ -1224,14 +1175,6 @@ async def analyze_source(
         except Exception:
             log.exception("Failed to persist web report")
 
-        preview_count = 0
-        if report.video.get("tracks"):
-            await edit_status(
-                status_message,
-                "✅ <b>METADATA SCAN COMPLETE</b>\n\n🎞️ Preparing 5 video previews…",
-            )
-            preview_count = await send_video_previews(client, source_message, scan_token)
-
         await record_scan(
             user_id=user_id,
             source_message=source_message,
@@ -1241,8 +1184,6 @@ async def analyze_source(
         )
 
         final_result_text = compact_scan_result(report)
-        if preview_count:
-            final_result_text += f"\n\n🎞️ <b>{preview_count} video previews</b> • 10% → 90%"
         await edit_status(
             status_message,
             final_result_text,
@@ -3143,6 +3084,30 @@ def web_page(
     size_text = human_size(report.size)
     sampled_text = human_size(report.sampled)
 
+    previews = list(getattr(report, "previews", []) or [])
+    preview_cards = ""
+    if previews:
+        cards = []
+        for index, preview in enumerate(previews[:5], 1):
+            data = str(preview.get("data") or "")
+            if not data:
+                continue
+            ratio = int(preview.get("ratio") or ((index * 20) - 10))
+            try:
+                seconds = int(float(preview.get("seconds") or 0))
+            except Exception:
+                seconds = 0
+            minutes, secs = divmod(max(0, seconds), 60)
+            hours, minutes = divmod(minutes, 60)
+            stamp = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+            cards.append(
+                f'<article class="preview-card">'
+                f'<div class="preview-frame"><img src="data:image/jpeg;base64,{data}" alt="Video preview {index}" loading="lazy"></div>'
+                f'<div class="preview-meta"><b>Preview {index}</b><span>{ratio}% • {stamp}</span></div>'
+                f'</article>'
+            )
+        preview_cards = "".join(cards)
+
     first_video = video[0] if video else {}
     quality = first_video.get("dimensions") or "Not available"
     primary_codec = first_video.get("codec_name") or first_video.get("codec") or "Not available"
@@ -3333,6 +3298,14 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 .empty-icon {{font-size:20px;opacity:.7;}}
 .empty-state strong {{font-size:13px;}}
 .empty-state p {{margin:2px 0 0;color:var(--muted);font-size:11px;}}
+.preview-grid {{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px;}}
+.preview-card {{overflow:hidden;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.025);transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease;}}
+.preview-card:hover {{transform:translateY(-3px);border-color:rgba(94,231,255,.28);box-shadow:0 14px 30px rgba(0,0,0,.22);}}
+.preview-frame {{aspect-ratio:16/9;background:#070816;overflow:hidden;}}
+.preview-frame img {{display:block;width:100%;height:100%;object-fit:cover;}}
+.preview-meta {{display:flex;justify-content:space-between;gap:6px;padding:9px 10px;font-size:10px;}}
+.preview-meta b {{font-size:11px;}}
+.preview-meta span {{color:var(--muted);text-align:right;}}
 .tech-grid {{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;}}
 .tech {{
   padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.028);
@@ -3355,7 +3328,8 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 @keyframes sheen {{0%,100%{{transform:translateX(-25%)}}50%{{transform:translateX(45%)}}}}
 @keyframes reveal {{from{{opacity:0;transform:translateY(18px);filter:blur(7px)}}to{{opacity:1;transform:none;filter:none}}}}
 @media(max-width:860px){{.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:620px){{.wrap{{padding:12px 10px 35px}}.hero{{padding:20px;border-radius:22px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-card{{padding:13px}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(max-width:1000px){{.preview-grid{{grid-template-columns:repeat(3,minmax(0,1fr))}}}}
+@media(max-width:620px){{.preview-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}.wrap{{padding:12px 10px 35px}}.hero{{padding:20px;border-radius:22px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-card{{padding:13px}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
@@ -3414,6 +3388,14 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
     </div>
     <div class="section-body">{track_cards(subtitles, "Subtitle")}</div>
   </section>
+
+  {f'''<section class="section">
+    <div class="section-head">
+      <h2>🎞️ Video previews</h2>
+      <span class="pill">10% → 90%</span>
+    </div>
+    <div class="preview-grid">{preview_cards}</div>
+  </section>''' if preview_cards else ""}
 
   <section class="section">
     <div class="section-head">
