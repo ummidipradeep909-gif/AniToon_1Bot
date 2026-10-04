@@ -235,8 +235,7 @@ HELP_TEXT = (
     "/start — Open Home\n"
     "/help — Open this guide\n"
     "/stats — View your 7-day scan stats\n"
-    "/status — View current bot/queue status\n"
-    "/privacy — View the data handling policy\n"
+
     "/about — About AniToon\n"
     "/addtogroup — Add AniToon to a group\n"
     "/clone — Create/connect a clone bot\n"
@@ -1297,8 +1296,6 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
         types.BotCommand(command="start", description="Open Home"),
         types.BotCommand(command="help", description="How to use AniToon"),
         types.BotCommand(command="stats", description="View your 7-day stats"),
-        types.BotCommand(command="status", description="View bot and queue status"),
-        types.BotCommand(command="privacy", description="View data handling"),
         types.BotCommand(command="about", description="About AniToons"),
         types.BotCommand(command="addtogroup", description="Add the bot to a group"),
         types.BotCommand(command="clones", description="View your clone bots"),
