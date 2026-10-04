@@ -2183,6 +2183,33 @@ h1 {{
   font-size:11px;
 }}
 .footer a {{ color:var(--accent); text-decoration:none; }}
+@keyframes reportReveal {
+  from { opacity:0; transform:translateY(14px); filter:blur(5px); }
+  to { opacity:1; transform:translateY(0); filter:blur(0); }
+}
+.hero-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.action-btn {
+  appearance:none; border:1px solid var(--border); border-radius:12px;
+  background:rgba(148,163,184,.07); color:var(--text); padding:9px 12px;
+  font:inherit; font-size:12px; font-weight:750; cursor:pointer;
+  transition:transform .18s ease, background-color .18s ease, border-color .18s ease;
+}
+.action-btn:hover { transform:translateY(-1px); background:rgba(148,163,184,.12); border-color:rgba(125,211,252,.35); }
+.action-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.copy-status { min-height:18px; color:var(--good); font-size:12px; margin-top:5px; }
+.section { animation:reportReveal .65s cubic-bezier(.2,1,.2,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior:auto !important;
+    animation:none !important;
+    transition:none !important;
+  }
+}
+@media print {
+  body::before, body::after { display:none !important; }
+  .site-nav, .hero-actions, .copy-status { display:none !important; }
+  .section, .hero { box-shadow:none !important; break-inside:avoid; }
+}
 @media(max-width:650px) {{
   .quick,.info-grid {{ grid-template-columns:1fr; }}
   .wrap {{ padding-left:10px; padding-right:10px; }}
@@ -2244,6 +2271,35 @@ h1 {{
     ⛩ AniToon's • <a href="/health">System status</a>
   </div>
 </div>
+<script>
+const FILE_NAME = {json.dumps(report.filename)};
+function copyFilename() {
+  const status = document.getElementById("copy-status");
+  if (!navigator.clipboard) {
+    status.textContent = "Clipboard is not available in this browser.";
+    return;
+  }
+  navigator.clipboard.writeText(FILE_NAME).then(() => {
+    status.textContent = "Filename copied.";
+    setTimeout(() => { status.textContent = ""; }, 1800);
+  }).catch(() => {
+    status.textContent = "Could not copy filename.";
+  });
+}
+let remaining = 300;
+const countdown = document.getElementById("countdown");
+const timer = setInterval(() => {
+  remaining -= 1;
+  if (remaining <= 0) {
+    clearInterval(timer);
+    countdown.textContent = "Expired";
+    return;
+  }
+  const m = String(Math.floor(remaining / 60)).padStart(2, "0");
+  const s = String(remaining % 60).padStart(2, "0");
+  countdown.textContent = m + ":" + s;
+}, 1000);
+</script>
 </body>
 </html>"""
     return document.encode("utf-8")
@@ -2393,13 +2449,21 @@ body::before {{
 body::after {{
   content: "";
   position: fixed;
-  inset: 0;
+  inset: -10%;
   z-index: -1;
   background:
     radial-gradient(900px 420px at 10% 0%, rgba(125,211,252,.12), transparent 65%),
     radial-gradient(850px 420px at 100% 0%, rgba(168,85,247,.12), transparent 65%);
   pointer-events: none;
+  animation: glowDrift 18s ease-in-out infinite alternate;
 }}
+@keyframes glowDrift {
+  from { transform:translate3d(-1%,0,0) scale(1); opacity:.88; }
+  to { transform:translate3d(1%,1%,0) scale(1.03); opacity:1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::after { animation:none !important; }
+}
 .wrap {{ max-width: 1080px; margin:auto; padding:20px 14px 50px; }}
 .hero {{
   padding:24px;
@@ -2493,6 +2557,11 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
       <span class="pill">⏳ Link valid for <span id="countdown" class="countdown">05:00</span></span>
       <span class="pill">🛡️ No complete file download</span>
     </div>
+    <div class="hero-actions">
+      <button class="action-btn" type="button" onclick="copyFilename()">📋 Copy filename</button>
+      <button class="action-btn" type="button" onclick="window.print()">🖨️ Print</button>
+    </div>
+    <div id="copy-status" class="copy-status" aria-live="polite"></div>
 
     <div class="summary">
       <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
@@ -2565,6 +2634,7 @@ async def health_server():
     port = int(os.getenv("PORT", "10000"))
 
     async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        global web_bytes_sent
         try:
             raw = await reader.read(4096)
             first = raw.split(b"\r\n", 1)[0].decode("latin1", "replace")
