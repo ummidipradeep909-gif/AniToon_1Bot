@@ -647,83 +647,48 @@ async def generate_video_previews(
     token: str,
     *,
     budget: int = 256 * 1024,
-    timeout: int = 8,
+    timeout: int = 5,
 ) -> list[dict[str, Any]]:
-    """Generate one tiny web-only preview without downloading the source video."""
+    """Return one Telegram thumbnail only; never download/seek the source video."""
     async with preview_semaphore:
-        f = getattr(message, "file", None)
-        media = getattr(message, "media", None)
-        if not media:
-            return []
-        name = str(getattr(f, "name", None) or "").lower()
-        mime = str(getattr(f, "mime_type", None) or "").lower()
-        ext = (".mkv", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".ts", ".m2ts", ".mts")
-        if "video" not in mime and not name.endswith(ext):
-            return []
-
-        # Prefer Telegram's existing thumbnail. It is a tiny image generated for
-        # the video, so we do not seek through the multi-GB source just to preview it.
         try:
+            f = getattr(message, "file", None)
+            media = getattr(message, "media", None)
+            if not media:
+                return []
+
+            # Telegram's thumbnail is already a small generated image. We use it
+            # directly and intentionally do not fall back to reading the video.
             thumb = await asyncio.wait_for(
                 client.download_media(message, file=bytes, thumb=0),
-                timeout=5,
+                timeout=timeout,
             )
-            if thumb:
-                raw = bytes(thumb)
-                if len(raw) <= PREVIEW_BUDGET:
-                    return [{
-                        "ratio": 0,
-                        "seconds": 0,
-                        "data": base64.b64encode(raw).decode("ascii"),
-                        "mime": "image/jpeg",
-                        "label": "Telegram thumbnail",
-                    }]
-        except Exception:
-            log.debug("Telegram thumbnail preview unavailable | token=%s", token, exc_info=True)
+            if not thumb:
+                log.info("No Telegram thumbnail available | token=%s", token)
+                return []
 
-        total = getattr(f, "size", None)
-        ptoken = f"{token}:preview"
-        effective_budget = max(64 * 1024, min(int(budget), MAX_PROBE_BUDGET))
-        session = register_probe(ptoken, client, media, total, budget=effective_budget)
-        loop = asyncio.get_running_loop()
-        reader = TelegramSeekableFile(session, loop)
+            raw = bytes(thumb)
+            if not raw or len(raw) > PREVIEW_BUDGET:
+                log.info(
+                    "Telegram thumbnail rejected | token=%s | bytes=%s",
+                    token,
+                    len(raw),
+                )
+                return []
 
-        format_hint = None
-        if name.endswith(".mkv") or "matroska" in mime:
-            format_hint = "matroska"
-        elif name.endswith(".webm") or "webm" in mime:
-            format_hint = "webm"
-        elif name.endswith((".mp4", ".m4v", ".mov")) or "mp4" in mime:
-            format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
-        elif name.endswith((".ts", ".m2ts", ".mts")) or "mpegts" in mime:
-            format_hint = "mpegts"
-
-        def work():
-            container = None
-            try:
-                container = _open_with_ffmpeg(reader, format_hint)
-                stream = next((s for s in container.streams if s.type == "video"), None)
-                if stream is None:
-                    return []
-                return _extract_video_previews(container, stream)
-            finally:
-                if container is not None:
-                    with suppress(Exception):
-                        container.close()
-                remove_probe(ptoken)
-                reader.close()
-
-        try:
-            return await asyncio.wait_for(asyncio.to_thread(work), timeout=timeout)
-        except (asyncio.TimeoutError, ProbeBudgetExceeded, ProbeCancelled):
-            log.warning("Preview generation stopped safely | token=%s", token)
-            with suppress(Exception):
-                await session.cancel()
+            return [{
+                "ratio": 0,
+                "seconds": 0,
+                "data": base64.b64encode(raw).decode("ascii"),
+                "mime": "image/jpeg",
+                "label": "Telegram thumbnail",
+            }]
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            log.info("Telegram thumbnail preview unavailable | token=%s", token)
             return []
         except Exception:
-            log.exception("Background preview generation failed | token=%s", token)
+            log.exception("Telegram thumbnail preview failed | token=%s", token)
             return []
-
 
 def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
     options = {
