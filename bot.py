@@ -2506,6 +2506,14 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
   background:rgba(15,23,42,.72); color:#cbd5e1;
 }}
 .countdown {{ color:var(--accent); font-weight:800; }}
+@keyframes reportReveal {{
+  from {{ opacity:0; transform:translateY(14px); filter:blur(5px); }}
+  to {{ opacity:1; transform:translateY(0); filter:blur(0); }}
+}}
+.section {{ animation:reportReveal .65s cubic-bezier(.2,1,.2,1) both; }}
+.section:nth-of-type(2) {{ animation-delay:.08s; }}
+.section:nth-of-type(3) {{ animation-delay:.14s; }}
+.section:nth-of-type(4) {{ animation-delay:.20s; }}
 @media(max-width:720px) {{
   .summary {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
   .grid {{ grid-template-columns:1fr; }}
@@ -2587,44 +2595,36 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
 <script>
 (() => {{
   let left = 300;
-  const el = document.getElementById("countdown");
+  const countdown = document.getElementById("countdown");
   const tick = () => {{
-    const m = Math.floor(left / 60);
-    const s = left % 60;
-    if (el) el.textContent = String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
-    if (left > 0) {{ left -= 1; setTimeout(tick, 1000); }}
+    if (countdown) {{
+      const m = Math.floor(left / 60);
+      const s = left % 60;
+      countdown.textContent =
+        String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    }}
+    if (left > 0) {{
+      left -= 1;
+      setTimeout(tick, 1000);
+    }}
   }};
   tick();
-}})();
-</script>
-<script>
-const FILE_NAME = {json.dumps(report.filename)};
-function copyFilename() {{
+
   const status = document.getElementById("copy-status");
-  if (!navigator.clipboard) {{
-    status.textContent = "Clipboard is not available in this browser.";
-    return;
-  }}
-  navigator.clipboard.writeText(FILE_NAME).then(() => {{
-    status.textContent = "Filename copied.";
-    setTimeout(() => {{ status.textContent = ""; }}, 1800);
-  }}).catch(() => {{
-    status.textContent = "Could not copy filename.";
-  }});
-}}
-let remaining = 300;
-const countdown = document.getElementById("countdown");
-const timer = setInterval(() => {{
-  remaining -= 1;
-  if (remaining <= 0) {{
-    clearInterval(timer);
-    countdown.textContent = "Expired";
-    return;
-  }}
-  const m = String(Math.floor(remaining / 60)).padStart(2, "0");
-  const s = String(remaining % 60).padStart(2, "0");
-  countdown.textContent = m + ":" + s;
-}}, 1000);
+  const button = document.querySelector(".action-btn");
+  window.copyFilename = () => {{
+    if (!navigator.clipboard) {{
+      if (status) status.textContent = "Clipboard is not available.";
+      return;
+    }}
+    navigator.clipboard.writeText(FILE_NAME).then(() => {{
+      if (status) status.textContent = "Filename copied.";
+      setTimeout(() => {{ if (status) status.textContent = ""; }}, 1800);
+    }}).catch(() => {{
+      if (status) status.textContent = "Could not copy filename.";
+    }});
+  }};
+}})();
 </script></body>
 </html>"""
     return document.encode("utf-8")
