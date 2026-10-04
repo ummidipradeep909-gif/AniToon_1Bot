@@ -14,14 +14,36 @@ from typing import Any, Awaitable, Callable
 MAX_INITIAL_PROBE = 1 * 1024 * 1024
 MAX_DEEP_PROBE = 2_560 * 1024
 DEFAULT_CHUNK = 512 * 1024
+MAX_TRACKS_PER_KIND = 100
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
     "eng":"English","en":"English","jpn":"Japanese","ja":"Japanese","hin":"Hindi","hi":"Hindi",
     "tel":"Telugu","te":"Telugu","tam":"Tamil","ta":"Tamil","mal":"Malayalam","ml":"Malayalam",
-    "kan":"Kannada","kn":"Kannada","kor":"Korean","ko":"Korean","zho":"Chinese","chi":"Chinese","zh":"Chinese",
-    "spa":"Spanish","es":"Spanish","fra":"French","fre":"French","fr":"French","deu":"German","ger":"German","de":"German",
-    "ita":"Italian","it":"Italian","rus":"Russian","ru":"Russian","ara":"Arabic","ar":"Arabic","por":"Portuguese","pt":"Portuguese","und":"Undetermined",
+    "kan":"Kannada","kn":"Kannada","mar":"Marathi","mr":"Marathi","ben":"Bengali","bn":"Bengali",
+    "guj":"Gujarati","gu":"Gujarati","pan":"Punjabi","pa":"Punjabi","urd":"Urdu","ur":"Urdu",
+    "nep":"Nepali","ne":"Nepali","sin":"Sinhala","si":"Sinhala","asm":"Assamese","as":"Assamese",
+    "ori":"Odia","ory":"Odia","odia":"Odia","san":"Sanskrit","sa":"Sanskrit",
+    "kor":"Korean","ko":"Korean","zho":"Chinese","chi":"Chinese","zh":"Chinese",
+    "vie":"Vietnamese","vi":"Vietnamese","tha":"Thai","th":"Thai","ind":"Indonesian","id":"Indonesian",
+    "msa":"Malay","may":"Malay","ms":"Malay","fil":"Filipino","tl":"Filipino",
+    "jpn":"Japanese","ja":"Japanese","spa":"Spanish","es":"Spanish","fra":"French","fre":"French","fr":"French",
+    "deu":"German","ger":"German","de":"German","ita":"Italian","it":"Italian","rus":"Russian","ru":"Russian",
+    "ara":"Arabic","ar":"Arabic","fas":"Persian","per":"Persian","fa":"Persian",
+    "por":"Portuguese","pt":"Portuguese","nld":"Dutch","dut":"Dutch","nl":"Dutch",
+    "pol":"Polish","pl":"Polish","tur":"Turkish","tr":"Turkish","ell":"Greek","gre":"Greek","el":"Greek",
+    "heb":"Hebrew","he":"Hebrew","ukr":"Ukrainian","uk":"Ukrainian","ron":"Romanian","rum":"Romanian","ro":"Romanian",
+    "hun":"Hungarian","hu":"Hungarian","ces":"Czech","cze":"Czech","cs":"Czech","slk":"Slovak","slo":"Slovak","sk":"Slovak",
+    "hrv":"Croatian","hr":"Croatian","srp":"Serbian","sr":"Serbian","slv":"Slovenian","sl":"Slovenian",
+    "bul":"Bulgarian","bg":"Bulgarian","swe":"Swedish","sv":"Swedish","dan":"Danish","da":"Danish",
+    "fin":"Finnish","fi":"Finnish","nor":"Norwegian","no":"Norwegian","isl":"Icelandic","ice":"Icelandic","is":"Icelandic",
+    "est":"Estonian","et":"Estonian","lav":"Latvian","lv":"Latvian","lit":"Lithuanian","lt":"Lithuanian",
+    "kat":"Georgian","ka":"Georgian","aze":"Azerbaijani","az":"Azerbaijani","kaz":"Kazakh","kk":"Kazakh",
+    "uzb":"Uzbek","uz":"Uzbek","mong":"Mongolian","mn":"Mongolian","khm":"Khmer","km":"Khmer",
+    "mya":"Burmese","bur":"Burmese","my":"Burmese","lao":"Lao","lo":"Lao",
+    "swa":"Swahili","sw":"Swahili","amh":"Amharic","am":"Amharic","afr":"Afrikaans","af":"Afrikaans",
+    "zul":"Zulu","zu":"Zulu","som":"Somali","so":"Somali",
+    "und":"Undetermined",
 }
 CODEC = {
     "A_AAC":"AAC","A_AAC/MPEG2/LC":"AAC-LC","A_AAC/MPEG4/LC":"AAC-LC","A_AC3":"AC-3","A_EAC3":"E-AC-3","A_OPUS":"Opus","A_FLAC":"FLAC",
@@ -161,10 +183,11 @@ def _flt(data:bytes,s:int,e:int):
     try:return struct.unpack(">f" if e-s==4 else ">d",data[s:e])[0] if e-s in (4,8) else None
     except struct.error:return None
 def _lang(code:str|None)->str|None:
-    c=(code or "").lower().replace("_","-")
+    c=(code or "").lower().replace("_","-").strip()
     if not c or c in {"und", "unknown", "unk"}:
         return None
-    return LANG.get(c) or LANG.get(c.split("-")[0])
+    base = LANG.get(c) or LANG.get(c.split("-")[0])
+    return base or f"Unknown ({c})"
 def _fmtsec(sec:float|None)->str:
     if sec is None or sec<0:return "Not available"
     total=int(round(sec)); h,rem=divmod(total,3600); m,s=divmod(rem,60)
@@ -316,7 +339,10 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
 def _merge(report:Report,track:dict[str,Any]):
     bucket=report.audio.setdefault("tracks",[]) if track["type"]=="audio" else report.video.setdefault("tracks",[]) if track["type"]=="video" else report.subtitles
     key=(track.get("type"),track.get("track"),track.get("language"),track.get("name"),track.get("codec"))
-    if not any((x.get("type"),x.get("track"),x.get("language"),x.get("name"),x.get("codec"))==key for x in bucket):bucket.append(track)
+    if any((x.get("type"),x.get("track"),x.get("language"),x.get("name"),x.get("codec"))==key for x in bucket):
+        return
+    if len(bucket) < MAX_TRACKS_PER_KIND:
+        bucket.append(track)
 
 def _tracks(data:bytes,report:Report):
     p=data.find(b"\x16\x54\xAE\x6B"); total=0
