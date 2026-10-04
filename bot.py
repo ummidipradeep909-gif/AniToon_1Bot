@@ -21,6 +21,7 @@ from telethon.sessions import MemorySession
 
 from file_inspector import Report, format_report, format_section
 from media_probe import (
+    generate_video_previews,
     ProbeBudgetExceeded,
     ProbeCancelled,
     cancel_probe,
@@ -149,6 +150,7 @@ group_touch_cache: dict[tuple[int, int], float] = {}
 owner_broadcast_pending: dict[int, float] = {}
 group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
 bot_audience_touch_cache: dict[tuple[int, int], float] = {}
+preview_tasks: set[asyncio.Task] = set()
 
 
 scan_states: dict[tuple[int, int], ScanState] = {}
@@ -992,8 +994,20 @@ async def render_owner_clones(event, owner_id: int, page: int = 0) -> None:
     )
 
 
+status_edit_cache: dict[int, tuple[float, str]] = {}
+STATUS_EDIT_MIN_INTERVAL = 0.9
+
 async def edit_status(message, text: str, *, buttons=None) -> None:
-    with suppress(Exception):
+    message_id = getattr(message, "id", None)
+    now = time.monotonic()
+    key = int(message_id) if message_id is not None else id(message)
+    previous = status_edit_cache.get(key)
+    if previous and previous[1] == text:
+        return
+    if previous and now - previous[0] < STATUS_EDIT_MIN_INTERVAL:
+        return
+    status_edit_cache[key] = (now, text)
+    with suppress(errors.MessageNotModifiedError, errors.FloodWaitError):
         await message.edit(text, parse_mode="html", buttons=buttons)
 
 
@@ -1043,8 +1057,28 @@ async def run_scan(
             buttons=cancel_button(scan_token),
         )
 
-    return await asyncio.wait_for(
-        inspect_telegram_player(
+    heartbeat_stop = asyncio.Event()
+    async def heartbeat():
+        dots = ("·", "••", "•••")
+        index = 0
+        while not heartbeat_stop.is_set():
+            await asyncio.sleep(4)
+            if heartbeat_stop.is_set():
+                break
+            bar = ("█" * 5) + ("░" * 5)
+            await edit_status(
+                status_message,
+                "🔎 <b>SCANNING METADATA</b>\n\n"
+                f"<code>[{bar}] {dots[index % len(dots)]}</code>\n"
+                "Processing media…",
+                buttons=cancel_button(scan_token),
+            )
+            index += 1
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        return await asyncio.wait_for(
+            inspect_telegram_player(
             client,
             source_message,
             scan_token,
@@ -1054,6 +1088,11 @@ async def run_scan(
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
     )
+    finally:
+        heartbeat_stop.set()
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
 
 
 async def acquire_scan_slot(
@@ -1102,6 +1141,44 @@ async def release_scan_slot() -> None:
     async with scan_queue_lock:
         active_processes = max(0, active_processes - 1)
     check_semaphore.release()
+
+
+async def _generate_previews_background(
+    client: Any,
+    source_message: Any,
+    scan_token: str,
+    state: ScanState,
+    expires_at: datetime,
+) -> None:
+    try:
+        previews = await generate_video_previews(client, source_message, scan_token)
+        if not previews:
+            return
+        state.report.previews = previews
+        await save_web_report(scan_token, asdict(state.report), expires_at)
+        log.info("Web previews ready | token=%s | count=%s", scan_token, len(previews))
+    except Exception:
+        log.exception("Background web preview generation failed | token=%s", scan_token)
+
+
+def _schedule_preview_generation(
+    client: Any,
+    source_message: Any,
+    scan_token: str,
+    state: ScanState,
+    expires_at: datetime,
+) -> None:
+    task = asyncio.create_task(
+        _generate_previews_background(
+            client,
+            source_message,
+            scan_token,
+            state,
+            expires_at,
+        )
+    )
+    preview_tasks.add(task)
+    task.add_done_callback(preview_tasks.discard)
 
 
 async def analyze_source(
@@ -1193,6 +1270,16 @@ async def analyze_source(
                 include_clone=include_clone,
             ),
         )
+
+        if report.video.get("tracks"):
+            _schedule_preview_generation(
+                client,
+                source_message,
+                scan_token,
+                state,
+                expires_at,
+            )
+
         checks_ok += 1
         outcome = "completed"
 
@@ -3615,6 +3702,7 @@ async def health_server():
                     "clones": len(clone_clients),
                     "active_scans": active_processes,
                     "queued_scans": queued_processes,
+                    "preview_tasks": len(preview_tasks),
                     "max_active_scans": MAX_CONCURRENT_CHECKS,
                     "ram_pct": runtime_resource_stats()["ram_pct"],
                     "web_egress_gb": runtime_resource_stats()["web_egress_gb"],
@@ -3859,6 +3947,13 @@ async def main():
         clone_client_ids.clear()
         clone_stats.clear()
         active_scan_clients.clear()
+        for task in list(preview_tasks):
+            task.cancel()
+        for task in list(preview_tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        preview_tasks.clear()
+        status_edit_cache.clear()
 
         health.close()
         await health.wait_closed()
