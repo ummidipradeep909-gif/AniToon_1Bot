@@ -2584,12 +2584,7 @@ async def handle_callback(
 
     if data == "home:back":
         await event.answer()
-        home_text = HOME_TEXT if include_clone else (
-            "⛩ <b>AniToon Clone Bot</b> ⛩\n\n"
-            "🔎 Scan Telegram media files for detailed metadata.\n"
-            "🌐 View complete file information in your browser.\n\n"
-            "Choose an option below."
-        )
+        home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
         sender = await event.get_sender()
         await event.edit(
             home_text,
