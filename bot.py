@@ -788,6 +788,7 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
         types.BotCommand(command="help", description="Show help"),
         types.BotCommand(command="about", description="About AniToons"),
         types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+        types.BotCommand(command="clones", description="View your clone bots and stats"),
         types.BotCommand(command="cancel", description="Cancel your running scan"),
     ]
     if include_clone:
@@ -951,6 +952,7 @@ async def handle_clone_token_message(event) -> bool:
         parse_mode="html",
         buttons=[
             [Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")],
+            [Button.inline("🤖 My Clones", b"home:clones")],
             [Button.inline("🧬 Create Another Clone", b"home:clone")],
             [Button.inline("⬅️ Home", b"home:back")],
         ],
