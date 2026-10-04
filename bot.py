@@ -63,7 +63,7 @@ BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 # Clone bots are live in memory only; scan execution is globally queued.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
-SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "3")), 30))
+SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")), 10))
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -1391,11 +1391,6 @@ async def handle_new_message(
             await event.reply(f"⏳ Please wait {remaining}s before starting another scan.")
             return
 
-        active_for_user = sum(1 for uid in active_scan_users.values() if uid == int(sender_id))
-        if active_for_user >= MAX_ACTIVE_SCANS_PER_USER:
-            await event.reply("⏳ You already have a scan running. Please wait for it to finish.")
-            return
-
         last_scan_by_user[int(sender_id)] = now
 
     await record_user(event)
@@ -2521,6 +2516,9 @@ async def health_server():
                     "checks_failed": checks_failed,
                     "web_reports": len(web_states),
                     "clones": len(clone_clients),
+                    "active_scans": active_processes,
+                    "queued_scans": queued_processes,
+                    "max_active_scans": MAX_CONCURRENT_CHECKS,
                     "uptime_seconds": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                     ),
