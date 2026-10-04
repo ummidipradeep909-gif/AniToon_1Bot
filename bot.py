@@ -234,6 +234,7 @@ def web_report_button(
 ):
     buttons = [
         [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
+        [Button.inline("💾 Save to private storage", f"archive:{token}".encode("ascii"))],
     ]
     if include_clone and CLONE_BOT_USERNAME:
         buttons.append([
@@ -315,6 +316,17 @@ ABOUT_TEXT = (
 )
 
 
+def _coerce_report(value: Any) -> Report:
+    """Normalize current/legacy scan return values before web rendering."""
+    if isinstance(value, Report):
+        return value
+    if isinstance(value, tuple) and value and isinstance(value[0], Report):
+        return value[0]
+    if isinstance(value, dict):
+        return Report(**value)
+    raise TypeError(f"Unsupported report state type: {type(value).__name__}")
+
+
 def cache_state(
     status_message: Any,
     source_message: Any,
@@ -324,9 +336,10 @@ def cache_state(
 ) -> ScanState:
     token = web_token or secrets.token_urlsafe(18)
     expiry = expires_at or (datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS))
+    normalized_report = _coerce_report(report)
     state = ScanState(
         source_message=source_message,
-        report=report,
+        report=normalized_report,
         created_at=time.monotonic(),
         web_token=token,
         expires_at=expiry,
@@ -1668,21 +1681,55 @@ GROUP_ONBOARDING_MESSAGES = (
 def _bot_id_for_client(client: Any) -> int | None:
     return bot_identity_ids.get(id(client))
 
+def _storage_invite_hash(value: str) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("+"):
+        return raw[1:].strip("/") or None
+    try:
+        parsed = urlsplit(raw)
+    except Exception:
+        return None
+    host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").strip("/")
+    if host in {"t.me", "telegram.me"} and path.startswith("+"):
+        return path[1:].strip("/") or None
+    return None
+
+
 async def _resolve_storage_peer(client: Any) -> Any | None:
     key = id(client)
     if key in storage_peers:
         return storage_peers[key]
     if not STORAGE_CHANNEL:
         return None
+
+    invite_hash = _storage_invite_hash(STORAGE_CHANNEL)
     try:
-        peer = await asyncio.wait_for(client.get_entity(STORAGE_CHANNEL), timeout=12)
+        if invite_hash:
+            checked = await asyncio.wait_for(
+                client(functions.messages.CheckChatInviteRequest(invite_hash)),
+                timeout=12,
+            )
+            peer = getattr(checked, "chat", None)
+            if peer is not None:
+                storage_peers[key] = peer
+                return peer
+
+        target: Any = STORAGE_CHANNEL
+        if isinstance(target, str) and target.lstrip("-").isdigit():
+            target = int(target)
+        peer = await asyncio.wait_for(client.get_entity(target), timeout=12)
         storage_peers[key] = peer
         return peer
     except Exception:
         log.warning(
-            "Storage channel unavailable | bot=%s | bot must be a member with post permission | %s",
+            "Storage channel unavailable | bot=%s | configured_target=%s | "
+            "the bot must already be a member with permission to post",
             _bot_id_for_client(client) or "main",
             STORAGE_CHANNEL,
+            exc_info=True,
         )
         return None
 
@@ -2585,13 +2632,6 @@ async def handle_new_message(
     if include_clone and await handle_clone_token_message(event):
         return
 
-    # Archive user media silently in the background for both main and clone bots.
-    _schedule_storage_archive(
-        event,
-        client=client,
-        bot_username=bot_username,
-    )
-
     if include_clone:
         sender_for_broadcast = await event.get_sender()
         owner_user_id = getattr(sender_for_broadcast, "id", None)
@@ -3130,6 +3170,59 @@ async def handle_callback(
         )
         return
 
+    if data.startswith("archive:"):
+        token = data[8:].strip()
+        state = web_states.get(token)
+        if state is None:
+            try:
+                stored = await load_web_report(token)
+                if stored:
+                    payload = stored.get("report") if isinstance(stored, dict) else {}
+                    state = ScanState(
+                        source_message=None,
+                        report=_coerce_report(payload or {}),
+                        created_at=time.monotonic(),
+                        web_token=token,
+                        expires_at=stored.get("expires_at"),
+                    )
+                    web_states[token] = state
+            except Exception:
+                log.exception("Failed to restore report for archive action | token=%s", token)
+
+        if state is None or state.source_message is None:
+            await event.answer(
+                "This file is no longer available for storage. Send the file again.",
+                alert=True,
+            )
+            return
+        if getattr(state.source_message, "media", None) is None:
+            await event.answer("This report has no Telegram media to store.", alert=True)
+            return
+
+        await event.answer("Saving the file to private storage…")
+        ok = await archive_scanned_file(
+            client,
+            state.source_message,
+            user_id=getattr(state.source_message, "sender_id", None),
+            bot_username=bot_username,
+        )
+        if ok:
+            await event.edit(
+                compact_scan_result(state.report) + "\n\n💾 <b>Saved to private storage.</b>",
+                parse_mode="html",
+                buttons=web_report_button(
+                    token,
+                    bot_username,
+                    include_clone=include_clone,
+                ),
+            )
+        else:
+            await event.answer(
+                "Storage is unavailable. Make sure this bot is a member of the private channel and can post there.",
+                alert=True,
+            )
+        return
+
     if data.startswith("scan:"):
         token = data[5:].strip()
         pending = pending_scans.pop(token, None)
@@ -3442,6 +3535,7 @@ def web_page(
     report_token: str | None = None,
     expires_at: datetime | None = None,
 ) -> bytes:
+    report = _coerce_report(report)
     filename = html.escape(report.filename or "Telegram media file")
     generated = datetime.now(timezone.utc)
     generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
