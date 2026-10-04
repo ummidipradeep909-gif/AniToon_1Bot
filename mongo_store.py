@@ -80,18 +80,27 @@ async def _get_db():
             )
             await asyncio.to_thread(_client.admin.command, "ping")
             _db = _client[_database_name()]
-            await asyncio.to_thread(
-                _db.scans.create_index([("user_id", 1), ("created_at", -1)])
+
+            # Indexes are an optimization. The Atlas database user may be
+            # intentionally restricted and not have createIndex privileges.
+            index_specs = (
+                ("scans.user_created", _db.scans, [("user_id", 1), ("created_at", -1)], {}),
+                ("scans.created", _db.scans, [("created_at", -1)], {}),
+                ("clones.user_status_created", _db.clones, [("user_id", 1), ("status", 1), ("created_at", -1)], {}),
+                ("reports.expiry", _db.reports, "expires_at", {"expireAfterSeconds": 0}),
             )
-            await asyncio.to_thread(
-                _db.scans.create_index([("created_at", -1)])
-            )
-            await asyncio.to_thread(
-                _db.clones.create_index([("user_id", 1), ("status", 1), ("created_at", -1)])
-            )
-            await asyncio.to_thread(
-                _db.reports.create_index("expires_at", expireAfterSeconds=0)
-            )
+            for label, collection, keys, options in index_specs:
+                try:
+                    await asyncio.to_thread(collection.create_index, keys, **options)
+                except Exception:
+                    log.warning(
+                        "MongoDB index unavailable | index=%s | continuing without it",
+                        label,
+                        exc_info=True,
+                    )
+
+            # A successful ping is sufficient to mark MongoDB usable for
+            # normal reads/writes, even when index creation is forbidden.
             log.info("MongoDB connected | database=%s", _database_name())
             return _db
         except Exception:
