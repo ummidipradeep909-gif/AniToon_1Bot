@@ -950,7 +950,13 @@ async def load_web_report(token: str) -> dict[str, Any] | None:
             },
             {"report": 1, "expires_at": 1},
         )
-        return row.get("report") if row else None
+        return (
+            {
+                "report": row.get("report"),
+                "expires_at": row.get("expires_at"),
+            }
+            if row else None
+        )
     except Exception:
         log.exception("Failed to load web report")
         return None
