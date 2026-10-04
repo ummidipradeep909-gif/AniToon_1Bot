@@ -71,6 +71,7 @@ SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")),
 REPORT_LINK_TTL_SECONDS = 5 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
+MAX_REPORT_TRACKS = 100
 PUBLIC_WEB_URL = (
     os.getenv("PUBLIC_WEB_URL", "https://anitoons-1bot-oa44.onrender.com")
     .strip()
@@ -78,7 +79,8 @@ PUBLIC_WEB_URL = (
 )
 
 # Private Telegram channel used for automatic media archiving.
-STORAGE_CHANNEL = os.getenv("STORAGE_CHANNEL", "https://t.me/+TlTvvw02fcViNjM9").strip()
+STORAGE_CHANNEL = os.getenv("STORAGE_CHANNEL", "").strip()
+STORAGE_CHANNEL_ID_DEFAULT = "-1004491486679"
 STORAGE_SEND_TIMEOUT = 20
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
@@ -245,12 +247,46 @@ def web_report_button(
     return buttons
 
 
-def compact_scan_result(report: Report) -> str:
-    return (
-        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
-        "🖼️ The Telegram thumbnail is shown here when available.\n"
-        "🌐 Tap <b>Open File Info</b> to view all video, audio, subtitle and technical metadata."
+def _language_names_for_report(report: Report, key: str) -> list[str]:
+    tracks = report.video.get("tracks", []) if key == "video" else (
+        report.audio.get("tracks", []) if key == "audio" else report.subtitles
     )
+    names=[]
+    for track in tracks if isinstance(tracks, list) else []:
+        name = str(track.get("language_name") or "").strip()
+        code = str(track.get("language") or "").strip()
+        shown = name or (f"Unknown ({code})" if code else "")
+        if shown and shown not in names:
+            names.append(shown)
+    return names[:12]
+
+def compact_scan_result(report: Report) -> str:
+    video = report.video.get("tracks", []) if isinstance(report.video, dict) else []
+    audio = report.audio.get("tracks", []) if isinstance(report.audio, dict) else []
+    subtitles = report.subtitles if isinstance(report.subtitles, list) else []
+    video_langs = _language_names_for_report(report, "video")
+    audio_langs = _language_names_for_report(report, "audio")
+    subtitle_langs = _language_names_for_report(report, "subtitle")
+    lines = [
+        "✅ <b>METADATA SCAN COMPLETE</b>",
+        "",
+        f"🎬 Video: <b>{len(video[:MAX_REPORT_TRACKS])}</b> track(s)",
+        f"🎧 Audio: <b>{len(audio[:MAX_REPORT_TRACKS])}</b> track(s)",
+        f"💬 Subtitles: <b>{len(subtitles[:MAX_REPORT_TRACKS])}</b> track(s)",
+    ]
+    if video_langs:
+        lines.append("🎬 Video languages: " + ", ".join(html.escape(x) for x in video_langs))
+    if audio_langs:
+        lines.append("🎧 Audio languages: " + ", ".join(html.escape(x) for x in audio_langs))
+    if subtitle_langs:
+        lines.append("💬 Subtitle languages: " + ", ".join(html.escape(x) for x in subtitle_langs))
+    lines += [
+        "",
+        "🖼️ One Telegram thumbnail is added to the web report when Telegram provides one.",
+        "🌐 Tap <b>Open File Info</b> for the full track-by-track technical report.",
+        "⏱️ <b>This report link expires 5 minutes after creation.</b>",
+    ]
+    return "\n".join(lines)
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
@@ -353,9 +389,9 @@ def _coerce_report(value: Any) -> Report:
     if not isinstance(previews, list):
         previews = [previews] if isinstance(previews, dict) else []
 
-    report.video["tracks"] = [item for item in video_tracks if isinstance(item, dict)]
-    report.audio["tracks"] = [item for item in audio_tracks if isinstance(item, dict)]
-    report.subtitles = [item for item in subtitles if isinstance(item, dict)]
+    report.video["tracks"] = [item for item in video_tracks if isinstance(item, dict)][:MAX_REPORT_TRACKS]
+    report.audio["tracks"] = [item for item in audio_tracks if isinstance(item, dict)][:MAX_REPORT_TRACKS]
+    report.subtitles = [item for item in subtitles if isinstance(item, dict)][:MAX_REPORT_TRACKS]
     report.previews = [
         item for item in previews
         if isinstance(item, dict) and str(item.get("data") or "").strip()
