@@ -174,11 +174,6 @@ async def record_clone_request(
             "status": "online",
             "last_activity": now,
             "updated_at": now,
-            "messages_received": 0,
-            "scans_started": 0,
-            "scans_completed": 0,
-            "scans_failed": 0,
-            "scans_cancelled": 0,
         }
         if cipher:
             set_fields["token_encrypted"] = cipher.encrypt(token.encode("utf-8")).decode("ascii")
@@ -205,66 +200,6 @@ async def record_clone_request(
         )
     except Exception:
         log.exception("Failed to store clone configuration")
-
-
-
-async def load_clone_requests() -> list[dict[str, Any]]:
-    """Load encrypted clone tokens so live clone bots can be restored after restart."""
-    db = await _get_db()
-    if db is None:
-        return []
-
-    cipher = _cipher()
-    if cipher is None:
-        return []
-
-    try:
-        rows = await asyncio.to_thread(
-            lambda: list(
-                db.clones.find(
-                    {
-                        "status": {"$in": ["validated", "online"]},
-                        "token_encrypted": {"$exists": True, "$ne": ""},
-                    },
-                    {
-                        "user_id": 1,
-                        "clone_id": 1,
-                        "clone_username": 1,
-                        "token_encrypted": 1,
-                    },
-                )
-            )
-        )
-
-        restored = []
-        for row in rows:
-            encrypted = row.get("token_encrypted")
-            if not encrypted:
-                continue
-            try:
-                token = cipher.decrypt(str(encrypted).encode("ascii")).decode("utf-8")
-            except (InvalidToken, ValueError, UnicodeDecodeError):
-                log.exception(
-                    "Could not decrypt saved clone token for clone_id=%s",
-                    row.get("clone_id"),
-                )
-                continue
-            restored.append(
-                {
-                    "user_id": row.get("user_id"),
-                    "clone_id": row.get("clone_id"),
-                    "clone_username": row.get("clone_username"),
-                    "token": token,
-                }
-            )
-
-        log.info("Loaded %s saved clone configuration(s)", len(restored))
-        return restored
-    except Exception:
-        log.exception("Failed to load saved clone configurations")
-        return []
-
-
 
 async def update_clone_stats(
     *,
