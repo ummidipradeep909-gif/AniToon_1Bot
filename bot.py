@@ -36,6 +36,7 @@ from mongo_store import (
     owner_user_scans,
     load_web_report,
     ensure_mongodb,
+    mongodb_is_configured,
     mongodb_is_connected,
     record_clone_request,
     user_scan_summary,
@@ -1507,7 +1508,12 @@ async def render_user_stats(event, user_id: int, *, edit: bool = True) -> None:
 
 async def render_public_status(event, *, edit: bool = True) -> None:
     resources = runtime_resource_stats()
-    mongo = "🟢 Connected" if mongodb_is_connected() else "🔴 Not connected"
+    if mongodb_is_connected():
+        mongo = "🟢 Connected"
+    elif mongodb_is_configured():
+        mongo = "🟠 Configured but unreachable"
+    else:
+        mongo = "🔴 URI not configured"
     queue = (
         f"⚡ Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
         f"⏳ Queued scans: <b>{queued_processes}</b>"
@@ -1970,9 +1976,8 @@ async def handle_callback(
         await event.answer()
         await event.edit(
             "🔎 <b>Scan Files</b>\n\n"
-            "Send a Telegram video or document in this chat.\n"
-            "The scan starts only after you press <b>📥 Download Metadata</b>.\n\n"
-            "🛡️ Large files are inspected with bounded byte-range reads.",
+            "🟢 <b>Scanner ready.</b>\n"
+            "📦 Bounded metadata inspection is active.",
             parse_mode="html",
             buttons=scan_page_buttons(),
         )
@@ -3097,7 +3102,11 @@ async def main():
 
         try:
             mongo_ok = await ensure_mongodb()
-            log.info("MongoDB startup check | connected=%s", mongo_ok)
+            log.info(
+                "MongoDB startup check | configured=%s | connected=%s",
+                mongodb_is_configured(),
+                mongo_ok,
+            )
             if mongo_ok:
                 from mongo_store import purge_expired_web_reports
                 await purge_expired_web_reports()
