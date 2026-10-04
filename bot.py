@@ -1203,6 +1203,8 @@ async def handle_callback(
     include_clone: bool = True,
 ):
     purge_pending_scans()
+    data = (event.data or b"").decode("ascii", "ignore")
+
     if data == "owner:dashboard":
         await event.answer()
         sender = await event.get_sender()
@@ -1242,10 +1244,7 @@ async def handle_callback(
         await render_owner_user_scans(event, int(user_id), target_user_id)
         return
 
-    data = (event.data or b"").decode("ascii", "ignore")
-
-    if data == "home:clones":
-        await event.answer()
+    if data == "home:clones":        await event.answer()
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
         if user_id is None or not include_clone:
