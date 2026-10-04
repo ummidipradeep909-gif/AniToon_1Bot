@@ -2029,10 +2029,15 @@ async def handle_callback(
             "🌐 View complete file information in your browser.\n\n"
             "Choose an option below."
         )
+        sender = await event.get_sender()
         await event.edit(
             home_text,
             parse_mode="html",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                user_id=getattr(sender, "id", None),
+            ),
         )
         return
 
@@ -2908,6 +2913,7 @@ async def health_server():
                     "status": "ok",
                     "service": "anitoons-file-intelligence",
                     "telegram_connected": bot.is_connected(),
+                    "mongodb_connected": mongodb_is_connected(),
                     "checks_total": checks_total,
                     "checks_ok": checks_ok,
                     "checks_failed": checks_failed,
@@ -3046,6 +3052,16 @@ async def main():
                     wait_seconds,
                 )
                 await asyncio.sleep(wait_seconds)
+
+        try:
+            mongo_ok = await ensure_mongodb()
+            log.info("MongoDB startup check | connected=%s", mongo_ok)
+            if mongo_ok:
+                from mongo_store import purge_expired_web_reports
+                await purge_expired_web_reports()
+        except Exception:
+            mongo_ok = False
+            log.exception("MongoDB startup check failed")
 
         try:
             await _set_bot_commands(bot, include_clone=True)
