@@ -2073,6 +2073,28 @@ async def handle_new_message(
     if include_clone and await handle_clone_token_message(event):
         return
 
+    if include_clone:
+        sender_for_broadcast = await event.get_sender()
+        owner_user_id = getattr(sender_for_broadcast, "id", None)
+        if (
+            owner_user_id is not None
+            and _owner_allowed(owner_user_id)
+            and _owner_broadcast_pending(int(owner_user_id))
+        ):
+            if text:
+                owner_broadcast_pending.pop(int(owner_user_id), None)
+                result = await _broadcast_owner_message(text)
+                await event.reply(
+                    "✅ <b>Broadcast finished</b>\n\n"
+                    f"📢 Groups reached: <b>{result['sent']}/{result['groups']}</b>\n"
+                    f"🤖 Clone bots covered: <b>{result['clones']}</b>\n"
+                    f"👤 Clone-owner copies: <b>{result['clone_notifications']}</b>\n"
+                    f"⚠️ Failed deliveries: <b>{result['failed']}</b>",
+                    parse_mode="html",
+                    buttons=[[Button.inline("👑 Owner Dashboard", b"owner:dashboard")]],
+                )
+                return
+
     home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
     help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
 
