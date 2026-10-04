@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import json
 import logging
@@ -116,6 +117,7 @@ class ScanState:
     report: Report
     created_at: float
     web_token: str
+    expires_at: datetime | None = None
     busy: bool = False
 
 
@@ -161,6 +163,11 @@ OWNER_BROADCAST_TTL_SECONDS = 10 * 60
 GROUP_TOUCH_INTERVAL_SECONDS = 15 * 60
 GROUP_ONBOARDING_LOOP_SECONDS = 300
 GROUP_ONBOARDING_DAYS = 7
+
+ANIME_WALLPAPER_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1600 900\" preserveAspectRatio=\"xMidYMid slice\">\n<defs>\n<linearGradient id=\"sky\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop stop-color=\"#070b25\"/><stop offset=\".52\" stop-color=\"#18266b\"/><stop offset=\"1\" stop-color=\"#31164f\"/></linearGradient>\n<radialGradient id=\"moon\"><stop stop-color=\"#fffde8\"/><stop offset=\".6\" stop-color=\"#bfeaff\"/><stop offset=\"1\" stop-color=\"#7b86ff\" stop-opacity=\"0\"/></radialGradient>\n<linearGradient id=\"mount\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop stop-color=\"#111a48\"/><stop offset=\"1\" stop-color=\"#060816\"/></linearGradient>\n<linearGradient id=\"water\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop stop-color=\"#122d63\"/><stop offset=\"1\" stop-color=\"#080b23\"/></linearGradient>\n<filter id=\"glow\"><feGaussianBlur stdDeviation=\"8\"/></filter><filter id=\"soft\"><feGaussianBlur stdDeviation=\"2.5\"/></filter>\n</defs>\n<rect width=\"1600\" height=\"900\" fill=\"url(#sky)\"/><circle cx=\"1210\" cy=\"170\" r=\"155\" fill=\"url(#moon)\" opacity=\".78\"/>\n<g fill=\"#dbe9ff\" opacity=\".9\"><circle cx=\"980\" cy=\"90\" r=\"2\"/><circle cx=\"1060\" cy=\"130\" r=\"2\"/><circle cx=\"1280\" cy=\"80\" r=\"2.5\"/><circle cx=\"1400\" cy=\"160\" r=\"2\"/><circle cx=\"1160\" cy=\"235\" r=\"1.8\"/><circle cx=\"820\" cy=\"150\" r=\"1.5\"/><circle cx=\"690\" cy=\"90\" r=\"2\"/><circle cx=\"1510\" cy=\"95\" r=\"1.7\"/></g>\n<g opacity=\".55\" filter=\"url(#glow)\" fill=\"#7fdfff\"><circle cx=\"1040\" cy=\"180\" r=\"3\"/><circle cx=\"1370\" cy=\"120\" r=\"4\"/><circle cx=\"890\" cy=\"210\" r=\"3\"/></g>\n<path d=\"M500 650L760 390 930 560 1130 300 1540 650Z\" fill=\"url(#mount)\"/><path d=\"M730 420l40-30 30 36 55 45-120-4z\" fill=\"#dce5ff\" opacity=\".34\"/>\n<path d=\"M0 680L220 505 410 615 650 430 820 650 1080 510 1290 650 1450 500 1600 610V900H0Z\" fill=\"#080c25\"/>\n<path d=\"M0 700Q400 660 800 705T1600 690V900H0Z\" fill=\"url(#water)\"/>\n<g opacity=\".22\" fill=\"#9acfff\"><ellipse cx=\"1100\" cy=\"760\" rx=\"360\" ry=\"16\"/><ellipse cx=\"850\" cy=\"820\" rx=\"250\" ry=\"11\"/><ellipse cx=\"1320\" cy=\"850\" rx=\"180\" ry=\"9\"/></g>\n<g stroke=\"#271d50\" stroke-width=\"16\" fill=\"none\" opacity=\".95\"><path d=\"M120 600V410M260 600V410M90 430H290M105 385H275\"/></g>\n<g stroke=\"#ff6cae\" stroke-width=\"10\" stroke-linecap=\"round\" opacity=\".7\" filter=\"url(#soft)\"><path d=\"M0 150Q170 90 360 250T610 130\"/><path d=\"M40 175Q190 120 330 265\"/></g>\n<g fill=\"#ff8ec7\" opacity=\".92\"><circle cx=\"120\" cy=\"150\" r=\"13\"/><circle cx=\"160\" cy=\"120\" r=\"10\"/><circle cx=\"230\" cy=\"170\" r=\"15\"/><circle cx=\"310\" cy=\"215\" r=\"11\"/><circle cx=\"400\" cy=\"200\" r=\"14\"/><circle cx=\"470\" cy=\"155\" r=\"9\"/><circle cx=\"570\" cy=\"190\" r=\"12\"/><circle cx=\"70\" cy=\"215\" r=\"8\"/></g>\n<g fill=\"#ffbfdc\" opacity=\".65\"><circle cx=\"190\" cy=\"250\" r=\"5\"/><circle cx=\"360\" cy=\"110\" r=\"6\"/><circle cx=\"520\" cy=\"260\" r=\"5\"/><circle cx=\"455\" cy=\"285\" r=\"4\"/></g>\n<g transform=\"translate(1310 500)\" fill=\"#050713\" stroke=\"#10163d\" stroke-width=\"3\"><circle cx=\"0\" cy=\"-100\" r=\"43\"/><path d=\"M-78 55Q-72-30 0-48Q72-30 78 55L110 200H-110Z\"/><path d=\"M-54-42L0 5 54-42 82 12 35 55 0 32-35 55-82 12Z\" fill=\"#0a0d21\"/><path d=\"M-63 62Q0 95 63 62\" fill=\"none\" stroke=\"#27336e\" stroke-width=\"9\"/><path d=\"M-90 25Q0 0 90 25\" fill=\"none\" stroke=\"#0d1230\" stroke-width=\"20\"/><path d=\"M-24 92L-62 180M24 92L62 180\" stroke=\"#080a18\" stroke-width=\"32\" stroke-linecap=\"round\"/><path d=\"M-50 192L-82 218M50 192L82 218\" stroke=\"#111631\" stroke-width=\"18\" stroke-linecap=\"round\"/></g>\n<g fill=\"#c9d7ff\" opacity=\".28\"><circle cx=\"1280\" cy=\"610\" r=\"6\"/><circle cx=\"1450\" cy=\"560\" r=\"4\"/><circle cx=\"1160\" cy=\"690\" r=\"5\"/></g>\n<rect width=\"1600\" height=\"900\" fill=\"#050611\" opacity=\".17\"/>\n</svg>"
+ANIME_WALLPAPER_DATA_URI = "data:image/svg+xml;base64," + base64.b64encode(
+    ANIME_WALLPAPER_SVG.encode("utf-8")
+).decode("ascii")
 
 def add_to_group_url(bot_username: str = BOT_USERNAME) -> str:
     permissions = GROUP_ADMIN_PERMISSIONS
@@ -290,13 +297,16 @@ def cache_state(
     source_message: Any,
     report: Report,
     web_token: str | None = None,
+    expires_at: datetime | None = None,
 ) -> ScanState:
     token = web_token or secrets.token_urlsafe(18)
+    expiry = expires_at or (datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS))
     state = ScanState(
         source_message=source_message,
         report=report,
         created_at=time.monotonic(),
         web_token=token,
+        expires_at=expiry,
     )
     web_states[token] = state
     while len(web_states) > MAX_STORED_RESULTS:
@@ -315,10 +325,17 @@ def purge_pending_scans() -> None:
 
 
 def _purge_states() -> None:
-    now = time.monotonic()
+    now_mono = time.monotonic()
+    now_utc = datetime.now(timezone.utc)
     expired = [
         token for token, state in web_states.items()
-        if now - state.created_at > REPORT_LINK_TTL_SECONDS
+        if (
+            state.expires_at is not None
+            and now_utc >= state.expires_at
+        ) or (
+            state.expires_at is None
+            and now_mono - state.created_at > REPORT_LINK_TTL_SECONDS
+        )
     ]
     for token in expired:
         web_states.pop(token, None)
@@ -1135,11 +1152,13 @@ async def analyze_source(
             client=client,
         )
 
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS)
         state = cache_state(
             status_message,
             source_message,
             report,
             web_token=scan_token,
+            expires_at=expires_at,
         )
         if state is None:
             raise RuntimeError("Could not create web report link")
@@ -1151,7 +1170,7 @@ async def analyze_source(
             await save_web_report(
                 scan_token,
                 asdict(report),
-                datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS),
+                expires_at,
             )
         except Exception:
             log.exception("Failed to persist web report")
@@ -2845,6 +2864,7 @@ def home_page(report_token: str | None = None) -> bytes:
 *{{box-sizing:border-box}}
 html{{scroll-behavior:smooth}}
 body{{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-x:hidden}}
+.anime-wallpaper{{position:fixed;inset:0;z-index:-5;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.34;filter:saturate(1.06) contrast(1.05);transform:scale(1.03);animation:wallpaperZoom 18s ease-in-out infinite alternate;pointer-events:none}}
 body::before{{content:"";position:fixed;inset:0;z-index:-4;background:
 radial-gradient(900px 620px at 8% 2%,rgba(106,89,255,.22),transparent 68%),
 radial-gradient(760px 520px at 94% 10%,rgba(45,216,255,.16),transparent 70%),
@@ -2890,6 +2910,7 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .report-section iframe{{display:block;width:100%;height:1900px;border:0;background:#050611}}
 .footer{{display:flex;justify-content:space-between;gap:12px;margin-top:18px;color:#777d98;font-size:10px;padding:0 4px}}
 .footer b{{color:#b7b8ca}}
+@keyframes wallpaperZoom{{from{{transform:scale(1.03)}}to{{transform:scale(1.08)}}}}
 @keyframes spin{{to{{transform:rotate(360deg)}}}}
 @keyframes float1{{0%,100%{{transform:translate3d(0,0,0)}}50%{{transform:translate3d(70px,45px,0) scale(1.08)}}}}
 @keyframes float2{{0%,100%{{transform:translate3d(0,0,0)}}50%{{transform:translate3d(-75px,-30px,0) scale(1.1)}}}}
@@ -2902,7 +2923,7 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 </style>
 </head>
 <body>
-<div class="topline"></div><div class="grid"></div><div class="float a"></div><div class="float b"></div>
+<div class="anime-wallpaper"></div><div class="topline"></div><div class="grid"></div><div class="float a"></div><div class="float b"></div>
 <div class="wrap">
   <nav class="nav">
     <div class="brand">AniToon Media Info</div>
@@ -2946,7 +2967,11 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
     return document.encode("utf-8")
 
 
-def web_page(report: Report, report_token: str | None = None) -> bytes:
+def web_page(
+    report: Report,
+    report_token: str | None = None,
+    expires_at: datetime | None = None,
+) -> bytes:
     filename = html.escape(report.filename or "Telegram media file")
     generated = datetime.now(timezone.utc)
     generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
@@ -3093,6 +3118,7 @@ body {{
   margin:0;
   min-height:100vh;
   color:var(--text);
+.anime-wallpaper {{ position:fixed; inset:0; z-index:-5; background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat; opacity:.30; filter:saturate(1.08) contrast(1.04); transform:scale(1.03); animation:wallpaperZoom 20s ease-in-out infinite alternate; pointer-events:none; }}
   background:var(--bg);
   font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   overflow-x:hidden;
@@ -3259,6 +3285,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 .footer strong {{color:#b9bad0;}}
 .countdown {{color:var(--accent-2);font-weight:900;}}
 .reveal-line {{height:1px;background:linear-gradient(90deg,transparent,rgba(154,140,255,.45),transparent);margin:2px 0 0;}}
+@keyframes wallpaperZoom {{from {{transform:scale(1.03)}}to {{transform:scale(1.08)}}}}
 @keyframes aurora {{to {{transform:rotate(360deg)}}}}
 @keyframes floatA {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(80px,40px,0) scale(1.12)}}}}
 @keyframes floatB {{0%,100%{{transform:translate3d(0,0,0) scale(1)}}50%{{transform:translate3d(-80px,-30px,0) scale(1.10)}}}}
@@ -3272,6 +3299,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 </style>
 </head>
 <body>
+<div class="anime-wallpaper"></div>
 <div class="top-glow"></div>
 <div class="bg-grid"></div>
 <div class="orb a"></div><div class="orb b"></div>
@@ -3290,7 +3318,7 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
     <div class="hero-meta">
       <span class="pill">📦 {esc(container_name)}</span>
       <span class="pill">📏 {esc(size_text)}</span>
-      <span class="pill">⏱️ <span id="countdown" class="countdown">05:00</span></span>
+      <span class="pill">⏳ Expires in <span id="countdown" class="countdown">--:--</span></span>
     </div>
 
     <div class="summary">
@@ -3351,18 +3379,20 @@ h1 {{ margin:14px 0 5px;font-size:clamp(25px,5vw,42px);line-height:1.05;letter-s
 
 <script>
 (() => {{
-  let left = 300;
+  const expiresAt = {int(expires_at.timestamp() * 1000) if expires_at else 0};
   const countdown = document.getElementById("countdown");
   const tick = () => {{
-    if (countdown) {{
-      const m = Math.floor(left / 60);
-      const s = left % 60;
-      countdown.textContent = String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+    if (!countdown) return;
+    if (!expiresAt) {{
+      countdown.textContent = "ACTIVE";
+      return;
     }}
-    if (left > 0) {{
-      left -= 1;
-      setTimeout(tick,1000);
-    }}
+    const left = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+    const m = Math.floor(left / 60);
+    const s = left % 60;
+    countdown.textContent = String(m).padStart(2,"0") + ":" + String(s).padStart(2,"0");
+    if (left > 0) setTimeout(tick,1000);
+    else countdown.textContent = "EXPIRED";
   }};
   tick();
 }})();
@@ -3582,12 +3612,19 @@ async def health_server():
                         stored_report = None
                     if stored_report:
                         try:
-                            restored_report = Report(**stored_report)
+                            stored_payload = stored_report if isinstance(stored_report, dict) else {"report": stored_report}
+                            restored_report = Report(**(stored_payload.get("report") or {}))
+                            stored_expiry = stored_payload.get("expires_at")
+                            if isinstance(stored_expiry, str):
+                                stored_expiry = datetime.fromisoformat(stored_expiry.replace("Z", "+00:00"))
+                            if stored_expiry is None:
+                                stored_expiry = datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS)
                             state = ScanState(
                                 source_message=None,
                                 report=restored_report,
                                 created_at=time.monotonic(),
                                 web_token=token,
+                                expires_at=stored_expiry,
                             )
                             web_states[token] = state
                         except Exception:
@@ -3604,7 +3641,7 @@ async def health_server():
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"404 Not Found"
                 else:
-                    body = web_page(state.report, token)
+                    body = web_page(state.report, token, state.expires_at)
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"200 OK"
 
