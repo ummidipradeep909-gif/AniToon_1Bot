@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pymongo import MongoClient
+from cryptography.fernet import Fernet, InvalidToken
 
 log = logging.getLogger("anitoons-mongodb")
 
@@ -30,6 +31,17 @@ def _get_lock() -> asyncio.Lock:
     if _init_lock is None:
         _init_lock = asyncio.Lock()
     return _init_lock
+
+
+def _cipher() -> Fernet | None:
+    key = os.getenv("CLONE_TOKEN_ENCRYPTION_KEY", "").strip()
+    if not key:
+        return None
+    try:
+        return Fernet(key.encode("ascii"))
+    except Exception:
+        log.exception("Invalid CLONE_TOKEN_ENCRYPTION_KEY")
+        return None
 
 
 def _json_clean(value: Any) -> Any:
@@ -172,3 +184,61 @@ async def record_clone_request(
         )
     except Exception:
         log.exception("Failed to store clone configuration")
+
+
+
+async def load_clone_requests() -> list[dict[str, Any]]:
+    """Load encrypted clone tokens so live clone bots can be restored after restart."""
+    db = await _get_db()
+    if db is None:
+        return []
+
+    cipher = _cipher()
+    if cipher is None:
+        return []
+
+    try:
+        rows = await asyncio.to_thread(
+            lambda: list(
+                db.clones.find(
+                    {
+                        "status": {"$in": ["validated", "online"]},
+                        "token_encrypted": {"$exists": True, "$ne": ""},
+                    },
+                    {
+                        "user_id": 1,
+                        "clone_id": 1,
+                        "clone_username": 1,
+                        "token_encrypted": 1,
+                    },
+                )
+            )
+        )
+
+        restored = []
+        for row in rows:
+            encrypted = row.get("token_encrypted")
+            if not encrypted:
+                continue
+            try:
+                token = cipher.decrypt(str(encrypted).encode("ascii")).decode("utf-8")
+            except (InvalidToken, ValueError, UnicodeDecodeError):
+                log.exception(
+                    "Could not decrypt saved clone token for clone_id=%s",
+                    row.get("clone_id"),
+                )
+                continue
+            restored.append(
+                {
+                    "user_id": row.get("user_id"),
+                    "clone_id": row.get("clone_id"),
+                    "clone_username": row.get("clone_username"),
+                    "token": token,
+                }
+            )
+
+        log.info("Loaded %s saved clone configuration(s)", len(restored))
+        return restored
+    except Exception:
+        log.exception("Failed to load saved clone configurations")
+        return []
