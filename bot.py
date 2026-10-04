@@ -1194,6 +1194,9 @@ async def acquire_scan_slot(
         if guard:
             check_semaphore.release()
             acquired = False
+            if queued:
+                async with scan_queue_lock:
+                    queued_processes = max(0, queued_processes - 1)
             raise ResourceGuardPause(guard)
     except asyncio.CancelledError:
         if queued:
@@ -3944,6 +3947,8 @@ async def health_server():
                     "max_active_scans": MAX_CONCURRENT_CHECKS,
                     "ram_pct": runtime_resource_stats()["ram_pct"],
                     "web_egress_gb": runtime_resource_stats()["web_egress_gb"],
+                    "guard_active": bool(resource_guard_reason()),
+                    "guard_reason": resource_guard_reason(),
                     "uptime_seconds": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                     ),
@@ -3961,7 +3966,7 @@ async def health_server():
                 preview_items = []
                 state = web_states.get(token)
                 if state is not None:
-                    preview_items = list(getattr(state.report, "previews", []) or [])[:5]
+                    preview_items = list(getattr(state.report, "previews", []) or [])[:1]
                 else:
                     try:
                         stored_payload = await load_web_report(token)
@@ -3969,11 +3974,11 @@ async def health_server():
                         stored_payload = None
                     if stored_payload:
                         report_payload = stored_payload.get("report") if isinstance(stored_payload, dict) else {}
-                        preview_items = list((report_payload or {}).get("previews") or [])[:5]
+                        preview_items = list((report_payload or {}).get("previews") or [])[:1]
                 body = json.dumps(
                     {
-                        "ready": len(preview_items) >= 5,
-                        "previews": preview_items,
+                        "ready": len(preview_items) >= 1,
+                        "previews": preview_items[:1],
                     },
                     separators=(",", ":"),
                 ).encode("utf-8")
