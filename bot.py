@@ -475,30 +475,29 @@ def _clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
 
 async def render_clone_list(event, user_id: int, *, edit: bool = True) -> None:
     records = await _user_clone_records(int(user_id))
-    if not records:
-        text = "🤖 <b>My Clone Bots</b>\n\nYou have not created a clone bot yet."
-        buttons = [
-            [Button.inline("➕ Create Clone", b"home:clone")],
-            [Button.inline("⬅️ Home", b"home:back")],
-        ]
-    else:
-        lines = ["🤖 <b>My Clone Bots</b>", ""]
-        for index, record in enumerate(records[:20], 1):
+    count = min(len(records), 2)
+    lines = [
+        "🤖 <b>Clone Manager</b>",
+        f"🧩 Slots used: <b>{count}/2</b>",
+        "",
+    ]
+
+    if records:
+        for index, record in enumerate(records[:2], 1):
             username = str(record.get("clone_username") or "Unnamed").lstrip("@")
             status = "🟢 Online" if record.get("status") == "online" else "🔴 Offline"
+            scans = int(record.get("scans_started", 0) or 0)
             lines.append(
-                f"{index}. <b>@{html.escape(username)}</b> — {status}  "
-                f"📊 {int(record.get('scans_started', 0) or 0)} scans"
+                f"{index}. <b>@{html.escape(username)}</b> • {status} • 📊 {scans}"
             )
-        if len(records) > 20:
-            lines.append(f"\n…and {len(records) - 20} more clone(s).")
-        text = "\n".join(lines)
-        buttons = _clone_manager_buttons(records)
-
-    if edit:
-        await event.edit(text, parse_mode="html", buttons=buttons)
     else:
-        await event.reply(text, parse_mode="html", buttons=buttons)
+        lines.append("No clone bot connected yet.")
+
+    buttons = clone_manager_buttons(records)
+    if edit:
+        await event.edit("\n".join(lines), parse_mode="html", buttons=buttons)
+    else:
+        await event.reply("\n".join(lines), parse_mode="html", buttons=buttons)
 
 
 async def render_clone_stats(event, user_id: int, clone_id: int) -> None:
@@ -1032,6 +1031,7 @@ async def analyze_source(
     client: Any = bot,
     bot_username: str = BOT_USERNAME,
     include_clone: bool = True,
+    show_privacy: bool = True,
 ) -> None:
     global checks_total, checks_ok, checks_failed
     checks_total += 1
@@ -1118,7 +1118,11 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
         raise
 
@@ -1129,7 +1133,11 @@ async def analyze_source(
             status_message,
             "🛑 <b>Safe scan limit reached.</b>\n\n"
             "The player engine stopped before downloading the complete file.",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
 
     except ProbeCancelled:
@@ -1139,7 +1147,11 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
 
     except asyncio.TimeoutError:
@@ -1148,7 +1160,11 @@ async def analyze_source(
         await edit_status(
             status_message,
             "⏰ <b>Metadata scan reached the 5-minute limit.</b>",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
 
     except errors.FloodWaitError as exc:
@@ -1157,7 +1173,11 @@ async def analyze_source(
         await edit_status(
             status_message,
             f"⏳ Telegram temporarily rate-limited this scan for {int(exc.seconds)} seconds.",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
 
     except Exception as exc:
@@ -1168,7 +1188,11 @@ async def analyze_source(
             status_message,
             "❌ <b>Metadata scan failed.</b>\n\n"
             f"<code>{html.escape(type(exc).__name__)}</code>",
-            buttons=home_buttons(bot_username, include_clone=include_clone),
+            buttons=home_buttons(
+                bot_username,
+                include_clone=include_clone,
+                show_privacy=show_privacy,
+            ),
         )
 
     finally:
@@ -1209,10 +1233,14 @@ async def analyze(
         client=client,
         bot_username=bot_username,
         include_clone=include_clone,
+        show_privacy=bool(getattr(event, "is_private", True)),
     )
 
+    filename = html.escape(safe_filename(event.message))[:120]
     await event.reply(
-        "📥 <b>Download Metadata</b>",
+        "📦 <b>FILE DETECTED</b>\n\n"
+        f"📄 <code>{filename}</code>\n"
+        "🔎 Click below to check the file information.",
         parse_mode="html",
         buttons=metadata_button(token),
     )
@@ -1403,12 +1431,13 @@ async def begin_clone_setup(event) -> None:
         clone_setup_pending[int(user_id)] = time.monotonic()
 
     await event.reply(
-        "🔐 <b>Send your BotFather token</b>\n\n"
-        "Paste it in your next message.\n"
-        "⚠️ Keep your token private.\n"
-        "🗑️ The token message will be deleted after processing.",
+        "🧬 <b>Create a Clone Bot</b>\n\n"
+        "1️⃣ Create a bot with @BotFather.\n"
+        "2️⃣ Send the BotFather token here.\n"
+        "3️⃣ Your token message is deleted after processing.\n\n"
+        "🔒 <b>Limit:</b> 2 clone bots per user.",
         parse_mode="html",
-        buttons=[[Button.inline("⬅️ Cancel", b"clone:cancel")]],
+        buttons=clone_setup_buttons(),
     )
 
 
@@ -1609,6 +1638,7 @@ async def handle_new_message(
                 bot_username,
                 include_clone=include_clone,
                 user_id=getattr(sender, "id", None),
+                show_privacy=bool(getattr(event, "is_private", True)),
             ),
         )
         return
@@ -2047,7 +2077,11 @@ async def handle_callback(
         await event.edit(
             ABOUT_TEXT,
             parse_mode="html",
-            buttons=back_buttons(),
+            buttons=[
+                [Button.url("🌐 Web Reports", PUBLIC_WEB_URL)],
+                [Button.url("💻 GitHub Project", PROJECT_GITHUB_URL)],
+                [Button.inline("⬅️ Home", b"home:back")],
+            ],
         )
         return
 
@@ -2067,6 +2101,7 @@ async def handle_callback(
                 bot_username,
                 include_clone=include_clone,
                 user_id=getattr(sender, "id", None),
+                show_privacy=bool(getattr(event, "is_private", True)),
             ),
         )
         return
@@ -2117,6 +2152,7 @@ async def handle_callback(
                 client=pending.client,
                 bot_username=pending.bot_username,
                 include_clone=pending.include_clone,
+                show_privacy=pending.show_privacy,
             )
         )
         active_scans[token] = task
