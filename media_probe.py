@@ -29,14 +29,18 @@ LANG_NAMES = {
 CODEC_NAMES = {
     "aac": "AAC", "ac3": "AC-3", "eac3": "E-AC-3", "opus": "Opus",
     "vorbis": "Vorbis", "mp3": "MP3", "flac": "FLAC", "truehd": "TrueHD",
-    "dts": "DTS", "dca": "DTS", "alac": "ALAC",
-    "h264": "H.264/AVC", "hevc": "H.265/HEVC", "av1": "AV1", "vp9": "VP9",
+    "dts": "DTS", "dca": "DTS", "alac": "ALAC", "pcm_s16le": "PCM S16LE",
+    "pcm_s24le": "PCM S24LE", "pcm_s32le": "PCM S32LE",
+    "h264": "H.264/AVC", "avc": "H.264/AVC", "hevc": "H.265/HEVC",
+    "h265": "H.265/HEVC", "av1": "AV1", "vp8": "VP8", "vp9": "VP9",
+    "mpeg2video": "MPEG-2 Video", "mpeg4": "MPEG-4 Video", "vc1": "VC-1",
     "ass": "ASS", "ssa": "SSA", "subrip": "SubRip", "webvtt": "WebVTT",
     "hdmv_pgs_subtitle": "PGS", "dvd_subtitle": "VobSub",
 }
 
-DEFAULT_RANGE_CHUNK = 512 * 1024
-DEFAULT_BUDGET = 4 * 1024 * 1024
+DEFAULT_RANGE_CHUNK = 1 * 1024 * 1024
+DEFAULT_BUDGET = 32 * 1024 * 1024
+MAX_PROBE_BUDGET = 64 * 1024 * 1024
 RANGE_TOKEN_TTL = 10 * 60
 
 
@@ -289,25 +293,31 @@ def _language_name(code: str | None) -> str | None:
 def _codec_name(stream: Any) -> str:
     candidates = []
     try:
-        candidates.append(str(stream.codec_context.name or "").strip().lower())
+        candidates.append(str(stream.codec_context.name or "").strip())
     except Exception:
         pass
     try:
-        candidates.append(str(stream.codec_context.codec.name or "").strip().lower())
+        candidates.append(str(stream.codec_context.codec.name or "").strip())
     except Exception:
         pass
     try:
         candidates.append(str(stream.codec_context.codec.long_name or "").strip())
     except Exception:
         pass
-    for value in candidates:
-        if value:
-            short = value.lower()
-            return CODEC_NAMES.get(short) or value
-    return "Audio" if getattr(stream, "type", "") == "audio" else (
-        "Subtitle" if getattr(stream, "type", "") == "subtitle" else "Video"
-    )
 
+    placeholders = {"", "unknown", "unk", "undefined", "und", "none"}
+    for value in candidates:
+        if not value or value.strip().lower() in placeholders:
+            continue
+        short = value.lower()
+        return CODEC_NAMES.get(short) or value
+
+    stream_type = str(getattr(stream, "type", "") or "").lower()
+    return {
+        "audio": "Audio",
+        "subtitle": "Subtitle",
+        "video": "Video",
+    }.get(stream_type, "Media")
 
 def _flag(disposition: Any, name: str) -> str:
     try:
@@ -333,23 +343,39 @@ def _stream_track(stream: Any) -> dict[str, Any]:
     )
     codec_name = _codec_name(stream)
 
-    # Prefer a meaningful embedded name, then language + codec.
-    # A known media type should never be displayed as a bare "Unknown".
     clean_title = title.strip() if title else None
-    if clean_title and clean_title.lower() in {"unknown", "und", "undefined", "audio", "track"}:
+    if clean_title and clean_title.lower() in {
+        "unknown", "und", "undefined", "audio", "video", "subtitle", "track"
+    }:
         clean_title = None
+
+    kind = str(getattr(stream, "type", "media") or "media").lower()
+    base_type = {
+        "audio": "Audio",
+        "video": "Video",
+        "subtitle": "Subtitle",
+    }.get(kind, "Media")
+    track_no = getattr(stream, "index", None)
+    track_label = f" {int(track_no) + 1}" if isinstance(track_no, int) and track_no >= 0 else ""
+
     if clean_title:
         display_name = clean_title
         display_source = "embedded track title"
+    elif language_name and codec_name not in {"Audio", "Video", "Subtitle", "Media"}:
+        display_name = f"{language_name} {codec_name} {base_type} Track{track_label}"
+        display_source = "language + codec metadata"
     elif language_name:
-        display_name = f"{language_name} • {codec_name}"
-        display_source = "embedded language + codec"
+        display_name = f"{language_name} {base_type} Track{track_label}"
+        display_source = "language metadata"
+    elif codec_name not in {"Audio", "Video", "Subtitle", "Media"}:
+        display_name = f"{codec_name} {base_type} Track{track_label}"
+        display_source = "codec metadata"
     else:
-        display_name = codec_name or ("Audio" if stream.type == "audio" else str(stream.type).title())
-        display_source = "codec metadata" if codec_name else "stream type fallback"
+        display_name = f"{base_type} Track{track_label}".strip()
+        display_source = "stream type fallback"
 
     track = {
-        "type": str(stream.type),
+        "type": "subtitle" if kind == "subtitle" else kind,
         "track": str(getattr(stream, "index", "")),
         "name": display_name,
         "display_name": display_name,
@@ -357,7 +383,7 @@ def _stream_track(stream: Any) -> dict[str, Any]:
         "language": language,
         "language_name": language_name,
         "codec": str(getattr(stream.codec_context, "name", "") or ""),
-        "codec_name": codec_name,
+        "codec_name": None if codec_name in {"Audio", "Video", "Subtitle", "Media"} else codec_name,
         "default": _flag(stream.disposition, "default"),
         "original": _flag(stream.disposition, "original"),
         "commentary": _flag(stream.disposition, "comment"),
@@ -366,48 +392,42 @@ def _stream_track(stream: Any) -> dict[str, Any]:
         "visual_impaired": _flag(stream.disposition, "visual_impaired"),
     }
 
-    if stream.type == "audio":
+    if kind == "audio":
         channels = getattr(stream.codec_context, "channels", None)
         sample_rate = getattr(stream.codec_context, "sample_rate", None)
-        if channels:
-            track["channels"] = str(channels)
-        if sample_rate:
-            track["sample_rate"] = f"{float(sample_rate)/1000:.1f} kHz"
+        if channels: track["channels"] = str(channels)
+        if sample_rate: track["sample_rate"] = f"{float(sample_rate)/1000:.1f} kHz"
         bitrate = getattr(stream, "bit_rate", None)
-        if bitrate:
-            track["bitrate"] = f"{float(bitrate)/1000:.0f} kb/s"
+        if bitrate: track["bitrate"] = f"{float(bitrate)/1000:.0f} kb/s"
         try:
             layout = stream.layout.name
         except Exception:
             layout = None
-        if layout:
-            track["layout"] = str(layout)
+        if layout: track["layout"] = str(layout)
 
-    elif stream.type == "video":
+    elif kind == "video":
         width = getattr(stream, "width", None)
         height = getattr(stream, "height", None)
-        if width and height:
-            track["dimensions"] = f"{int(width)} × {int(height)}"
+        if width and height: track["dimensions"] = f"{int(width)} × {int(height)}"
         pix_fmt = getattr(stream, "pix_fmt", None)
-        if pix_fmt:
-            track["pixel_format"] = str(pix_fmt)
+        if pix_fmt: track["pixel_format"] = str(pix_fmt)
         profile = getattr(stream, "profile", None)
-        if profile:
-            track["profile"] = str(profile)
+        if profile: track["profile"] = str(profile)
+        fps = getattr(stream, "average_rate", None)
+        if fps:
+            try: track["frame_rate"] = f"{float(fps):.3f} fps"
+            except Exception: pass
 
-    elif stream.type == "subtitle":
+    elif kind == "subtitle":
         codec = str(getattr(stream.codec_context, "name", "") or "")
-        if codec:
+        if codec and codec.lower() not in {"unknown", "und"}:
             track["subtitle_format"] = CODEC_NAMES.get(codec.lower(), codec)
 
-    # Keep useful FFmpeg tags for the browser page.
     for key in ("title", "language", "language_ietf", "handler_name", "comment"):
         value = _tag(metadata, key)
-        if value:
-            track[f"tag_{key}"] = value
+        if value: track[f"tag_{key}"] = value
 
-    return track
-
+    return {k: v for k, v in track.items() if v not in (None, "")}
 
 def _container_runtime(container: Any) -> str | None:
     duration = getattr(container, "duration", None)
@@ -422,31 +442,34 @@ def _container_runtime(container: Any) -> str | None:
 
 def _build_report(message: Any, container: Any, session: RangeProbeSession) -> Report:
     f = getattr(message, "file", None)
-    filename = str(getattr(f, "name", None) or "telegram_file")
+    filename = str(getattr(f, "name", None) or "Telegram media file")
     size = getattr(f, "size", None)
     mime = getattr(f, "mime_type", None)
 
-    format_name = str(getattr(container.format, "name", "") or "unknown")
-    format_long = str(getattr(container.format, "long_name", "") or format_name)
+    fmt = getattr(container, "format", None)
+    format_name = str(getattr(fmt, "name", "") or "").strip()
+    format_long = str(getattr(fmt, "long_name", "") or "").strip()
+    detected = format_long or format_name or "Detected media"
 
     report = Report(
         filename=filename,
         size=int(size) if isinstance(size, int) else session.total,
         mime=str(mime) if mime else None,
         ext="",
-        detected=f"{format_long} ({format_name})",
-        media_kind="Video" if any(s.type == "video" for s in container.streams) else "File",
+        detected=detected,
+        media_kind="Video" if any(s.type == "video" for s in container.streams) else (
+            "Audio" if any(s.type == "audio" for s in container.streams) else "File"
+        ),
         sampled=session.fetched_bytes,
     )
 
     runtime = _container_runtime(container)
     if runtime:
         report.container["runtime"] = runtime
-        report.container["runtime_source"] = "FFmpeg/PyAV container metadata"
+        report.container["runtime_source"] = "PyAV/FFmpeg container metadata"
 
     title = _tag(container.metadata, "title")
-    if title:
-        report.container["title"] = title
+    if title: report.container["title"] = title
 
     bit_rate = getattr(container, "bit_rate", None)
     if bit_rate:
@@ -458,45 +481,223 @@ def _build_report(message: Any, container: Any, session: RangeProbeSession) -> R
             report.audio.setdefault("tracks", []).append(track)
         elif stream.type == "video":
             report.video.setdefault("tracks", []).append(track)
-        elif stream.type == "subtitle":
+        elif stream.type in {"subtitle", "subtitles"}:
             report.subtitles.append(track)
 
     report.probe_ranges = [
-        f"FFmpeg range: +{off} B ({size} B)"
+        f"PyAV range: +{off} B ({size} B)"
         for off, size in session.ranges
     ]
-
     report.notes = [
-        f"Player-engine scan: PyAV {av.__version__} / bundled FFmpeg.",
+        f"Player-engine scan: PyAV {av.__version__} with bundled FFmpeg.",
         f"Telegram ranges fetched: {session.fetched_bytes / 1024 / 1024:.2f} MiB.",
-        "No complete file copy was created.",
+        "No complete local copy was created.",
     ]
-
     return report
 
 
-def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
-    # PyAV accepts seekable Python file-like objects. This removes the fragile
-    # HTTP-proxy behavior and lets FFmpeg issue real seek/read operations.
-    options = {
-        "probesize": str(768 * 1024),
-        "analyzeduration": "1500000",
-        "fflags": "+genpts",
+def _track_key(track: dict[str, Any]) -> tuple[str, str, str, str]:
+    kind = str(track.get("type") or "").lower()
+    if kind == "subtitles": kind = "subtitle"
+    return (
+        kind,
+        str(track.get("track") or ""),
+        str(track.get("language") or "").lower(),
+        str(track.get("codec_name") or track.get("codec") or "").lower(),
+    )
+
+
+def _useful_name(value: Any, kind: str) -> bool:
+    if not value: return False
+    text = str(value).strip()
+    return text.lower() not in {
+        "", "unknown", "unk", "undefined", "und", "audio", "video", "subtitle", "track"
     }
 
+
+def _merge_tracks(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    index: dict[tuple[str, str, str, str], int] = {}
+
+    for track in list(primary) + list(secondary):
+        item = dict(track)
+        key = _track_key(item)
+        if key in index:
+            current = merged[index[key]]
+            for field, value in item.items():
+                if value in (None, ""): continue
+                if field in {"name", "display_name"}:
+                    if _useful_name(value, key[0]) and not _useful_name(current.get(field), key[0]):
+                        current[field] = value
+                    continue
+                if current.get(field) in (None, ""):
+                    current[field] = value
+            if _useful_name(item.get("name"), key[0]) and not _useful_name(current.get("name"), key[0]):
+                current["name"] = item["name"]
+                current["display_name"] = item.get("display_name") or item["name"]
+        else:
+            index[key] = len(merged)
+            merged.append(item)
+    return merged
+
+
+def _merge_reports(primary: Report, secondary: Report) -> Report:
+    # Merge the custom container parser and PyAV/FFmpeg so one source can fill
+    # gaps left by the other without replacing useful metadata already found.
+    primary.video["tracks"] = _merge_tracks(
+        list(primary.video.get("tracks", []) or []),
+        list(secondary.video.get("tracks", []) or []),
+    )
+    primary.audio["tracks"] = _merge_tracks(
+        list(primary.audio.get("tracks", []) or []),
+        list(secondary.audio.get("tracks", []) or []),
+    )
+    primary.subtitles = _merge_tracks(
+        list(primary.subtitles or []),
+        list(secondary.subtitles or []),
+    )
+
+    for source in (secondary.video, secondary.audio):
+        for key, value in source.items():
+            if key == "tracks" or value in (None, "", []): continue
+            if key not in primary.video and source is secondary.video:
+                primary.video[key] = value
+            if key not in primary.audio and source is secondary.audio:
+                primary.audio[key] = value
+
+    for key, value in secondary.container.items():
+        if value not in (None, ""): primary.container.setdefault(key, value)
+
+    if (not primary.detected or primary.detected.lower() in {"unknown", "detected media"}) and secondary.detected:
+        primary.detected = secondary.detected
+    if not primary.mime and secondary.mime: primary.mime = secondary.mime
+    primary.media_kind = secondary.media_kind if secondary.media_kind != "File" else primary.media_kind
+    primary.sampled = int(primary.sampled or 0) + int(secondary.sampled or 0)
+
+    seen=set(primary.probe_ranges)
+    primary.probe_ranges += [x for x in secondary.probe_ranges if x not in seen]
+    seen_notes=set(primary.notes)
+    primary.notes += [x for x in secondary.notes if x not in seen_notes]
+    primary.notes.insert(0, "Combined metadata sources: custom container parser + PyAV/FFmpeg.")
+    return primary
+
+
+def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
+    options = {
+        "probesize": str(4 * 1024 * 1024),
+        "analyzeduration": "5000000",
+        "fflags": "+genpts",
+        "scan_all_pmts": "1",
+    }
     kwargs = {
         "mode": "r",
         "options": options,
-        "buffer_size": 256 * 1024,
+        "buffer_size": 1024 * 1024,
     }
     if format_hint:
         kwargs["format"] = format_hint
-
     container = av.open(reader, **kwargs)
     _ = list(container.streams)
     return container
 
 
+async def inspect_telegram_player(
+    client: Any,
+    message: Any,
+    token: str,
+    *,
+    progress: Any = None,
+    budget: int = DEFAULT_BUDGET,
+    port: int = 10000,
+) -> Report:
+    f = getattr(message, "file", None)
+    media = getattr(message, "media", None)
+    if not media:
+        raise ValueError("Message has no media")
+
+    total = getattr(f, "size", None)
+    name = str(getattr(f, "name", None) or "")
+    mime = str(getattr(f, "mime_type", None) or "").lower()
+    is_mkv = name.lower().endswith((".mkv", ".webm")) or "matroska" in mime
+    effective_budget = max(2 * 1024 * 1024, min(int(budget or DEFAULT_BUDGET), MAX_PROBE_BUDGET))
+
+    async def say(value: str):
+        if progress:
+            await progress(value)
+
+    custom_report: Report | None = None
+    if is_mkv:
+        try:
+            await say("🧭 Stage 1/4 • inspecting container indexes and track metadata…")
+            custom_report, _ = await inspect_telegram_message(
+                client,
+                message,
+                progress=progress,
+                deep=True,
+            )
+        except (ProbeBudgetExceeded, ProbeCancelled):
+            raise
+        except Exception as exc:
+            await say(f"🔄 Stage 2/4 • switching metadata source ({type(exc).__name__})…")
+
+    await say("🎬 Stage 2/4 • opening the seekable FFmpeg player engine…")
+    session = register_probe(token, client, media, total, budget=effective_budget)
+    loop = asyncio.get_running_loop()
+    reader = TelegramSeekableFile(session, loop)
+
+    format_hint = None
+    lower_name = name.lower()
+    if lower_name.endswith((".mkv", ".webm")) or "matroska" in mime or "webm" in mime:
+        format_hint = "matroska,webm"
+    elif lower_name.endswith((".mp4", ".m4v", ".mov", ".m4a")) or "mp4" in mime:
+        format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
+    elif lower_name.endswith((".ts", ".m2ts", ".mts")) or "mpegts" in mime:
+        format_hint = "mpegts"
+
+    try:
+        container = None
+        try:
+            container = await asyncio.to_thread(
+                _open_with_ffmpeg,
+                reader,
+                format_hint,
+            )
+            await say("🔎 Stage 3/4 • reading video, audio and subtitle streams…")
+            player_report = _build_report(message, container, session)
+        finally:
+            if container is not None:
+                container.close()
+
+        await say("🧩 Stage 4/4 • merging every available metadata source…")
+        if custom_report is not None:
+            return _merge_reports(custom_report, player_report)
+        return player_report
+
+    except (ProbeBudgetExceeded, ProbeCancelled):
+        raise
+    except Exception as exc:
+        if isinstance(exc, av.error.ExitError):
+            try:
+                fallback, _ = await inspect_telegram_message(
+                    client,
+                    message,
+                    progress=progress,
+                    deep=True,
+                )
+                fallback.notes.insert(
+                    0,
+                    "FFmpeg could not expose all streams; returned the deepest metadata the range scanner could resolve.",
+                )
+                if custom_report is not None:
+                    return _merge_reports(custom_report, fallback)
+                return fallback
+            except Exception:
+                if custom_report is not None:
+                    return custom_report
+        raise
+    finally:
+        reader.close()
+        remove_probe(token)
 async def inspect_telegram_player(
     client: Any,
     message: Any,
