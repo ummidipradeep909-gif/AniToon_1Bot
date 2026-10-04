@@ -3060,6 +3060,11 @@ body::after{{content:"";position:fixed;inset:-35%;z-index:-3;background:conic-gr
 .nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--line);border-radius:16px;background:rgba(8,10,24,.68);backdrop-filter:blur(16px)}}
 .brand{{font-weight:900;letter-spacing:.08em;text-transform:uppercase;font-size:11px}}
 .nav-link{{color:var(--muted);text-decoration:none;font-size:12px;font-weight:800}}
+.nav-tools{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}}
+.display-controls{{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.035);backdrop-filter:blur(10px)}}
+.display-controls button{{border:0;border-radius:8px;padding:6px 8px;background:transparent;color:var(--text);font:800 11px/1 system-ui;cursor:pointer}}
+.display-controls button:hover{{background:rgba(255,255,255,.08)}}
+.display-controls #zoom-label{{min-width:44px;color:var(--muted)}}
 .hero{{position:relative;overflow:hidden;margin-top:14px;padding:30px 24px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,rgba(15,18,43,.87),rgba(7,9,21,.58));box-shadow:0 30px 90px rgba(0,0,0,.38);backdrop-filter:blur(22px);animation:reveal .8s cubic-bezier(.2,1,.2,1) both}}
 .hero::before{{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent,rgba(255,255,255,.045),transparent);transform:translateX(-110%);animation:sheen 9s ease-in-out infinite;pointer-events:none}}
 .eyebrow{{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:999px;background:rgba(124,244,176,.06);border:1px solid rgba(124,244,176,.14);color:var(--good);font-size:9px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}}
@@ -3099,6 +3104,13 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 @keyframes sheen{{0%,100%{{transform:translateX(-110%)}}50%{{transform:translateX(100%)}}}}
 @keyframes reveal{{from{{opacity:0;transform:translateY(16px);filter:blur(6px)}}to{{opacity:1;transform:none;filter:none}}}}
 @media(max-width:700px){{.list{{grid-template-columns:1fr}}.hero{{padding:24px 18px;border-radius:22px}}.footer{{flex-direction:column;align-items:flex-start}}.report-section iframe{{height:2050px}}}}
+html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.72);--line:rgba(37,45,80,.12);--text:#18203b;--muted:#5c6686;--a:#6757e8;--b:#0b7ea0;--good:#128b52}}
+html[data-theme="light"] body::before{{background:linear-gradient(180deg,rgba(247,249,255,.88),rgba(229,235,255,.84))}}
+html[data-theme="light"] body::after{{opacity:.22}}
+html[data-theme="light"] .nav,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.70);box-shadow:0 22px 50px rgba(44,55,100,.12)}}
+html[data-theme="light"] .lead{{color:#4e5878}}
+html[data-theme="light"] .channel,html[data-theme="light"] .social-channel,html[data-theme="light"] .cta{{color:var(--text);background:rgba(255,255,255,.62)}}
+html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
@@ -3107,7 +3119,15 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 <div class="wrap">
   <nav class="nav">
     <div class="brand">AniToon Media Info</div>
-    <a class="nav-link" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">Open Bot ↗</a>
+    <div class="nav-tools">
+      <a class="nav-link" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">Open Bot ↗</a>
+      <div class="display-controls" aria-label="Display controls">
+        <button type="button" id="theme-toggle" title="Toggle dark/light theme">☀️ Light</button>
+        <button type="button" id="zoom-out" title="Zoom out">−</button>
+        <button type="button" id="zoom-label" title="Reset zoom">100%</button>
+        <button type="button" id="zoom-in" title="Zoom in">+</button>
+      </div>
+    </div>
   </nav>
 
   <header class="hero">
@@ -3142,6 +3162,35 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
     <span>Official Bot & Web</span>
   </footer>
 </div>
+<script>
+(() => {{
+  const root = document.documentElement;
+  const wrap = document.querySelector(".wrap");
+  const themeBtn = document.getElementById("theme-toggle");
+  const zoomOut = document.getElementById("zoom-out");
+  const zoomIn = document.getElementById("zoom-in");
+  const zoomLabel = document.getElementById("zoom-label");
+  const read = (key, fallback) => {{ try {{ return localStorage.getItem(key) ?? fallback; }} catch (_) {{ return fallback; }} }};
+  const write = (key, value) => {{ try {{ localStorage.setItem(key, value); }} catch (_) {{}} }};
+  const applyTheme = (theme) => {{
+    root.dataset.theme = theme;
+    if (themeBtn) themeBtn.textContent = theme === "light" ? "🌙 Dark" : "☀️ Light";
+    write("anitoon-theme", theme);
+  }};
+  const applyZoom = (value) => {{
+    const zoom = Math.max(0.80, Math.min(1.20, Number(value) || 1));
+    if (wrap) wrap.style.zoom = zoom;
+    if (zoomLabel) zoomLabel.textContent = Math.round(zoom * 100) + "%";
+    write("anitoon-zoom", String(zoom));
+  }};
+  applyTheme(read("anitoon-theme", "dark") === "light" ? "light" : "dark");
+  applyZoom(Number(read("anitoon-zoom", "1")));
+  themeBtn?.addEventListener("click", () => applyTheme(root.dataset.theme === "light" ? "dark" : "light"));
+  zoomOut?.addEventListener("click", () => applyZoom(Number(read("anitoon-zoom","1")) - 0.10));
+  zoomIn?.addEventListener("click", () => applyZoom(Number(read("anitoon-zoom","1")) + 0.10));
+  zoomLabel?.addEventListener("click", () => applyZoom(1));
+}})();
+</script>
 </body>
 </html>"""
     return document.encode("utf-8")
