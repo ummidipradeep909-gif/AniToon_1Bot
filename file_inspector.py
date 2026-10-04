@@ -358,6 +358,194 @@ def _info(data:bytes,report:Report):
                 report.container["date_utc"]=(datetime(2001,1,1,tzinfo=timezone.utc)+timedelta(microseconds=date_utc)).isoformat()
         p=data.find(b"\x15\x49\xA9\x66",x[2])
 
+
+MP4_CODEC = {
+    b"avc1":"H.264/AVC", b"avc3":"H.264/AVC",
+    b"hev1":"H.265/HEVC", b"hvc1":"H.265/HEVC",
+    b"av01":"AV1", b"vp09":"VP9", b"vp08":"VP8",
+    b"mp4a":"AAC", b"ac-3":"AC-3", b"ec-3":"E-AC-3",
+    b"Opus":"Opus", b"fLaC":"FLAC", b"alaw":"G.711 A-law",
+    b"ulaw":"G.711 μ-law", b"tx3g":"Timed Text", b"wvtt":"WebVTT",
+    b"stpp":"TTML", b"c608":"CEA-608", b"c708":"CEA-708",
+}
+
+MP4_CONTAINER_BOXES = {
+    b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"dinf",
+    b"udta", b"meta", b"ilst", b"wave", b"ipro", b"sinf", b"schi",
+}
+
+def _mp4_boxes(data:bytes,start:int=0,end:int|None=None):
+    end=len(data) if end is None else min(len(data),end)
+    p=max(0,start)
+    while p+8<=end:
+        size=int.from_bytes(data[p:p+4],"big")
+        typ=data[p+4:p+8]
+        header=8
+        if size==1:
+            if p+16>end:break
+            size=int.from_bytes(data[p+8:p+16],"big")
+            header=16
+        elif size==0:
+            size=end-p
+        if size<header or p+size>end:break
+        payload_start=p+header
+        payload_end=p+size
+        yield typ,payload_start,payload_end
+        p=payload_end
+
+def _mp4_children(data:bytes,s:int,e:int):
+    yield from _mp4_boxes(data,s,e)
+
+def _mp4_fullbox_version(data:bytes,s:int,e:int)->int|None:
+    return data[s] if s<e else None
+
+def _mp4_handler(data:bytes,s:int,e:int)->tuple[str|None,str|None]:
+    version=_mp4_fullbox_version(data,s,e)
+    if version is None or s+12>e:return None,None
+    handler=data[s+8:s+12]
+    name=data[s+24:e].split(b"\x00",1)[0].decode("utf-8","replace").strip() if s+24<e else ""
+    return handler.decode("latin1","replace"), name or None
+
+def _mp4_language(data:bytes,s:int,e:int)->str|None:
+    if s>=e:return None
+    version=data[s]
+    lang_pos=s+12 if version==0 else s+20
+    if lang_pos+2>e:return None
+    packed=int.from_bytes(data[lang_pos:lang_pos+2],"big")
+    chars=[]
+    for shift in (10,5,0):
+        chars.append(chr(((packed>>shift)&0x1F)+0x60))
+    code="".join(chars)
+    return code if code != "@@@" else None
+
+def _mp4_track_id(data:bytes,s:int,e:int)->int|None:
+    if s+12>e:return None
+    version=data[s]
+    pos=s+12 if version==0 else s+20
+    if pos+4>e:return None
+    return int.from_bytes(data[pos:pos+4],"big")
+
+def _mp4_stsd_entries(data:bytes,s:int,e:int):
+    if s+8>e:return
+    count=int.from_bytes(data[s+4:s+8],"big")
+    p=s+8
+    for _ in range(min(count,64)):
+        if p+8>e:break
+        size=int.from_bytes(data[p:p+4],"big")
+        typ=data[p+4:p+8]
+        if size<8 or p+size>e:break
+        yield typ,p+8,p+size
+        p+=size
+
+def _mp4_track_name(handler_name:str|None,handler_type:str,codec_display:str|None,track_id:int|None)->str:
+    clean=(handler_name or "").strip()
+    if clean and clean.lower() not in {"video","audio","sound","subtitle","subtitles","text","data","handler"}:
+        return clean
+    base={"vide":"Video","soun":"Audio","subt":"Subtitle","text":"Subtitle","sbtl":"Subtitle","clcp":"Subtitle"}.get(handler_type, "Media")
+    label=f" {track_id}" if track_id is not None else ""
+    if codec_display:
+        return f"{codec_display} {base} Track{label}"
+    return f"{base} Track{label}"
+
+def _mp4_tracks(data:bytes,report:Report)->int:
+    total=0
+    for typ,moov_s,moov_e in _mp4_boxes(data):
+        if typ!=b"moov":continue
+        for ttyp,trak_s,trak_e in _mp4_children(data,moov_s,moov_e):
+            if ttyp!=b"trak":continue
+            track_id=None; handler_type=None; handler_name=None; language=None; codec=None
+            dimensions=None; channels=None; sample_rate=None; bit_depth=None
+            duration=None; timescale=None
+            subtitle_format=None
+
+            tkhd_box=None; mdia_box=None
+            for ctyp,cs,ce in _mp4_children(data,trak_s,trak_e):
+                if ctyp==b"tkhd":tkhd_box=(cs,ce)
+                elif ctyp==b"mdia":mdia_box=(cs,ce)
+                elif ctyp==b"udta":
+                    for utyp,us,ue in _mp4_children(data,cs,ce):
+                        if utyp in {b"name",b"\xA9nam"} and ue>us:
+                            text=data[us:ue].decode("utf-8","replace").strip("\x00 \t\r\n")
+                            if text:handler_name=text
+
+            if tkhd_box:
+                track_id=_mp4_track_id(data,tkhd_box[0],tkhd_box[1])
+
+            if not mdia_box:continue
+            md_s,md_e=mdia_box
+            stsd_entries=[]
+            for mtyp,ms,me in _mp4_children(data,md_s,md_e):
+                if mtyp==b"hdlr":
+                    handler_type,maybe_name=_mp4_handler(data,ms,me)
+                    handler_name=handler_name or maybe_name
+                elif mtyp==b"mdhd":
+                    language=_mp4_language(data,ms,me)
+                    version=data[ms] if ms<me else 0
+                    base=ms+4
+                    if version==0 and base+12<=me:
+                        timescale=int.from_bytes(data[base+4:base+8],"big")
+                        duration=int.from_bytes(data[base+8:base+12],"big")
+                    elif version==1 and base+28<=me:
+                        timescale=int.from_bytes(data[base+12:base+16],"big")
+                        duration=int.from_bytes(data[base+16:base+24],"big")
+                elif mtyp==b"minf":
+                    for ntyp,ns,ne in _mp4_children(data,ms,me):
+                        if ntyp!=b"stbl":continue
+                        for sttyp,ss,se in _mp4_children(data,ns,ne):
+                            if sttyp==b"stsd":
+                                stsd_entries=list(_mp4_stsd_entries(data,ss,se) or [])
+
+            if not stsd_entries:continue
+            # Usually one primary sample entry per track. Keep all distinct entries
+            # only when they represent different codecs, which can occur in text/media tracks.
+            seen_codecs=set()
+            for sample_type,ss,se in stsd_entries:
+                if sample_type in seen_codecs:continue
+                seen_codecs.add(sample_type)
+                codec_display=MP4_CODEC.get(sample_type, sample_type.decode("latin1","replace").strip() or None)
+                is_video=handler_type=="vide" or sample_type in {b"avc1",b"avc3",b"hev1",b"hvc1",b"av01",b"vp09",b"vp08"}
+                is_audio=handler_type=="soun" or sample_type in {b"mp4a",b"ac-3",b"ec-3",b"Opus",b"fLaC"}
+                is_sub=handler_type in {"subt","text","sbtl","clcp"} or sample_type in {b"tx3g",b"wvtt",b"stpp",b"c608",b"c708"}
+
+                item={
+                    "type":"video" if is_video else "audio" if is_audio else "subtitles" if is_sub else None,
+                    "track":str(track_id) if track_id is not None else None,
+                    "language":language,
+                    "language_name":_lang(language),
+                    "codec":sample_type.decode("latin1","replace"),
+                    "codec_name":codec_display,
+                    "name":_mp4_track_name(handler_name,handler_type or "",codec_display,track_id),
+                    "display_name":_mp4_track_name(handler_name,handler_type or "",codec_display,track_id),
+                    "name_source":"MP4 handler/track metadata",
+                }
+                if duration is not None and timescale:
+                    item["duration"]=_fmtsec(duration/timescale)
+
+                if is_video and se-ss>=28:
+                    width=int.from_bytes(data[ss+24:ss+26],"big")
+                    height=int.from_bytes(data[ss+26:ss+28],"big")
+                    if width and height:item["dimensions"]=f"{width} × {height}"
+
+                if is_audio and se-ss>=20:
+                    channels=int.from_bytes(data[ss+16:ss+18],"big")
+                    depth=int.from_bytes(data[ss+18:ss+20],"big")
+                    if channels:item["channels"]=str(channels)
+                    if depth:item["bit_depth"]=f"{depth} bit"
+                    if se-ss>=28:
+                        rate_fixed=int.from_bytes(data[ss+24:ss+28],"big")
+                        rate=(rate_fixed>>16)+(rate_fixed & 0xFFFF)/65536
+                        if rate>0:item["sample_rate"]=f"{rate/1000:.3f} kHz"
+
+                if is_sub:
+                    subtitle_format=codec_display
+                    if subtitle_format:item["subtitle_format"]=subtitle_format
+
+                if item["type"]:
+                    _merge(report,item)
+                    total+=1
+            # A track with a non-standard handler still gets represented as generic media.
+    return total
+
 def _generic(data:bytes,kind:str,report:Report):
     if kind=="flac" and len(data)>=42:
         p=4
@@ -382,17 +570,25 @@ def _generic(data:bytes,kind:str,report:Report):
             p=data.find(b"vorbis")
             if p>=0 and p+16<=len(data):report.audio.update(codec="Vorbis",channels=str(data[p+11]),sample_rate=f"{int.from_bytes(data[p+12:p+16],'little')} Hz")
     elif kind=="mp4":
-        hs=[]
+        parsed=_mp4_tracks(data,report)
+        handlers=[]
         for m in re.finditer(b"hdlr",data[:2*1024*1024]):
             p=m.start()
             if p+12<=len(data):
                 h=data[p+8:p+12].decode("latin1","replace")
-                if h in {"soun","vide","subt","text","clcp","sbtl"} and h not in hs:hs.append(h)
-        if hs:report.container["handlers_in_sample"]=", ".join(hs)
-        ac=[x for x in (b"mp4a",b"ac-3",b"ec-3",b"Opus") if x in data]
-        if ac:report.audio["sample_codecs"]=", ".join(x.decode("latin1") for x in dict.fromkeys(ac))
-        sc=[x for x in (b"tx3g",b"wvtt",b"stpp",b"c608",b"c708") if x in data]
-        if sc:report.subtitles.append({"name":"Embedded MP4 subtitle/text","format":", ".join(x.decode("latin1") for x in sc),"source":"sample entry"})
+                if h in {"soun","vide","subt","text","clcp","sbtl"} and h not in handlers:
+                    handlers.append(h)
+        if handlers:report.container["handlers_in_sample"]=", ".join(handlers)
+        if not parsed:
+            ac=[x for x in (b"mp4a",b"ac-3",b"ec-3",b"Opus") if x in data]
+            if ac:report.audio["sample_codecs"]=", ".join(x.decode("latin1") for x in dict.fromkeys(ac))
+            sc=[x for x in (b"tx3g",b"wvtt",b"stpp",b"c608",b"c708") if x in data]
+            if sc:
+                report.subtitles.append({
+                    "name":"Embedded MP4 subtitle/text",
+                    "format":", ".join(x.decode("latin1") for x in dict.fromkeys(sc)),
+                    "source":"sample entry",
+                })
 
 def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
     ranges=[];used=initial
@@ -453,7 +649,17 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
     r=Report(filename=name,size=int(size) if isinstance(size,int) else None,mime=str(mime) if mime else None,ext=_ext(name),detected=detected,media_kind="Video" if (mime or "").startswith("video/") else "File",sampled=sum(len(x.data) for x in pieces),sample_hash=hashlib.sha256(b"".join(x.data for x in pieces)).hexdigest())
     if getattr(f,"duration",None) is not None:
         r.container["runtime"]=_fmtsec(float(f.duration));r.container["runtime_source"]="Telegram media metadata"
-    if getattr(f,"width",None) and getattr(f,"height",None):r.video["dimensions"]=f"{int(f.width)} × {int(f.height)}"
+    if getattr(f,"width",None) and getattr(f,"height",None):
+        r.video["dimensions"]=f"{int(f.width)} × {int(f.height)}"
+        if kind=="mp4" and not r.video.get("tracks"):
+            r.video["tracks"]=[{
+                "type":"video",
+                "track":"1",
+                "name":"Video Track 1",
+                "display_name":"Video Track 1",
+                "name_source":"Telegram media attributes",
+                "dimensions":r.video["dimensions"],
+            }]
     for p in pieces:
         if kind=="mkv":_info(p.data,r);_tracks(p.data,r)
         else:_generic(p.data,kind,r)
