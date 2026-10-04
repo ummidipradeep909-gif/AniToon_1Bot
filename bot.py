@@ -1190,7 +1190,7 @@ async def analyze_source(
         checks_failed += 1
         await edit_status(
             status_message,
-            "⏰ <b>Metadata scan reached the 5-minute limit.</b>",
+            f"⏰ <b>Metadata scan reached the {SCAN_TIMEOUT_SECONDS}-second safety limit.</b>",
             buttons=home_buttons(
                 bot_username,
                 include_clone=include_clone,
@@ -1458,8 +1458,34 @@ async def begin_clone_setup(event) -> None:
 
     sender = await event.get_sender()
     user_id = getattr(sender, "id", None)
-    if user_id is not None:
-        clone_setup_pending[int(user_id)] = time.monotonic()
+    if user_id is None:
+        return
+
+    existing_clones = await list_user_clones(int(user_id))
+    stored_ids = {
+        int(item["clone_id"])
+        for item in existing_clones
+        if item.get("clone_id") is not None
+    }
+    runtime_ids = {
+        int(clone_id)
+        for clone_id, owner_id in clone_owners.items()
+        if int(owner_id) == int(user_id)
+    }
+    if len(stored_ids | runtime_ids) >= 2:
+        await event.reply(
+            "⚠️ <b>Clone limit reached</b>\n\n"
+            "You already have <b>2/2 clone bots</b>.\n"
+            "Remove one before creating another.",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("🤖 Clone Manager", b"home:clones")],
+                [Button.inline("⬅️ Home", b"home:back")],
+            ],
+        )
+        return
+
+    clone_setup_pending[int(user_id)] = time.monotonic()
 
     await event.reply(
         "🧬 <b>Create a Clone Bot</b>\n\n"
@@ -1683,7 +1709,15 @@ async def handle_new_message(
     if command == "/about":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=back_buttons())
+        await event.reply(
+            ABOUT_TEXT,
+            parse_mode="html",
+            buttons=[
+                [Button.url("🌐 Web Reports", PUBLIC_WEB_URL)],
+                [Button.url("💻 GitHub Project", PROJECT_GITHUB_URL)],
+                [Button.inline("⬅️ Home", b"home:back")],
+            ],
+        )
         return
 
     if command == "/addtogroup":
@@ -2069,13 +2103,24 @@ async def handle_callback(
         )
         return
 
+    if data == "clone:create":
+        if include_clone:
+            await event.answer()
+            await begin_clone_setup(event)
+        else:
+            await event.answer(
+                "Clone management is available from the main AniToon bot.",
+                alert=True,
+            )
+        return
+
     if data == "home:clone":
         if include_clone:
             await event.answer()
             await begin_clone_setup(event)
         else:
             await event.answer(
-                "Clone creation is available from the main AniToon bot.",
+                "Clone management is available from the main AniToon bot.",
                 alert=True,
             )
         return
