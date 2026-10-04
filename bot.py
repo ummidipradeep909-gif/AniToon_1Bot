@@ -61,7 +61,7 @@ PUBLIC_WEB_URL = (
 CLONE_BOT_USERNAME = os.getenv("CLONE_BOT_USERNAME", "").strip().lstrip("@")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AniToon_1Bot").strip().lstrip("@")
 OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
-# Clone bots are kept in memory only. Do not persist or hard-cap clone creation here.
+# Clone bots are live in memory only; scan execution is globally queued.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
 SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "3")), 30))
 
@@ -119,6 +119,7 @@ class PendingScan:
 clone_clients: dict[int, TelegramClient] = {}
 clone_owners: dict[int, int] = {}
 clone_usernames: dict[int, str] = {}
+clone_owner_names: dict[int, str] = {}
 clone_client_ids: dict[int, int] = {}
 clone_stats: dict[int, dict[str, Any]] = {}
 clone_message_pending: dict[int, int] = {}
@@ -452,6 +453,94 @@ async def render_owner_user_scans(event, owner_id: int, target_user_id: int) -> 
     if len(text) > 3900:
         text = text[:3860] + "\n\n…showing the newest scan files."
     await event.edit(text, parse_mode="html", buttons=[[Button.inline("⬅️ Users", b"owner:users:0")], [Button.inline("👑 Dashboard", b"owner:dashboard")]])
+
+async def remove_clone_as_owner(owner_id: int, clone_id: int) -> bool:
+    if not _owner_allowed(owner_id):
+        return False
+    real_owner = clone_owners.get(int(clone_id))
+    if real_owner is None:
+        return False
+
+    client = clone_clients.pop(int(clone_id), None)
+    clone_owners.pop(int(clone_id), None)
+    clone_usernames.pop(int(clone_id), None)
+    clone_owner_names.pop(int(clone_id), None)
+    clone_stats.pop(int(clone_id), None)
+    clone_message_pending.pop(int(clone_id), None)
+
+    if client is not None:
+        clone_client_ids.pop(id(client), None)
+        for token, task in list(active_scans.items()):
+            if active_scan_clients.get(token) is client:
+                task.cancel()
+        with suppress(Exception):
+            await client.disconnect()
+
+    await mark_clone_removed(int(real_owner), int(clone_id))
+    return True
+
+
+async def render_owner_clones(event, owner_id: int) -> None:
+    if not _owner_allowed(owner_id):
+        await event.answer("Owner access only.", alert=True)
+        return
+
+    items = []
+    for clone_id, clone_owner_id in clone_owners.items():
+        clone_id = int(clone_id)
+        client = clone_clients.get(clone_id)
+        items.append({
+            "clone_id": clone_id,
+            "clone_username": clone_usernames.get(clone_id),
+            "owner_id": int(clone_owner_id),
+            "owner_name": clone_owner_names.get(clone_id) or f"User {clone_owner_id}",
+            "online": bool(client and client.is_connected()),
+        })
+
+    items.sort(key=lambda x: x["clone_id"], reverse=True)
+
+    if not items:
+        await event.edit(
+            "👑 <b>Clone Bots of AniToon</b>\n\nNo active clone bots.",
+            parse_mode="html",
+            buttons=[[Button.inline("⬅️ Dashboard", b"owner:dashboard")]],
+        )
+        return
+
+    lines = [f"👑 <b>Clone Bots of AniToon</b> — {len(items)} active", ""]
+    buttons = []
+    for item in items[:20]:
+        clone_username = str(item.get("clone_username") or "").lstrip("@")
+        owner_id = int(item["owner_id"])
+        owner_name = html.escape(str(item["owner_name"]))
+        status = "🟢 Online" if item["online"] else "🔴 Offline"
+        lines.append(
+            f"🤖 <b>@{html.escape(clone_username or 'unknown')}</b> — {status}\n"
+            f"👤 <a href="tg://user?id={owner_id}">{owner_name}</a>"
+        )
+        if clone_username:
+            buttons.append([Button.url(
+                "🤖 Open Clone",
+                f"https://t.me/{clone_username}",
+            )])
+        buttons.append([
+            Button.inline(
+                "🗑 Remove Clone",
+                f"owner:clone_remove:{int(item['clone_id'])}".encode("ascii"),
+            )
+        ])
+
+    if len(items) > 20:
+        lines.append(f"\n…and {len(items) - 20} more active clone(s).")
+
+    buttons.append([Button.inline("🔄 Refresh", b"owner:clones")])
+    buttons.append([Button.inline("⬅️ Dashboard", b"owner:dashboard")])
+    await event.edit(
+        "\n".join(lines),
+        parse_mode="html",
+        buttons=buttons,
+    )
+
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
@@ -1020,18 +1109,13 @@ def _bind_bot_handlers(
     client.add_event_handler(on_callback, events.CallbackQuery)
 
 
-async def _start_clone_bot(token: str, owner_user_id: int):
+async def _start_clone_bot(
+    token: str,
+    owner_user_id: int,
+    owner_name: str | None = None,
+):
     client = TelegramClient(MemorySession(), API_ID, API_HASH)
     client.flood_sleep_threshold = 15 * 60
-
-    if len(clone_clients) >= MAX_LIVE_CLONES:
-        raise RuntimeError("Clone capacity reached. Please remove an unused clone first.")
-    user_clone_count = sum(
-        1 for owner in clone_owners.values()
-        if int(owner) == int(owner_user_id)
-    )
-    if user_clone_count >= MAX_CLONES_PER_USER:
-        raise RuntimeError("Your clone limit has been reached. Remove an unused clone first.")
 
     try:
         await asyncio.wait_for(client.start(bot_token=token), timeout=30)
@@ -1057,6 +1141,8 @@ async def _start_clone_bot(token: str, owner_user_id: int):
         clone_clients[int(clone_id)] = client
         clone_owners[int(clone_id)] = int(owner_user_id)
         clone_usernames[int(clone_id)] = username
+        if owner_name:
+            clone_owner_names[int(clone_id)] = owner_name
         clone_client_ids[id(client)] = int(clone_id)
         _ensure_clone_stats(int(clone_id))
 
@@ -1133,8 +1219,23 @@ async def handle_clone_token_message(event) -> bool:
         )
         return True
 
+    sender_name = " ".join(
+        part for part in (
+            str(getattr(sender, "first_name", "") or "").strip(),
+            str(getattr(sender, "last_name", "") or "").strip(),
+        ) if part
+    ) or (
+        f"@{getattr(sender, 'username', '')}"
+        if getattr(sender, "username", None)
+        else f"User {int(user_id)}"
+    )
+
     try:
-        me = await _start_clone_bot(token, int(user_id))
+        me = await _start_clone_bot(
+            token,
+            int(user_id),
+            sender_name,
+        )
     except Exception:
         log.exception("Clone bot startup failed")
         await event.reply(
@@ -1310,6 +1411,66 @@ async def handle_callback(
 ):
     purge_pending_scans()
     data = (event.data or b"").decode("ascii", "ignore")
+
+    if data == "owner:clones":
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        await render_owner_clones(event, int(user_id))
+        return
+
+    if data.startswith("owner:clone_remove:"):
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        try:
+            clone_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid clone.", alert=True)
+            return
+
+        clone_username = clone_usernames.get(clone_id) or "this clone"
+        await event.edit(
+            f"⚠️ <b>Remove @{html.escape(clone_username.lstrip('@'))}?</b>\n\n"
+            "This will disconnect the clone bot immediately.",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("✅ Yes, Remove", f"owner:clone_remove_confirm:{clone_id}".encode("ascii"))],
+                [Button.inline("⬅️ Cancel", b"owner:clones")],
+            ],
+        )
+        return
+
+    if data.startswith("owner:clone_remove_confirm:"):
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        try:
+            clone_id = int(data.split(":", 2)[2])
+        except ValueError:
+            await event.answer("Invalid clone.", alert=True)
+            return
+        if not await remove_clone_as_owner(int(user_id), clone_id):
+            await event.answer("Clone not found or already removed.", alert=True)
+            return
+        await event.edit(
+            "✅ <b>Clone removed by owner.</b>",
+            parse_mode="html",
+            buttons=[
+                [Button.inline("🤖 Active Clone Bots", b"owner:clones")],
+                [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
+            ],
+        )
+        return
 
     if data == "owner:dashboard":
         await event.answer()
@@ -2441,21 +2602,12 @@ async def main():
             log.exception("Failed to set command menu for main bot")
 
         try:
-            from mongo_store import load_clone_requests
-            saved_clones = await load_clone_requests()
+            from mongo_store import purge_clone_tokens
+            await purge_clone_tokens()
         except Exception:
-            saved_clones = []
-            log.exception("Failed to load saved clone configurations")
+            log.exception("Failed to purge old clone credentials")
 
         restored = 0
-        for saved in saved_clones:
-            try:
-                if saved.get("clone_id") is not None:
-                    _ensure_clone_stats(int(saved["clone_id"]), saved)
-                await _start_clone_bot(saved["token"], int(saved["user_id"]))
-                restored += 1
-            except Exception:
-                log.exception("Failed to restore clone bot id=%s", saved.get("clone_id"))
 
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
@@ -2479,6 +2631,7 @@ async def main():
         clone_clients.clear()
         clone_owners.clear()
         clone_usernames.clear()
+        clone_owner_names.clear()
         clone_client_ids.clear()
         clone_stats.clear()
         active_scan_clients.clear()
