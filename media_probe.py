@@ -102,7 +102,7 @@ class RangeProbeSession:
             async for part in self.client.iter_download(
                 self.media,
                 offset=offset,
-                limit=1,
+                limit=request_size,
                 chunk_size=request_size,
                 request_size=request_size,
                 file_size=self.total,
