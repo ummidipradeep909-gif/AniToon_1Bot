@@ -785,7 +785,6 @@ async def analyze_source(
     global checks_total, checks_ok, checks_failed
     checks_total += 1
     filename = safe_filename(source_message)
-
     outcome = "failed"
 
     async def persist_outcome(status: str) -> None:
@@ -814,37 +813,38 @@ async def analyze_source(
         )
 
         report = await run_scan(
-                source_message,
-                status_message,
-                scan_token=scan_token,
-                client=client,
-            )
+            source_message,
+            status_message,
+            scan_token=scan_token,
+            client=client,
+        )
 
-            state = cache_state(status_message, source_message, report)
-            if state is None:
-                raise RuntimeError("Could not create web report link")
+        state = cache_state(status_message, source_message, report)
+        if state is None:
+            raise RuntimeError("Could not create web report link")
 
-            state.web_token = scan_token
-            web_states[scan_token] = state
+        state.web_token = scan_token
+        web_states[scan_token] = state
 
-            await record_scan(
-                user_id=user_id,
-                source_message=source_message,
-                report=report,
-                status="completed",
-                source_bot=bot_username,
-            )
-            await edit_status(
-                status_message,
-                compact_scan_result(report),
-                buttons=web_report_button(
-                    scan_token,
-                    bot_username,
-                    include_clone=include_clone,
-                ),
-            )
-            checks_ok += 1
-            outcome = "completed"
+        await record_scan(
+            user_id=user_id,
+            source_message=source_message,
+            report=report,
+            status="completed",
+            source_bot=bot_username,
+        )
+
+        await edit_status(
+            status_message,
+            compact_scan_result(report),
+            buttons=web_report_button(
+                scan_token,
+                bot_username,
+                include_clone=include_clone,
+            ),
+        )
+        checks_ok += 1
+        outcome = "completed"
 
     except asyncio.CancelledError:
         outcome = "cancelled"
@@ -869,6 +869,7 @@ async def analyze_source(
         )
 
     except ProbeCancelled:
+        outcome = "cancelled"
         await persist_outcome("cancelled")
         checks_failed += 1
         await edit_status(
