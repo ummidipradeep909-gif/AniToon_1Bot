@@ -376,7 +376,7 @@ def _stream_track(stream: Any) -> dict[str, Any]:
 
     track = {
         "type": "subtitle" if kind == "subtitle" else kind,
-        "track": str(getattr(stream, "index", "")),
+        "track": str(int(getattr(stream, "index", -1)) + 1) if isinstance(getattr(stream, "index", None), int) and getattr(stream, "index", -1) >= 0 else "",
         "name": display_name,
         "display_name": display_name,
         "name_source": display_source,
@@ -647,8 +647,10 @@ async def inspect_telegram_player(
 
     format_hint = None
     lower_name = name.lower()
-    if lower_name.endswith((".mkv", ".webm")) or "matroska" in mime or "webm" in mime:
-        format_hint = "matroska,webm"
+    if lower_name.endswith(".mkv") or "matroska" in mime:
+        format_hint = "matroska"
+    elif lower_name.endswith(".webm") or "webm" in mime:
+        format_hint = "webm"
     elif lower_name.endswith((".mp4", ".m4v", ".mov", ".m4a")) or "mp4" in mime:
         format_hint = "mov,mp4,m4a,3gp,3g2,mj2"
     elif lower_name.endswith((".ts", ".m2ts", ".mts")) or "mpegts" in mime:
