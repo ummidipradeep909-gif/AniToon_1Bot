@@ -309,21 +309,31 @@ def home_buttons(
     user_id: int | None = None,
     show_privacy: bool = True,
 ):
-    buttons = [
-        [Button.inline("🔎 Scan Files", b"home:scan")],
-    ]
+    scan = Button.inline("🔎 Scan Files", b"home:scan")
+    stats = Button.inline("📊 My Stats", b"home:stats")
+    help_btn = Button.inline("📖 Help", b"home:help")
+    about = Button.inline("ℹ️ About", b"home:about")
+    add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
+
     if include_clone:
-        buttons.append([Button.inline("🤖 Clone Manager", b"home:clones")])
-    buttons.extend([
-        [Button.inline("📊 My Stats", b"home:stats")],
-    ])
-    buttons.extend([
-        [Button.inline("📖 Help", b"home:help")],
-        [Button.inline("ℹ️ About", b"home:about")],
-        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
-    ])
-    if include_clone and _owner_allowed(user_id):
-        buttons.insert(-1, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
+        clone = Button.inline("🤖 Clone Manager", b"home:clones")
+        buttons = [
+            [scan, clone],
+            [stats, help_btn],
+            [about, add_group],
+        ]
+        if _owner_allowed(user_id):
+            buttons[-1] = [
+                about,
+                Button.inline("👑 Owner Dashboard", b"owner:dashboard"),
+            ]
+            buttons.append([add_group])
+    else:
+        buttons = [
+            [scan, stats],
+            [help_btn, about],
+            [add_group],
+        ]
     return buttons
 
 
