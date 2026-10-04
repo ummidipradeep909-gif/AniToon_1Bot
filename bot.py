@@ -393,12 +393,17 @@ async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> N
     else:
         text = ("👑 <b>Owner Dashboard</b>\n\n"
                 "📅 <b>Last 7 Days</b>\n\n"
-                f"👥 Users with scans: <b>{summary['total_users']}</b>\n"
+                f"👥 Users active in last 7 days: <b>{summary['total_users']}</b>\n"
                 f"📁 Scan files: <b>{summary['total_scans']}</b>\n"
                 f"✅ Completed: <b>{summary['completed']}</b>\n"
                 f"❌ Failed: <b>{summary['failed']}</b>\n"
                 f"🛑 Cancelled: <b>{summary['cancelled']}</b>")
-        buttons = [[Button.inline("👥 Users & Scan Files", b"owner:users:0")], [Button.inline("🔄 Refresh", b"owner:dashboard")], [Button.inline("⬅️ Home", b"home:back")]]
+        buttons = [
+            [Button.inline("👥 Users & Scan Files", b"owner:users:0")],
+            [Button.inline("🤖 Active Clone Bots", b"owner:clones")],
+            [Button.inline("🔄 Refresh", b"owner:dashboard")],
+            [Button.inline("⬅️ Home", b"home:back")],
+        ]
     if edit:
         await event.edit(text, parse_mode="html", buttons=buttons)
     else:
@@ -2037,7 +2042,7 @@ h1 {{
 </html>"""
     return document.encode("utf-8")
 
-def web_page(report: Report) -> bytes:
+def web_page(report: Report, report_token: str | None = None) -> bytes:
     filename = html.escape(report.filename)
     generated = datetime.now(timezone.utc)
     generated_text = generated.strftime("%Y-%m-%d %H:%M UTC")
@@ -2135,6 +2140,8 @@ def web_page(report: Report) -> bytes:
     container_name = report.detected or "Unknown"
     mime = report.mime or "Unknown"
     sampled = f"{report.sampled / 1024 / 1024:.2f} MiB"
+    wallpaper_seed = html.escape(report_token or secrets.token_urlsafe(10))
+    wallpaper_url = f"https://picsum.photos/seed/{wallpaper_seed}/1920/1080"
     audio_names = [str(t.get("name")) for t in audio if t.get("name")]
     subtitle_names = [str(t.get("name")) for t in subtitles if t.get("name")]
 
@@ -2160,19 +2167,39 @@ def web_page(report: Report) -> bytes:
 body {{
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(900px 400px at 15% -10%, rgba(56,189,248,.13), transparent 60%),
-    radial-gradient(800px 380px at 100% 0%, rgba(168,85,247,.10), transparent 60%),
-    var(--bg);
+  position: relative;
+  isolation: isolate;
+  background: var(--bg);
   color: var(--text);
   font: 14px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}}
+body::before {{
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    linear-gradient(180deg, rgba(4,8,18,.72), rgba(4,8,18,.92)),
+    url("{wallpaper_url}") center/cover no-repeat;
+  filter: saturate(1.08) contrast(1.03);
+  transform: scale(1.03);
+}}
+body::after {{
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(900px 420px at 10% 0%, rgba(125,211,252,.12), transparent 65%),
+    radial-gradient(850px 420px at 100% 0%, rgba(168,85,247,.12), transparent 65%);
+  pointer-events: none;
 }}
 .wrap {{ max-width: 1080px; margin:auto; padding:20px 14px 50px; }}
 .hero {{
   padding:24px;
   border:1px solid var(--border);
   border-radius:24px;
-  background:linear-gradient(135deg,rgba(15,23,42,.96),rgba(17,24,39,.84));
+  background:linear-gradient(135deg,rgba(15,23,42,.78),rgba(17,24,39,.66));
   box-shadow:0 20px 60px rgba(0,0,0,.26);
 }}
 .logo {{ font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); font-weight:800; }}
@@ -2535,7 +2562,7 @@ async def health_server():
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"404 Not Found"
                 else:
-                    body = web_page(state.report)
+                    body = web_page(state.report, token)
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
                     code = b"200 OK"
 
