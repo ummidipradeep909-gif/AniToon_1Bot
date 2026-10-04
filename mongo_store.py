@@ -157,29 +157,50 @@ async def record_clone_request(
 ) -> None:
     db = await _get_db()
     if db is None:
-        log.warning("MongoDB is not configured; validated clone was not persisted")
+        log.warning("MongoDB is not configured; clone data will remain in memory only")
+        return
+
+    if clone_id is None:
         return
 
     try:
         cipher = _cipher()
-        doc = {
+        now = datetime.now(timezone.utc)
+        set_fields = {
             "user_id": int(user_id),
-            "clone_id": clone_id,
+            "clone_id": int(clone_id),
             "clone_username": clone_username,
             "clone_first_name": clone_first_name,
-            "status": "validated",
-            "created_at": datetime.now(timezone.utc),
+            "status": "online",
+            "last_activity": now,
+            "updated_at": now,
+            "messages_received": 0,
+            "scans_started": 0,
+            "scans_completed": 0,
+            "scans_failed": 0,
+            "scans_cancelled": 0,
         }
-
         if cipher:
-            doc["token_encrypted"] = cipher.encrypt(token.encode("utf-8")).decode("ascii")
+            set_fields["token_encrypted"] = cipher.encrypt(token.encode("utf-8")).decode("ascii")
         else:
-            doc["token_persistence"] = "disabled_until_CLONE_TOKEN_ENCRYPTION_KEY_is_configured"
+            set_fields["token_persistence"] = (
+                "disabled_until_CLONE_TOKEN_ENCRYPTION_KEY_is_configured"
+            )
 
         await asyncio.to_thread(
             db.clones.update_one,
-            {"user_id": int(user_id), "clone_id": clone_id},
-            {"$set": doc},
+            {"user_id": int(user_id), "clone_id": int(clone_id)},
+            {
+                "$set": set_fields,
+                "$setOnInsert": {
+                    "created_at": now,
+                    "messages_received": 0,
+                    "scans_started": 0,
+                    "scans_completed": 0,
+                    "scans_failed": 0,
+                    "scans_cancelled": 0,
+                },
+            },
             upsert=True,
         )
     except Exception:
@@ -242,3 +263,139 @@ async def load_clone_requests() -> list[dict[str, Any]]:
     except Exception:
         log.exception("Failed to load saved clone configurations")
         return []
+
+
+
+async def update_clone_stats(
+    *,
+    clone_id: int,
+    messages_received: int = 0,
+    scans_started: int = 0,
+    scans_completed: int = 0,
+    scans_failed: int = 0,
+    scans_cancelled: int = 0,
+    status: str = "online",
+) -> None:
+    db = await _get_db()
+    if db is None:
+        return
+
+    increments = {
+        "messages_received": int(messages_received),
+        "scans_started": int(scans_started),
+        "scans_completed": int(scans_completed),
+        "scans_failed": int(scans_failed),
+        "scans_cancelled": int(scans_cancelled),
+    }
+    increments = {key: value for key, value in increments.items() if value}
+    try:
+        update = {
+            "$set": {
+                "status": status,
+                "last_activity": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        }
+        if increments:
+            update["$inc"] = increments
+        await asyncio.to_thread(
+            db.clones.update_one,
+            {"clone_id": int(clone_id), "status": {"$ne": "removed"}},
+            update,
+        )
+    except Exception:
+        log.exception("Failed to update clone stats")
+
+
+async def list_user_clones(user_id: int) -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+
+    try:
+        return await asyncio.to_thread(
+            lambda: list(
+                db.clones.find(
+                    {
+                        "user_id": int(user_id),
+                        "status": {"$in": ["online", "validated"]},
+                    },
+                    {
+                        "user_id": 1,
+                        "clone_id": 1,
+                        "clone_username": 1,
+                        "clone_first_name": 1,
+                        "status": 1,
+                        "created_at": 1,
+                        "last_activity": 1,
+                        "messages_received": 1,
+                        "scans_started": 1,
+                        "scans_completed": 1,
+                        "scans_failed": 1,
+                        "scans_cancelled": 1,
+                    },
+                ).sort("created_at", -1)
+            )
+        )
+    except Exception:
+        log.exception("Failed to list user's clone bots")
+        return []
+
+
+async def get_user_clone(user_id: int, clone_id: int) -> dict[str, Any] | None:
+    db = await _get_db()
+    if db is None:
+        return None
+
+    try:
+        return await asyncio.to_thread(
+            db.clones.find_one,
+            {
+                "user_id": int(user_id),
+                "clone_id": int(clone_id),
+                "status": {"$in": ["online", "validated"]},
+            },
+            {
+                "user_id": 1,
+                "clone_id": 1,
+                "clone_username": 1,
+                "clone_first_name": 1,
+                "status": 1,
+                "created_at": 1,
+                "last_activity": 1,
+                "messages_received": 1,
+                "scans_started": 1,
+                "scans_completed": 1,
+                "scans_failed": 1,
+                "scans_cancelled": 1,
+            },
+        )
+    except Exception:
+        log.exception("Failed to load clone")
+        return None
+
+
+async def mark_clone_removed(user_id: int, clone_id: int) -> None:
+    db = await _get_db()
+    if db is None:
+        return
+
+    try:
+        now = datetime.now(timezone.utc)
+        await asyncio.to_thread(
+            db.clones.update_one,
+            {"user_id": int(user_id), "clone_id": int(clone_id)},
+            {
+                "$set": {
+                    "status": "removed",
+                    "removed_at": now,
+                    "updated_at": now,
+                },
+                "$unset": {
+                    "token_encrypted": "",
+                    "token_persistence": "",
+                },
+            },
+        )
+    except Exception:
+        log.exception("Failed to remove clone from persistent storage")
