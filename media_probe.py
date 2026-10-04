@@ -827,7 +827,7 @@ async def inspect_telegram_player(
                     client,
                     message,
                     progress=progress,
-                    deep=True,
+                    deep=False,
                 )
                 fallback.notes.insert(
                     0,
