@@ -334,3 +334,78 @@ async def mark_clone_removed(user_id: int, clone_id: int) -> None:
         )
     except Exception:
         log.exception("Failed to remove clone from persistent storage")
+
+
+
+async def load_clone_requests() -> list[dict[str, Any]]:
+    """Load active clone tokens and persisted statistics for restart recovery."""
+    db = await _get_db()
+    if db is None:
+        return []
+
+    cipher = _cipher()
+    if cipher is None:
+        return []
+
+    try:
+        rows = await asyncio.to_thread(
+            lambda: list(
+                db.clones.find(
+                    {
+                        "status": {"$in": ["validated", "online"]},
+                        "token_encrypted": {"$exists": True, "$ne": ""},
+                    },
+                    {
+                        "user_id": 1,
+                        "clone_id": 1,
+                        "clone_username": 1,
+                        "clone_first_name": 1,
+                        "created_at": 1,
+                        "last_activity": 1,
+                        "messages_received": 1,
+                        "scans_started": 1,
+                        "scans_completed": 1,
+                        "scans_failed": 1,
+                        "scans_cancelled": 1,
+                        "token_encrypted": 1,
+                    },
+                )
+            )
+        )
+
+        restored = []
+        for row in rows:
+            encrypted = row.get("token_encrypted")
+            if not encrypted:
+                continue
+            try:
+                token = cipher.decrypt(str(encrypted).encode("ascii")).decode("utf-8")
+            except (InvalidToken, ValueError, UnicodeDecodeError):
+                log.exception(
+                    "Could not decrypt saved clone token for clone_id=%s",
+                    row.get("clone_id"),
+                )
+                continue
+
+            restored.append(
+                {
+                    "user_id": row.get("user_id"),
+                    "clone_id": row.get("clone_id"),
+                    "clone_username": row.get("clone_username"),
+                    "clone_first_name": row.get("clone_first_name"),
+                    "created_at": row.get("created_at"),
+                    "last_activity": row.get("last_activity"),
+                    "messages_received": row.get("messages_received", 0),
+                    "scans_started": row.get("scans_started", 0),
+                    "scans_completed": row.get("scans_completed", 0),
+                    "scans_failed": row.get("scans_failed", 0),
+                    "scans_cancelled": row.get("scans_cancelled", 0),
+                    "token": token,
+                }
+            )
+
+        log.info("Loaded %s saved clone configuration(s)", len(restored))
+        return restored
+    except Exception:
+        log.exception("Failed to load saved clone configurations")
+        return []
