@@ -427,7 +427,7 @@ async def _user_clone_records(user_id: int) -> list[dict[str, Any]]:
         record["status"] = (
             "online"
             if clone_id in clone_clients and clone_clients[clone_id].is_connected()
-            else record.get("status", "offline")
+            else "offline"
         )
 
     records.sort(
@@ -2751,7 +2751,7 @@ h1 {{ margin:8px 0 6px; font-size:clamp(22px,4vw,34px); line-height:1.2; }}
 
   <div class="note">
     <b>Privacy / bandwidth:</b> this page is a metadata report. The scanner does not create a complete local copy of the Telegram file.
-    The browser report token is held in memory and expires after 5 minutes or when the service restarts.
+    The browser report token expires after 5 minutes; the report data is also persisted in MongoDB during that window.
   </div>
 </div>
 
