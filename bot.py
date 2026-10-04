@@ -92,10 +92,19 @@ class PendingScan:
     source_message: Any
     created_at: float
     user_id: int | None = None
+    client: Any = None
+    bot_username: str = BOT_USERNAME
+    include_clone: bool = False
     busy: bool = False
 
 
-scan_states: dict[tuple[int, int], ScanState] = {}
+# Live clone bot clients. Each clone runs on this same asyncio event loop.
+clone_clients: dict[int, TelegramClient] = {}
+clone_owners: dict[int, int] = {}
+active_scan_clients: dict[str, Any] = {}
+
+
+scan_states: dictscan_states: dict[tuple[int, int], ScanState] = {}
 web_states: dict[str, ScanState] = {}
 pending_scans: dict[str, PendingScan] = {}
 active_scans: dict[str, asyncio.Task] = {}
@@ -134,22 +143,37 @@ ABOUT_TEXT = (
 )
 
 
-def home_buttons():
-    buttons = [
-        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
-        [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
-        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
-    ]
-    if CLONE_BOT_USERNAME:
-        buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+def add_to_group_url(bot_username: str) -> str:
+    return f"https://t.me/{bot_username}?startgroup&admin={GROUP_ADMIN_PERMISSIONS}"
+
+
+def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
+    if include_clone:
+        buttons = [
+            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
+            [Button.inline("📖 Help", b"home:help"), Button.inline("ℹ️ About", b"home:about")],
+        ]
+        if CLONE_BOT_USERNAME:
+            buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")])
+    else:
+        buttons = [
+            [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("📖 Help", b"home:help")],
+            [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
+        ]
+    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
     return buttons
 
 
-def help_buttons():
+def help_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
+    first_row = (
+        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")]
+        if include_clone
+        else [Button.inline("🔎 Scan Files", b"home:scan")]
+    )
     return [
-        [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🧬 Create Clone", b"home:clone")],
+        first_row,
         [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
-        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
+        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
     ]
 
 
@@ -161,21 +185,22 @@ def clone_buttons():
     ]
 
 
-
-def web_report_button(token: str):
-    buttons = [
-        Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}"),
-    ]
-    row = [buttons[0]]
-    if CLONE_BOT_USERNAME:
+def web_report_button(
+    token: str,
+    bot_username: str = BOT_USERNAME,
+    *,
+    include_clone: bool = True,
+):
+    row = [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]
+    if include_clone and CLONE_BOT_USERNAME:
         row.append(Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}"))
     return [
         row,
-        [Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)],
+        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
     ]
 
 
-def metadata_button(token: str):
+def metadata_button(token: str):def metadata_button(token: str):
     return [[Button.inline("📥 Download Metadata", f"scan:{token}".encode("ascii"))]]
 
 
@@ -331,9 +356,9 @@ async def run_scan(
     status_message: Any,
     *,
     scan_token: str,
+    client: Any,
 ) -> Report:
     filename = safe_filename(source_message)
-    port = int(os.getenv("PORT", "10000"))
 
     async def progress(line: str):
         await edit_status(
@@ -344,12 +369,12 @@ async def run_scan(
 
     return await asyncio.wait_for(
         inspect_telegram_player(
-            bot,
+            client,
             source_message,
             scan_token,
             progress=progress,
             budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", "8388608")),
-            port=port,
+            port=int(os.getenv("PORT", "10000")),
         ),
         timeout=SCAN_TIMEOUT_SECONDS,
     )
@@ -360,6 +385,10 @@ async def analyze_source(
     status_message: Any,
     scan_token: str,
     user_id: int | None = None,
+    *,
+    client: Any = bot,
+    bot_username: str = BOT_USERNAME,
+    include_clone: bool = True,
 ) -> None:
     global checks_total, checks_ok, checks_failed
     checks_total += 1
@@ -371,13 +400,13 @@ async def analyze_source(
                 source_message,
                 status_message,
                 scan_token=scan_token,
+                client=client,
             )
 
             state = cache_state(status_message, source_message, report)
             if state is None:
                 raise RuntimeError("Could not create web report link")
 
-            # Reuse the private random scan token for the browser report URL.
             state.web_token = scan_token
             web_states[scan_token] = state
 
@@ -387,11 +416,14 @@ async def analyze_source(
                 report=report,
                 status="completed",
             )
-            result = compact_scan_result(report)
             await edit_status(
                 status_message,
-                result,
-                buttons=web_report_button(scan_token),
+                compact_scan_result(report),
+                buttons=web_report_button(
+                    scan_token,
+                    bot_username,
+                    include_clone=include_clone,
+                ),
             )
             checks_ok += 1
 
@@ -401,7 +433,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
         raise
 
@@ -411,7 +443,7 @@ async def analyze_source(
             status_message,
             "🛑 <b>Safe scan limit reached.</b>\n\n"
             "The player engine stopped before downloading the complete file.",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
 
     except ProbeCancelled:
@@ -419,7 +451,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
 
     except asyncio.TimeoutError:
@@ -427,7 +459,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             "⏰ <b>Metadata scan reached the 5-minute limit.</b>",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
 
     except errors.FloodWaitError as exc:
@@ -435,7 +467,7 @@ async def analyze_source(
         await edit_status(
             status_message,
             f"⏳ Telegram temporarily rate-limited this scan for {int(exc.seconds)} seconds.",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
 
     except Exception as exc:
@@ -445,16 +477,24 @@ async def analyze_source(
             status_message,
             "❌ <b>Metadata scan failed.</b>\n\n"
             f"<code>{html.escape(type(exc).__name__)}</code>",
-            buttons=home_buttons(),
+            buttons=home_buttons(bot_username, include_clone=include_clone),
         )
 
     finally:
-        await cancel_probe(scan_token) if scan_token in active_scans else None
+        if scan_token in active_scans:
+            await cancel_probe(scan_token)
         active_scans.pop(scan_token, None)
         active_scan_users.pop(scan_token, None)
+        active_scan_clients.pop(scan_token, None)
 
 
-async def analyze(event) -> None:
+async def analyze(
+    event,
+    *,
+    client: Any = bot,
+    bot_username: str = BOT_USERNAME,
+    include_clone: bool = True,
+) -> None:
     purge_pending_scans()
 
     token = secrets.token_urlsafe(18)
@@ -464,6 +504,9 @@ async def analyze(event) -> None:
         source_message=event.message,
         created_at=time.monotonic(),
         user_id=int(sender_id) if sender_id is not None else None,
+        client=client,
+        bot_username=bot_username,
+        include_clone=include_clone,
     )
 
     await event.reply(
@@ -473,16 +516,18 @@ async def analyze(event) -> None:
     )
 
 
-async def cancel_user_scan(user_id: int) -> bool:
+async def cancel_user_scan(user_id: int, client: Any = None) -> bool:
     for token, pending in list(pending_scans.items()):
-        if pending.user_id == user_id:
+        if pending.user_id == user_id and (client is None or pending.client is client):
             pending_scans.pop(token, None)
             return True
 
     for token, task in list(active_scans.items()):
         if active_scan_users.get(token) == user_id:
-            task.cancel()
-            return True
+            task_client = active_scan_clients.get(token)
+            if client is None or task_client is client:
+                task.cancel()
+                return True
 
     return False
 
@@ -492,15 +537,92 @@ def _clean_bot_token(value: str) -> str:
     return value
 
 
-async def validate_clone_token(token: str):
+async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
+    commands = [
+        types.BotCommand(command="start", description="Open the bot"),
+        types.BotCommand(command="help", description="Show help"),
+        types.BotCommand(command="about", description="About AniToons"),
+        types.BotCommand(command="addtogroup", description="Add the bot to a group"),
+        types.BotCommand(command="cancel", description="Cancel your running scan"),
+    ]
+    if include_clone:
+        commands.insert(4, types.BotCommand(command="clone", description="Create a clone bot"))
+
+    await client(functions.bots.SetBotCommandsRequest(
+        scope=types.BotCommandScopeDefault(),
+        lang_code="en",
+        commands=commands,
+    ))
+
+
+def _bind_bot_handlers(
+    client: TelegramClient,
+    bot_username: str,
+    *,
+    include_clone: bool,
+) -> None:
+    async def on_message(event):
+        await handle_new_message(
+            event,
+            client=client,
+            bot_username=bot_username,
+            include_clone=include_clone,
+        )
+
+    async def on_callback(event):
+        await handle_callback(
+            event,
+            client=client,
+            bot_username=bot_username,
+            include_clone=include_clone,
+        )
+
+    client.add_event_handler(on_message, events.NewMessage(incoming=True))
+    client.add_event_handler(on_callback, events.CallbackQuery)
+
+
+async def _start_clone_bot(token: str, owner_user_id: int):
     client = TelegramClient(MemorySession(), API_ID, API_HASH)
     client.flood_sleep_threshold = 15 * 60
+
     try:
         await asyncio.wait_for(client.start(bot_token=token), timeout=30)
-        return await asyncio.wait_for(client.get_me(), timeout=15)
-    finally:
+        me = await asyncio.wait_for(client.get_me(), timeout=15)
+
+        clone_id = getattr(me, "id", None)
+        username = getattr(me, "username", None)
+        if clone_id is None or not username:
+            raise RuntimeError("Telegram did not return a usable clone bot identity")
+
+        old = clone_clients.get(int(clone_id))
+        if old is not None:
+            with suppress(Exception):
+                await old.disconnect()
+
+        _bind_bot_handlers(client, username, include_clone=False)
+
+        try:
+            await _set_bot_commands(client, include_clone=False)
+        except Exception:
+            log.exception("Failed to set command menu for clone @%s", username)
+
+        clone_clients[int(clone_id)] = client
+        clone_owners[int(clone_id)] = int(owner_user_id)
+
+        await record_clone_request(
+            user_id=int(owner_user_id),
+            clone_id=int(clone_id),
+            clone_username=username,
+            clone_first_name=getattr(me, "first_name", None),
+            token=token,
+        )
+        log.info("Clone bot online as @%s | owner_id=%s", username, owner_user_id)
+        return me
+
+    except Exception:
         with suppress(Exception):
             await client.disconnect()
+        raise
 
 
 def _clone_pending(user_id: int) -> bool:
@@ -561,57 +683,75 @@ async def handle_clone_token_message(event) -> bool:
         return True
 
     try:
-        me = await validate_clone_token(token)
+        me = await _start_clone_bot(token, int(user_id))
     except Exception:
-        log.exception("Clone token validation failed")
+        log.exception("Clone bot startup failed")
         await event.reply(
-            "❌ <b>Token rejected by Telegram.</b>\n\n"
-            "Please create the bot with @BotFather and send its current token.",
+            "❌ <b>Clone bot could not be started.</b>\n\n"
+            "Please check the BotFather token and make sure the bot is active.",
             parse_mode="html",
             buttons=clone_buttons(),
         )
         return True
 
-    await record_clone_request(
-        user_id=int(user_id),
-        clone_id=getattr(me, "id", None),
-        clone_username=getattr(me, "username", None),
-        clone_first_name=getattr(me, "first_name", None),
-        token=token,
-    )
-
     username = getattr(me, "username", None)
     label = "@" + username if username else str(getattr(me, "first_name", "your bot"))
     await event.reply(
-        "✅ <b>Clone bot connected</b>\n\n"
-        f"🤖 Bot: <b>{html.escape(label)}</b>\n"
-        "🔐 The token was accepted and stored securely.",
+        "✅ <b>Your bot is created and ready to use!</b>\n\n"
+        f"🤖 <b>{html.escape(label)}</b> is now online.\n"
+        "📥 Send a video or document to your new bot to scan its metadata.",
         parse_mode="html",
-        buttons=clone_buttons(),
+        buttons=[
+            [Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")],
+            [Button.inline("🧬 Create Another Clone", b"home:clone")],
+            [Button.inline("⬅️ Home", b"home:back")],
+        ],
     )
     return True
 
 
-async def handle_new_message(event):
+async def handle_new_message(
+    event,
+    *,
+    client: Any = bot,
+    bot_username: str = BOT_USERNAME,
+    include_clone: bool = True,
+):
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
-    if await handle_clone_token_message(event):
+    if include_clone and await handle_clone_token_message(event):
         return
+
+    home_text = HOME_TEXT if include_clone else (
+        "⛩ <b>AniToon Clone Bot</b> ⛩\n\n"
+        "🔎 Scan Telegram media files for detailed metadata.\n"
+        "🌐 View complete file information in your browser.\n\n"
+        "Choose an option below."
+    )
+    help_text = HELP_TEXT if include_clone else HELP_TEXT.replace(
+        "/clone — Start clone-bot setup with a BotFather token\n", ""
+    )
 
     if command == "/start":
         await record_user(event)
-        await event.reply(HOME_TEXT, parse_mode="html", buttons=home_buttons())
+        await event.reply(home_text, parse_mode="html", buttons=home_buttons(
+            bot_username, include_clone=include_clone
+        ))
         return
 
     if command == "/help":
         await record_user(event)
-        await event.reply(HELP_TEXT, parse_mode="html", buttons=help_buttons())
+        await event.reply(help_text, parse_mode="html", buttons=help_buttons(
+            bot_username, include_clone=include_clone
+        ))
         return
 
     if command == "/about":
         await record_user(event)
-        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=home_buttons())
+        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=home_buttons(
+            bot_username, include_clone=include_clone
+        ))
         return
 
     if command == "/addtogroup":
@@ -619,18 +759,31 @@ async def handle_new_message(event):
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
-            buttons=[[Button.url("➕ Add Me to Your Group", ADD_TO_GROUP_URL)]],
+            buttons=[[Button.url(
+                "➕ Add Me to Your Group",
+                add_to_group_url(bot_username),
+            )]],
         )
         return
 
     if command == "/clone":
         await record_user(event)
-        await begin_clone_setup(event)
+        if include_clone:
+            await begin_clone_setup(event)
+        else:
+            await event.reply(
+                f"🧬 Clone creation is managed by @{html.escape(BOT_USERNAME)}.",
+                parse_mode="html",
+                buttons=[[Button.url(
+                    "🤖 Open AniToon",
+                    f"https://t.me/{BOT_USERNAME}",
+                )]],
+            )
         return
 
     if command == "/cancel":
         user_id = getattr(getattr(event, "sender", None), "id", None)
-        if user_id is not None and await cancel_user_scan(int(user_id)):
+        if user_id is not None and await cancel_user_scan(int(user_id), client):
             await event.reply("❌ Your metadata scan has been cancelled.")
         else:
             await event.reply("ℹ️ You do not have a running metadata scan.")
@@ -640,16 +793,34 @@ async def handle_new_message(event):
         return
 
     await record_user(event)
-    await analyze(event)
+    await analyze(
+        event,
+        client=client,
+        bot_username=bot_username,
+        include_clone=include_clone,
+    )
 
 
-async def handle_callback(event):
+async def handle_callback(
+    event,
+    *,
+    client: Any = bot,
+    bot_username: str = BOT_USERNAME,
+    include_clone: bool = True,
+):
     purge_pending_scans()
     data = (event.data or b"").decode("ascii", "ignore")
 
     if data == "home:help":
         await event.answer()
-        await event.edit(HELP_TEXT, parse_mode="html", buttons=help_buttons())
+        text = HELP_TEXT if include_clone else HELP_TEXT.replace(
+            "/clone — Start clone-bot setup with a BotFather token\n", ""
+        )
+        await event.edit(
+            text,
+            parse_mode="html",
+            buttons=help_buttons(bot_username, include_clone=include_clone),
+        )
         return
 
     if data == "home:scan":
@@ -660,18 +831,25 @@ async def handle_callback(event):
             "The scan starts only after you press <b>📥 Download Metadata</b>.\n\n"
             "🛡️ Large files are inspected with bounded byte-range reads.",
             parse_mode="html",
-            buttons=help_buttons(),
+            buttons=help_buttons(bot_username, include_clone=include_clone),
         )
         return
 
     if data == "home:clone":
-        await event.answer()
-        await begin_clone_setup(event)
+        if include_clone:
+            await event.answer()
+            await begin_clone_setup(event)
+        else:
+            await event.answer(
+                "Clone creation is available from the main AniToon bot.",
+                alert=True,
+            )
         return
 
     if data == "clone:token":
         await event.answer()
-        await begin_clone_setup(event)
+        if include_clone:
+            await begin_clone_setup(event)
         return
 
     if data == "clone:cancel":
@@ -680,17 +858,35 @@ async def handle_callback(event):
         user_id = getattr(sender, "id", None)
         if user_id is not None:
             clone_setup_pending.pop(int(user_id), None)
-        await event.edit(HOME_TEXT, parse_mode="html", buttons=home_buttons())
+        await event.edit(
+            HOME_TEXT,
+            parse_mode="html",
+            buttons=home_buttons(bot_username, include_clone=include_clone),
+        )
         return
 
     if data == "home:about":
         await event.answer()
-        await event.edit(ABOUT_TEXT, parse_mode="html", buttons=home_buttons())
+        await event.edit(
+            ABOUT_TEXT,
+            parse_mode="html",
+            buttons=home_buttons(bot_username, include_clone=include_clone),
+        )
         return
 
     if data == "home:back":
         await event.answer()
-        await event.edit(HOME_TEXT, parse_mode="html", buttons=home_buttons())
+        home_text = HOME_TEXT if include_clone else (
+            "⛩ <b>AniToon Clone Bot</b> ⛩\n\n"
+            "🔎 Scan Telegram media files for detailed metadata.\n"
+            "🌐 View complete file information in your browser.\n\n"
+            "Choose an option below."
+        )
+        await event.edit(
+            home_text,
+            parse_mode="html",
+            buttons=home_buttons(bot_username, include_clone=include_clone),
+        )
         return
 
     if data.startswith("scan:"):
@@ -705,6 +901,11 @@ async def handle_callback(event):
                     "This metadata request expired. Send the file again.",
                     alert=True,
                 )
+            return
+
+        if pending.client is not client:
+            pending_scans[token] = pending
+            await event.answer("This scan belongs to another bot.", alert=True)
             return
 
         await event.answer("Metadata scan started…")
@@ -724,10 +925,14 @@ async def handle_callback(event):
                 status_message,
                 token,
                 pending.user_id,
+                client=pending.client,
+                bot_username=pending.bot_username,
+                include_clone=pending.include_clone,
             )
         )
         active_scans[token] = task
         active_scan_users[token] = pending.user_id
+        active_scan_clients[token] = pending.client
         return
 
     if data.startswith("cancel:"):
@@ -738,13 +943,15 @@ async def handle_callback(event):
             await event.answer("This scan is no longer running.", alert=True)
             return
 
+        if active_scan_clients.get(token) is not client:
+            await event.answer("This scan belongs to another bot.", alert=True)
+            return
+
         await event.answer("Cancelling scan…")
         task.cancel()
         return
 
     await event.answer()
-
-
 
 
 def web_section(report: Report, section: str) -> str:
@@ -1545,14 +1752,7 @@ async def health_server():
 
 
 async def main():
-    bot.add_event_handler(
-        handle_new_message,
-        events.NewMessage(incoming=True),
-    )
-    bot.add_event_handler(
-        handle_callback,
-        events.CallbackQuery,
-    )
+    _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
     health = await health_server()
 
     try:
@@ -1568,31 +1768,34 @@ async def main():
                 )
                 await asyncio.sleep(wait_seconds)
 
-        command_list = [
-            types.BotCommand(command="start", description="Open the bot"),
-            types.BotCommand(command="help", description="Show help"),
-            types.BotCommand(command="about", description="About AniToons"),
-            types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-            types.BotCommand(command="clone", description="Open the linked clone bot"),
-            types.BotCommand(command="cancel", description="Cancel your running scan"),
-        ]
+        try:
+            await _set_bot_commands(bot, include_clone=True)
+        except Exception:
+            log.exception("Failed to set command menu for main bot")
 
-        # One clean command set for everyone.
-        # Telegram uses the default scope as the fallback in private chats
-        # and groups when no narrower scope is configured.
-        await bot(functions.bots.SetBotCommandsRequest(
-            scope=types.BotCommandScopeDefault(),
-            lang_code="en",
-            commands=command_list,
-        ))
+        try:
+            from mongo_store import load_clone_requests
+            saved_clones = await load_clone_requests()
+        except Exception:
+            saved_clones = []
+            log.exception("Failed to load saved clone configurations")
+
+        restored = 0
+        for saved in saved_clones:
+            try:
+                await _start_clone_bot(saved["token"], int(saved["user_id"]))
+                restored += 1
+            except Exception:
+                log.exception("Failed to restore clone bot id=%s", saved.get("clone_id"))
 
         me = await bot.get_me()
         username = getattr(me, "username", "unknown")
 
         log.info(
-            "Telegram bot online as @%s | private_only=%s | concurrency=%s | scan_timeout=%ss | web=%s",
+            "Telegram bot online as @%s | private_only=%s | clones=%s | concurrency=%s | scan_timeout=%ss | web=%s",
             username,
             FILE_CHECKER_PRIVATE_ONLY,
+            restored,
             MAX_CONCURRENT_CHECKS,
             SCAN_TIMEOUT_SECONDS,
             PUBLIC_WEB_URL,
@@ -1601,6 +1804,13 @@ async def main():
         await bot.run_until_disconnected()
 
     finally:
+        for client in list(clone_clients.values()):
+            with suppress(Exception):
+                await client.disconnect()
+        clone_clients.clear()
+        clone_owners.clear()
+        active_scan_clients.clear()
+
         health.close()
         await health.wait_closed()
         with suppress(Exception):
