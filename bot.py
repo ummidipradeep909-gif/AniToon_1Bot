@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from telethon import Button, TelegramClient, errors, events, functions, types
 from telethon.sessions import MemorySession
 
-from file_inspector import Report, format_report, format_section
+from file_inspector import Report, inspect_telegram_message, format_report, format_section
 from media_probe import (
     generate_video_previews,
     ProbeBudgetExceeded,
@@ -1064,13 +1064,17 @@ def progress_details(line: str) -> tuple[int, str]:
     low = line.lower()
 
     if "stage 1/4" in low:
-        pct = 12
+        pct = 14
     elif "stage 2/4" in low:
-        pct = 34
+        pct = 38
     elif "stage 3/4" in low:
         pct = 68
     elif "stage 4/4" in low:
-        pct = 88
+        pct = 90
+    elif "stage 2/2" in low or "reading available media metadata" in low:
+        pct = 76
+    elif "starting scan" in low:
+        pct = 1
     else:
         pct = 50
 
@@ -1138,17 +1142,19 @@ async def run_scan(
 
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
+        async def fast_worker():
+            # Telegram I/O remains async and every source read stays inside the bounded probe budget.
+            return await inspect_telegram_message(
+                client,
+                source_message,
+                progress=progress,
+                deep=True,
+            )
+
         return await asyncio.wait_for(
-            inspect_telegram_player(
-            client,
-            source_message,
-            scan_token,
-            progress=progress,
-            budget=int(os.getenv("FILE_DEEP_PROBE_BYTES", str(2_560 * 1024))),
-            port=int(os.getenv("PORT", "10000")),
-        ),
-        timeout=SCAN_TIMEOUT_SECONDS,
-    )
+            fast_worker(),
+            timeout=SCAN_TIMEOUT_SECONDS,
+        )
     finally:
         heartbeat_stop.set()
         heartbeat_task.cancel()
@@ -1291,7 +1297,7 @@ async def analyze_source(
             status_message,
             "🔎 <b>SCANNING METADATA</b>\n\n"
             "<code>▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱</code> <b>1%</b>\n"
-            "Starting scan…",
+            "⚡ Starting fast worker…",
             buttons=cancel_button(scan_token),
         )
 
@@ -1333,6 +1339,11 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
+        await edit_status(
+            status_message,
+            status_text(filename, "✅ Processing complete", 99),
+            buttons=cancel_button(scan_token),
+        )
         final_result_text = compact_scan_result(report)
         await edit_status(
             status_message,
