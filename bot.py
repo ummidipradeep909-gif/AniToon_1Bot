@@ -35,7 +35,10 @@ from mongo_store import (
     owner_clone_records,
     owner_user_scans,
     load_web_report,
+    ensure_mongodb,
+    mongodb_is_connected,
     record_clone_request,
+    user_scan_summary,
     record_scan,
     record_user,
     save_web_report,
@@ -196,25 +199,32 @@ def compact_scan_result(report: Report) -> str:
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
-    "🔎 Scan Telegram media files for detailed metadata.\n"
-    "🌐 View complete file information in your browser.\n"
-    "🧬 Create and manage clone bots.\n\n"
-    "Choose an option below."
+    "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
+    "⚡ Fast, bounded media inspection with a clean web report.\n\n"
+    "✨ Choose a feature below."
 )
 
 HELP_TEXT = (
-    "📖 <b>AniToon Help</b>\n\n"
-    "🔎 Send a video/document and press <b>📥 Download Metadata</b> to scan.\n"
-    "🌐 View the complete report with <b>Open File Info</b>.\n\n"
-    "<b>Commands & what they do</b>\n"
-    "/start — Open the AniToon home page\n"
-    "/help — Show this help and command guide\n"
-    "/about — See information about AniToon\n"
-    "/addtogroup — Get the button to add AniToon to your group\n"
-    "/clone — Start clone-bot setup with a BotFather token\n"
-    "/clones — View your clone bots, stats, and remove a clone\n"
-    "/cancel — Cancel your active metadata scan\n\n"
-    "Use the buttons below for the same features."
+    "📖 <b>How to Use AniToon</b>\n\n"
+    "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
+    "2️⃣ Press <b>📥 Download Metadata</b>.\n"
+    "3️⃣ Wait for the metadata scan to finish.\n"
+    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
+    "🤖 <b>Clone Bots</b>\n"
+    "Use <code>/clone</code> or <b>🧬 Create Clone</b>, then send the BotFather token. "
+    "Each account can manage up to <b>2</b> clones.\n\n"
+    "📋 <b>Commands</b>\n"
+    "/start — Open Home\n"
+    "/help — Open this guide\n"
+    "/stats — View your 7-day scan stats\n"
+    "/status — View current bot/queue status\n"
+    "/privacy — View the data handling policy\n"
+    "/about — About AniToon\n"
+    "/addtogroup — Add AniToon to a group\n"
+    "/clone — Create/connect a clone bot\n"
+    "/clones — View and manage your clones\n"
+    "/myclones — Same as /clones\n"
+    "/cancel — Cancel your running scan"
 )
 
 ABOUT_TEXT = (
@@ -277,36 +287,33 @@ def home_buttons(
 ):
     buttons = [
         [Button.inline("🔎 Scan Files", b"home:scan")],
-    ]
-    if include_clone:
-        buttons.append([Button.inline("🤖 My Clones", b"home:clones")])
-        buttons.append([Button.inline("🧬 Create Clone", b"home:clone")])
-    buttons.append([Button.inline("📖 Help", b"home:help")])
-    buttons.append([Button.inline("ℹ️ About", b"home:about")])
-    if include_clone and _owner_allowed(user_id):
-        buttons.append([Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
-    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
-    return buttons
-
-
-def help_buttons(
-    bot_username: str = BOT_USERNAME,
-    *,
-    include_clone: bool = True,
-    user_id: int | None = None,
-):
-    buttons = [
-        [Button.inline("🔎 Scan Files", b"home:scan")],
+        [Button.inline("📊 My Stats", b"home:stats")],
+        [Button.inline("💚 Bot Status", b"home:status")],
+        [Button.inline("🔐 Privacy", b"home:privacy")],
+        [Button.inline("📖 Help", b"home:help")],
         [Button.inline("ℹ️ About", b"home:about")],
+        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
     ]
     if include_clone:
         buttons.insert(1, [Button.inline("🤖 My Clones", b"home:clones")])
         buttons.insert(2, [Button.inline("🧬 Create Clone", b"home:clone")])
-    if _owner_allowed(user_id):
-        buttons.insert(2 if include_clone else 1, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
-    buttons.append([Button.inline("⬅️ Home", b"home:back")])
-    buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
+    if include_clone and _owner_allowed(user_id):
+        buttons.insert(-1, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
     return buttons
+
+
+def back_buttons() -> list[list[Any]]:
+    return [[Button.inline("⬅️ Back", b"home:back")]]
+
+
+def help_buttons() -> list[list[Any]]:
+    return back_buttons()
+
+
+def scan_page_buttons() -> list[list[Any]]:
+    return back_buttons()
+
+
 
 
 def _new_clone_stats() -> dict[str, Any]:
@@ -1472,6 +1479,59 @@ async def handle_clone_token_message(event) -> bool:
     return True
 
 
+async def render_user_stats(event, user_id: int, *, edit: bool = True) -> None:
+    summary = await user_scan_summary(int(user_id), 7)
+    if not summary.get("available"):
+        text = (
+            "📊 <b>My Stats</b>\n\n"
+            "MongoDB history is currently unavailable.\n"
+            "Your live scans are still protected by the queue."
+        )
+    else:
+        text = (
+            "📊 <b>My Stats — Last 7 Days</b>\n\n"
+            f"📁 Total scans: <b>{summary['scans']}</b>\n"
+            f"✅ Completed: <b>{summary['completed']}</b>\n"
+            f"❌ Failed: <b>{summary['failed']}</b>\n"
+            f"🛑 Cancelled: <b>{summary['cancelled']}</b>"
+        )
+    if edit:
+        await event.edit(text, parse_mode="html", buttons=back_buttons())
+    else:
+        await event.reply(text, parse_mode="html", buttons=back_buttons())
+
+
+async def render_public_status(event, *, edit: bool = True) -> None:
+    resources = runtime_resource_stats()
+    mongo = "🟢 Connected" if mongodb_is_connected() else "🔴 Not connected"
+    queue = (
+        f"⚡ Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+        f"⏳ Queued scans: <b>{queued_processes}</b>"
+    )
+    text = (
+        "💚 <b>AniToon Status</b>\n\n"
+        f"🤖 Telegram: <b>{'Connected' if bot.is_connected() else 'Disconnected'}</b>\n"
+        f"🗄️ MongoDB: <b>{mongo}</b>\n"
+        f"{queue}\n"
+        f"🧠 RAM: <b>{resources['ram_pct']:.1f}%</b>\n"
+        f"📡 Tracked web egress: <b>{resources['web_egress_pct']:.1f}%</b>"
+    )
+    if edit:
+        await event.edit(text, parse_mode="html", buttons=back_buttons())
+    else:
+        await event.reply(text, parse_mode="html", buttons=back_buttons())
+
+
+PRIVACY_TEXT = (
+    "🔐 <b>AniToon Privacy</b>\n\n"
+    "🛡️ Media is inspected with bounded reads instead of creating a full local copy.\n"
+    "📊 Scan history is stored in MongoDB for the owner/user statistics.\n"
+    "🔑 Clone BotFather tokens are encrypted before being stored.\n"
+    "🗑️ Removing a clone removes its stored credential and disconnects the clone."
+)
+
+
+async def handle_new_message(
 async def handle_new_message(
     event,
     *,
@@ -1501,31 +1561,19 @@ async def handle_new_message(
     if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(home_text, parse_mode="html", buttons=home_buttons(
-            bot_username,
-            include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
-        ))
+        await event.reply(home_text, parse_mode="html", buttons=back_buttons())
         return
 
     if command == "/help":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(help_text, parse_mode="html", buttons=help_buttons(
-            bot_username,
-            include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
-        ))
+        await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
     if command == "/about":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=home_buttons(
-            bot_username,
-            include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
-        ))
+        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=back_buttons())
         return
 
     if command == "/addtogroup":
@@ -1553,6 +1601,32 @@ async def handle_new_message(
                     f"https://t.me/{BOT_USERNAME}",
                 )]],
             )
+        return
+
+    if command in {"/myclones", "/stats"}:
+        await record_user(event)
+        sender = await event.get_sender()
+        if command == "/stats":
+            await render_user_stats(event, int(sender.id), edit=False)
+        else:
+            if include_clone:
+                await render_clone_list(event, int(sender.id), edit=False)
+            else:
+                await event.reply(
+                    "🤖 <b>Clone management</b> is available from the main AniToon bot.",
+                    parse_mode="html",
+                    buttons=back_buttons(),
+                )
+        return
+
+    if command == "/status":
+        await record_user(event)
+        await render_public_status(event, edit=False)
+        return
+
+    if command == "/privacy":
+        await record_user(event)
+        await event.reply(PRIVACY_TEXT, parse_mode="html", buttons=back_buttons())
         return
 
     if command == "/clones":
