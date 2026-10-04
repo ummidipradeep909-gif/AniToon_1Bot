@@ -87,6 +87,8 @@ async def _get_db():
                 ("scans.user_created", _db.scans, [("user_id", 1), ("created_at", -1)], {}),
                 ("scans.created", _db.scans, [("created_at", -1)], {}),
                 ("clones.user_status_created", _db.clones, [("user_id", 1), ("status", 1), ("created_at", -1)], {}),
+                ("groups.bot_chat", _db.groups, [("bot_id", 1), ("chat_id", 1)], {"unique": True}),
+                ("groups.onboarding", _db.groups, [("onboarding_active", 1), ("joined_at", 1)], {}),
                 ("reports.expiry", _db.reports, "expires_at", {"expireAfterSeconds": 0}),
             )
             for label, collection, keys, options in index_specs:
@@ -687,6 +689,131 @@ async def owner_recent_users(days: int = 7, limit: int = 100) -> list[dict[str, 
         log.exception("Failed to load owner recent users")
         return []
 
+
+
+async def record_group_chat(
+    *,
+    bot_id: int,
+    bot_username: str,
+    chat_id: int,
+    title: str | None = None,
+    clone_id: int = 0,
+    joined_at: datetime | None = None,
+    reset_onboarding: bool = False,
+) -> dict[str, Any] | None:
+    db = await _get_db()
+    if db is None:
+        return None
+
+    try:
+        now = datetime.now(timezone.utc)
+        key = {"bot_id": int(bot_id), "chat_id": int(chat_id)}
+        existing = await asyncio.to_thread(db.groups.find_one, key, {"last_onboarding_message_id": 1})
+        update: dict[str, Any] = {
+            "$set": {
+                "bot_id": int(bot_id),
+                "bot_username": str(bot_username).lstrip("@"),
+                "chat_id": int(chat_id),
+                "title": str(title or "Telegram group")[:200],
+                "clone_id": int(clone_id or 0),
+                "last_seen": now,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+                "onboarding_active": False,
+                "onboarding_day": 0,
+                "last_onboarding_message_id": None,
+            },
+        }
+
+        if joined_at is not None:
+            update["$set"]["joined_at"] = joined_at
+        if reset_onboarding:
+            update["$set"].update({
+                "joined_at": joined_at or now,
+                "onboarding_active": True,
+                "onboarding_day": 0,
+                "last_onboarding_message_id": None,
+            })
+
+        await asyncio.to_thread(db.groups.update_one, key, update, True)
+        return {
+            **(existing or {}),
+            "bot_id": int(bot_id),
+            "bot_username": str(bot_username).lstrip("@"),
+            "chat_id": int(chat_id),
+            "title": str(title or "Telegram group")[:200],
+            "clone_id": int(clone_id or 0),
+            "joined_at": joined_at or ((existing or {}).get("joined_at") if existing else None),
+        }
+    except Exception:
+        log.exception("Failed to store group chat | bot_id=%s | chat_id=%s", bot_id, chat_id)
+        return None
+
+
+async def list_group_chats() -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+
+    try:
+        return await asyncio.to_thread(
+            lambda: list(
+                db.groups.find(
+                    {"chat_id": {"$exists": True}},
+                    {
+                        "bot_id": 1,
+                        "bot_username": 1,
+                        "chat_id": 1,
+                        "title": 1,
+                        "clone_id": 1,
+                        "joined_at": 1,
+                        "onboarding_day": 1,
+                        "onboarding_active": 1,
+                        "last_onboarding_message_id": 1,
+                        "last_seen": 1,
+                    },
+                ).sort("last_seen", -1)
+            )
+        )
+    except Exception:
+        log.exception("Failed to load group chats")
+        return []
+
+
+async def update_group_onboarding(
+    *,
+    bot_id: int,
+    chat_id: int,
+    day: int,
+    message_id: int | None = None,
+    active: bool = True,
+) -> None:
+    db = await _get_db()
+    if db is None:
+        return
+
+    try:
+        now = datetime.now(timezone.utc)
+        await asyncio.to_thread(
+            db.groups.update_one,
+            {"bot_id": int(bot_id), "chat_id": int(chat_id)},
+            {
+                "$set": {
+                    "onboarding_day": int(day),
+                    "last_onboarding_message_id": int(message_id) if message_id is not None else None,
+                    "onboarding_active": bool(active),
+                    "updated_at": now,
+                }
+            },
+        )
+    except Exception:
+        log.exception(
+            "Failed to update group onboarding | bot_id=%s | chat_id=%s",
+            bot_id,
+            chat_id,
+        )
 
 
 async def save_web_report(token: str, report_data: dict[str, Any], expires_at: datetime) -> None:
