@@ -1614,7 +1614,8 @@ async def _broadcast_owner_message(message_text: str) -> dict[str, int]:
 
     async def send_to_bot(target: TelegramClient, bot_id: int, clone_id: int = 0) -> tuple[int, int]:
         nonlocal failed, users_sent, main_users, clone_users
-        user_ids = await list_bot_users(int(bot_id), bot_username, 1_000_000)
+        audience_username = BOT_USERNAME if not clone_id else clone_usernames.get(int(clone_id))
+        user_ids = await list_bot_users(int(bot_id), audience_username, 1_000_000)
         sent_local = 0
         for uid in user_ids:
             try:
