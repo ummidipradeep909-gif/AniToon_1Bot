@@ -885,6 +885,7 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
         types.BotCommand(command="about", description="About AniToons"),
         types.BotCommand(command="addtogroup", description="Add the bot to a group"),
         types.BotCommand(command="clones", description="View your clone bots and stats"),
+        types.BotCommand(command="owner", description="Owner dashboard"),
         types.BotCommand(command="cancel", description="Cancel your running scan"),
     ]
     if include_clone:
@@ -1093,22 +1094,31 @@ async def handle_new_message(
 
     if command == "/start":
         await record_user(event)
+        sender = await event.get_sender()
         await event.reply(home_text, parse_mode="html", buttons=home_buttons(
-            bot_username, include_clone=include_clone
+            bot_username,
+            include_clone=include_clone,
+            user_id=getattr(sender, "id", None),
         ))
         return
 
     if command == "/help":
         await record_user(event)
+        sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons(
-            bot_username, include_clone=include_clone
+            bot_username,
+            include_clone=include_clone,
+            user_id=getattr(sender, "id", None),
         ))
         return
 
     if command == "/about":
         await record_user(event)
+        sender = await event.get_sender()
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=home_buttons(
-            bot_username, include_clone=include_clone
+            bot_username,
+            include_clone=include_clone,
+            user_id=getattr(sender, "id", None),
         ))
         return
 
