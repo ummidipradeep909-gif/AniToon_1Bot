@@ -53,6 +53,7 @@ class Report:
     video:dict[str,Any]=field(default_factory=dict); audio:dict[str,Any]=field(default_factory=dict)
     subtitles:list[dict[str,Any]]=field(default_factory=list); container:dict[str,str]=field(default_factory=dict)
     probe_ranges:list[str]=field(default_factory=list)
+    previews:list[dict[str,Any]]=field(default_factory=list)
 
 def human(n:int|None)->str:
     if n is None:return "Not available"
