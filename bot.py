@@ -85,7 +85,6 @@ SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")),
 WEB_EGRESS_GUARD_BYTES = 4 * 1024 * 1024 * 1024
 WEB_EGRESS_PAUSE_BYTES = int(WEB_EGRESS_GUARD_BYTES * 0.80)
 RAM_PAUSE_PCT = 80.0
-RAM_RESUME_PCT = 72.0
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -686,7 +685,7 @@ def resource_guard_reason() -> str | None:
     if stats["ram_pct"] >= RAM_PAUSE_PCT:
         return (
             f"RAM pressure is {stats['ram_pct']:.1f}% (pause threshold {RAM_PAUSE_PCT:.0f}%). "
-            f"New heavy scans stay paused until memory falls below {RAM_RESUME_PCT:.0f}%."
+            f"New heavy scans stay paused until memory falls below {RAM_PAUSE_PCT:.0f}%."
         )
     if web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES:
         return (
@@ -1932,8 +1931,12 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
             types.BotCommand(command="resources", description="Render resource guard (owner)"),
         ]
     else:
-        # Clone bots expose the normal user commands too; clone management remains on AniToon.
-        commands = common
+        # Clone bots expose the same user commands; clone-management actions redirect to AniToon.
+        commands = common + [
+            types.BotCommand(command="clones", description="View your clone bots"),
+            types.BotCommand(command="myclones", description="View your clone bots"),
+            types.BotCommand(command="clone", description="Create a clone bot"),
+        ]
 
     await client(functions.bots.SetBotCommandsRequest(
         scope=types.BotCommandScopeDefault(),
