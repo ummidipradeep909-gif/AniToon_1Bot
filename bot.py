@@ -2304,6 +2304,36 @@ h1 {{
   font-size:11px;
 }}
 .footer a {{ color:var(--accent); text-decoration:none; }}
+.live-panel {{
+  margin-top:14px; padding:12px 14px; text-align:left;
+  border:1px solid var(--border); border-radius:16px;
+  background:rgba(255,255,255,.028);
+}}
+.live-panel > div:first-child {{ display:flex; align-items:center; gap:8px; font-size:12px; }}
+.live-panel > div:first-child span:last-child {{ margin-left:auto; color:var(--muted); }}
+.live-dot {{
+  width:8px; height:8px; border-radius:50%; background:#86efac;
+  box-shadow:0 0 0 0 rgba(134,239,172,.45); animation:pulse 1.8s infinite;
+}}
+@keyframes pulse {{
+  0% {{ box-shadow:0 0 0 0 rgba(134,239,172,.45); }}
+  70% {{ box-shadow:0 0 0 8px rgba(134,239,172,0); }}
+  100% {{ box-shadow:0 0 0 0 rgba(134,239,172,0); }}
+}}
+.live-metrics {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-top:9px; color:var(--muted); font-size:11px; }}
+.section-tools {{ margin-top:10px; }}
+.section-tools input {{
+  width:100%; border:1px solid var(--border); border-radius:14px;
+  padding:11px 12px; outline:0; background:rgba(15,20,34,.72);
+  color:var(--text); font:inherit;
+}}
+.channel {{ will-change:transform; }}
+@media(max-width:650px) {{
+  .live-metrics {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+}}
+@media(prefers-reduced-motion: reduce) {{
+  .live-dot {{ animation:none; }}
+}}
 @keyframes reportReveal {{
   from {{ opacity:0; transform:translateY(14px); filter:blur(5px); }}
   to {{ opacity:1; transform:translateY(0); filter:blur(0); }}
@@ -2347,11 +2377,23 @@ h1 {{
       <a href="/health">💚 Bot Status</a>
       <a href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open Bot</a>
     </div>
+    <div class="live-panel" aria-live="polite">
+      <div><span class="live-dot"></span><b>Live system</b><span id="web-status-text">Checking…</span></div>
+      <div class="live-metrics">
+        <span>⚡ <b id="web-active">—</b> active</span>
+        <span>⏳ <b id="web-queued">—</b> queued</span>
+        <span>🧠 <b id="web-ram">—</b> RAM</span>
+        <span>🗄️ <b id="web-mongo">—</b> Mongo</span>
+      </div>
+    </div>
   </header>
 
   {report_embed}
 
   <section class="section">
+    <div class="section-tools">
+      <input id="channel-filter" type="search" placeholder="🔎 Search AniToon channels…" aria-label="Search channels">
+    </div>
     <div class="section-title"><span>📡 Active Channels</span><span class="line"></span></div>
     <div class="list">{current_html}</div>
   </section>
