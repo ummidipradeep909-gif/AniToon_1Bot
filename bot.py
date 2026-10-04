@@ -2144,6 +2144,7 @@ async def handle_callback(
                 bot_username,
                 include_clone=include_clone,
                 user_id=getattr(await event.get_sender(), "id", None),
+                show_privacy=bool(getattr(event, "is_private", True)),
             ),
         )
         return
