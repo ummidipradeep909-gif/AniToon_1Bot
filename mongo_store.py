@@ -88,6 +88,7 @@ async def _get_db():
                 ("scans.created", _db.scans, [("created_at", -1)], {}),
                 ("clones.user_status_created", _db.clones, [("user_id", 1), ("status", 1), ("created_at", -1)], {}),
                 ("groups.bot_chat", _db.groups, [("bot_id", 1), ("chat_id", 1)], {"unique": True}),
+                ("bot_users.bot_user", _db.bot_users, [("bot_id", 1), ("user_id", 1)], {"unique": True}),
                 ("groups.onboarding", _db.groups, [("onboarding_active", 1), ("joined_at", 1)], {}),
                 ("reports.expiry", _db.reports, "expires_at", {"expireAfterSeconds": 0}),
             )
@@ -149,6 +150,63 @@ async def record_user(event) -> None:
         )
     except Exception:
         log.exception("Failed to store user")
+
+
+async def record_bot_user(
+    *,
+    bot_id: int,
+    bot_username: str,
+    user_id: int,
+) -> None:
+    """Track a user audience separately for each bot, including clones."""
+    db = await _get_db()
+    if db is None:
+        return
+    try:
+        now = datetime.now(timezone.utc)
+        await asyncio.to_thread(
+            db.bot_users.update_one,
+            {"bot_id": int(bot_id), "user_id": int(user_id)},
+            {
+                "$set": {
+                    "bot_id": int(bot_id),
+                    "bot_username": str(bot_username).lstrip("@"),
+                    "user_id": int(user_id),
+                    "last_seen": now,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            True,
+        )
+    except Exception:
+        log.exception(
+            "Failed to track bot audience | bot_id=%s | user_id=%s",
+            bot_id,
+            user_id,
+        )
+
+
+async def list_bot_users(bot_id: int, limit: int = 1000000) -> list[int]:
+    """Return distinct user ids who have interacted with this exact bot."""
+    db = await _get_db()
+    if db is None:
+        return []
+    try:
+        rows = await asyncio.to_thread(
+            lambda: db.bot_users.find(
+                {"bot_id": int(bot_id)},
+                {"user_id": 1, "_id": 0},
+            ).sort("last_seen", -1).limit(int(limit))
+        )
+        return [
+            int(row["user_id"])
+            for row in rows
+            if row.get("user_id") is not None
+        ]
+    except Exception:
+        log.exception("Failed to load bot audience | bot_id=%s", bot_id)
+        return []
 
 
 async def record_scan(
