@@ -9,7 +9,7 @@ import secrets
 import shutil
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from typing import Any
@@ -33,9 +33,11 @@ from mongo_store import (
     mark_clone_removed,
     owner_7day_summary,
     owner_user_scans,
+    load_web_report,
     record_clone_request,
     record_scan,
     record_user,
+    save_web_report,
     update_clone_stats,
 )
 
@@ -220,8 +222,13 @@ ABOUT_TEXT = (
 )
 
 
-def cache_state(status_message: Any, source_message: Any, report: Report) -> ScanState:
-    token = secrets.token_urlsafe(18)
+def cache_state(
+    status_message: Any,
+    source_message: Any,
+    report: Report,
+    web_token: str | None = None,
+) -> ScanState:
+    token = web_token or secrets.token_urlsafe(18)
     state = ScanState(
         source_message=source_message,
         report=report,
@@ -1022,13 +1029,26 @@ async def analyze_source(
             client=client,
         )
 
-        state = cache_state(status_message, source_message, report)
+        state = cache_state(
+            status_message,
+            source_message,
+            report,
+            web_token=scan_token,
+        )
         if state is None:
             raise RuntimeError("Could not create web report link")
 
         state.web_token = scan_token
         web_states[scan_token] = state
 
+        try:
+            await save_web_report(
+                scan_token,
+                asdict(report),
+                datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS),
+            )
+        except Exception:
+            log.exception("Failed to persist web report")
         await record_scan(
             user_id=user_id,
             source_message=source_message,
@@ -2741,6 +2761,24 @@ async def health_server():
                         return
 
                 state = web_states.get(token)
+
+                if not state:
+                    try:
+                        stored_report = await load_web_report(token)
+                    except Exception:
+                        stored_report = None
+                    if stored_report:
+                        try:
+                            restored_report = Report(**stored_report)
+                            state = ScanState(
+                                source_message=None,
+                                report=restored_report,
+                                created_at=time.monotonic(),
+                                web_token=token,
+                            )
+                            web_states[token] = state
+                        except Exception:
+                            log.exception("Failed to reconstruct Mongo web report")
 
                 if not state:
                     body = """<!doctype html>
