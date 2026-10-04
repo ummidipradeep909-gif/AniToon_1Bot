@@ -474,7 +474,7 @@ def add_to_group_url(bot_username: str) -> str:
     return f"https://t.me/{bot_username}?startgroup&admin={GROUP_ADMIN_PERMISSIONS}"
 
 
-def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True):
+def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True, user_id: int | None = None):
     if include_clone:
         buttons = [
             [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("🤖 My Clones", b"home:clones")],
@@ -488,6 +488,8 @@ def home_buttons(bot_username: str = BOT_USERNAME, *, include_clone: bool = True
             [Button.inline("🔎 Scan Files", b"home:scan"), Button.inline("📖 Help", b"home:help")],
             [Button.inline("ℹ️ About", b"home:about"), Button.inline("⬅️ Home", b"home:back")],
         ]
+    if include_clone and _owner_allowed(user_id):
+        buttons.insert(3, [Button.inline("👑 Owner Dashboard", b"owner:dashboard")])
     buttons.append([Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))])
     return buttons
 
