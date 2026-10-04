@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from pymongo import MongoClient
@@ -437,7 +437,7 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
         }
 
     try:
-        cutoff = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=int(days))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
         pipeline = [
             {"$match": {"created_at": {"$gte": cutoff}}},
             {"$group": {
