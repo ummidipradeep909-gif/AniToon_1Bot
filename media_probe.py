@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import av
+from PIL import Image, ImageFilter
 
 from file_inspector import inspect_telegram_message
 
@@ -719,16 +720,13 @@ async def generate_video_previews(
     budget: int = 256 * 1024,
     timeout: int = 5,
 ) -> list[dict[str, Any]]:
-    """Return one Telegram thumbnail only; never download/seek the source video."""
+    """Return one upscaled web thumbnail; never download/seek the source video."""
     async with preview_semaphore:
         try:
-            f = getattr(message, "file", None)
             media = getattr(message, "media", None)
             if not media:
                 return []
 
-            # Telegram's thumbnail is already a small generated image. We use it
-            # directly and intentionally do not fall back to reading the video.
             thumb = await asyncio.wait_for(
                 client.download_media(message, file=bytes, thumb=0),
                 timeout=timeout,
@@ -746,10 +744,49 @@ async def generate_video_previews(
                 )
                 return []
 
+            # Upscale only the Telegram-generated thumbnail for the web report.
+            # No source-video frame extraction is performed.
+            with Image.open(io.BytesIO(raw)) as image:
+                image = image.convert("RGB")
+                image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
+                image = image.filter(
+                    ImageFilter.UnsharpMask(radius=1.2, percent=115, threshold=3)
+                )
+                output = io.BytesIO()
+                image.save(
+                    output,
+                    format="JPEG",
+                    quality=86,
+                    optimize=True,
+                    progressive=True,
+                )
+                web_raw = output.getvalue()
+
+            # Keep the generated web asset lightweight even at 4K dimensions.
+            if len(web_raw) > 512 * 1024:
+                with Image.open(io.BytesIO(raw)) as image:
+                    image = image.convert("RGB")
+                    image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
+                    image = image.filter(
+                        ImageFilter.UnsharpMask(radius=1.0, percent=105, threshold=3)
+                    )
+                    output = io.BytesIO()
+                    image.save(
+                        output,
+                        format="JPEG",
+                        quality=70,
+                        optimize=True,
+                        progressive=True,
+                    )
+                    web_raw = output.getvalue()
+
+            if not web_raw or len(web_raw) > 512 * 1024:
+                return []
+
             return [{
                 "ratio": 0,
                 "seconds": 0,
-                "data": base64.b64encode(raw).decode("ascii"),
+                "data": base64.b64encode(web_raw).decode("ascii"),
                 "mime": "image/jpeg",
                 "label": "Telegram thumbnail",
             }]
@@ -759,6 +796,7 @@ async def generate_video_previews(
         except Exception:
             log.exception("Telegram thumbnail preview failed | token=%s", token)
             return []
+
 
 def _open_with_ffmpeg(reader: TelegramSeekableFile, format_hint: str | None = None) -> Any:
     options = {
