@@ -263,7 +263,7 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
 def compact_scan_result(report: Report) -> str:
     # Telegram should stay minimal: all technical information belongs on the
     # temporary 5-minute web report, not in the chat message.
-    return "✅ <b>File scan complete.</b>\\n\\n🌐 Open the web report below for the file information."
+    return "✅ <b>File scan complete.</b>\n\n🌐 Open the web report below for the file information."
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
