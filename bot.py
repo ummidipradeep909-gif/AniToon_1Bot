@@ -35,6 +35,7 @@ from mongo_store import (
     list_user_clones,
     mark_clone_removed,
     owner_7day_summary,
+    owner_daily_summary,
     owner_clone_records,
     owner_user_scans,
     load_web_report,
@@ -887,24 +888,45 @@ async def render_owner_resources(event, user_id: int) -> None:
     )
 
 
-async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> None:
+async def render_owner_dashboard(
+    event,
+    user_id: int,
+    *,
+    edit: bool = True,
+    selected_day: datetime | None = None,
+) -> None:
     if not _owner_allowed(user_id):
         await event.answer("Owner access only.", alert=True)
         return
 
-    summary = await owner_7day_summary(7)
+    today = datetime.now(timezone.utc).date()
+    selected_date = selected_day.date() if isinstance(selected_day, datetime) else today
+    oldest_date = today - timedelta(days=6)
+    if selected_date < oldest_date:
+        selected_date = oldest_date
+    if selected_date > today:
+        selected_date = today
+
+    selected_dt = datetime(
+        selected_date.year,
+        selected_date.month,
+        selected_date.day,
+        tzinfo=timezone.utc,
+    )
+    summary = await owner_daily_summary(selected_dt)
     mongo = "🟢 Connected" if mongodb_is_connected() else (
         "🟠 Configured / reconnecting" if mongodb_is_configured() else "🔴 Not configured"
     )
     total = int(summary.get("completed", 0) or 0) + int(summary.get("failed", 0) or 0)
     success = (int(summary.get("completed", 0) or 0) / total * 100) if total else 0.0
     uptime = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600
+    date_label = selected_date.strftime("%d %b %Y")
 
     if summary.get("available"):
         text = (
             "👑 <b>AniToon Owner Control Center</b>\n\n"
-            "📅 <b>Last 7 Days</b>\n"
-            f"👥 Active users: <b>{int(summary.get('total_users', 0) or 0)}</b>\n"
+            f"📅 <b>{date_label}</b>\n"
+            f"👥 Active users: <b>{int(summary.get('users', 0) or 0)}</b>\n"
             f"📁 Scans: <b>{int(summary.get('total_scans', 0) or 0)}</b> • ✅ {int(summary.get('completed', 0) or 0)}\n"
             f"❌ Failed: <b>{int(summary.get('failed', 0) or 0)}</b> • 🛑 {int(summary.get('cancelled', 0) or 0)}\n"
             f"📈 Success rate: <b>{success:.1f}%</b>\n\n"
@@ -917,6 +939,7 @@ async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> N
     else:
         text = (
             "👑 <b>AniToon Owner Control Center</b>\n\n"
+            f"📅 <b>{date_label}</b>\n"
             "⚠️ MongoDB statistics are temporarily unavailable.\n\n"
             f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
             f"⏳ Queue: <b>{queued_processes}</b>\n"
@@ -924,7 +947,32 @@ async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> N
             f"⏱️ Uptime: <b>{uptime:.1f} h</b>"
         )
 
+    day_buttons: list[Any] = []
+    if selected_date > oldest_date:
+        prev_date = selected_date - timedelta(days=1)
+        day_buttons.append(
+            Button.inline(
+                "◀️ Previous Day",
+                f"owner:dashboard:day:{prev_date.isoformat()}".encode("ascii"),
+            )
+        )
+    day_buttons.append(
+        Button.inline(
+            f"📅 {selected_date.strftime('%d %b')}",
+            f"owner:dashboard:day:{selected_date.isoformat()}".encode("ascii"),
+        )
+    )
+    if selected_date < today:
+        next_date = selected_date + timedelta(days=1)
+        day_buttons.append(
+            Button.inline(
+                "Next Day ▶️",
+                f"owner:dashboard:day:{next_date.isoformat()}".encode("ascii"),
+            )
+        )
+
     buttons = [
+        day_buttons,
         [
             Button.inline("👥 Users", b"owner:users:0"),
             Button.inline("🤖 Clones", b"owner:clones"),
@@ -935,10 +983,14 @@ async def render_owner_dashboard(event, user_id: int, *, edit: bool = True) -> N
         ],
         [
             Button.inline("📢 Broadcast", b"owner:broadcast"),
-            Button.inline("🔄 Refresh", b"owner:dashboard"),
+            Button.inline(
+                "🔄 Today",
+                f"owner:dashboard:day:{today.isoformat()}".encode("ascii"),
+            ),
         ],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
+
     if edit:
         await event.edit(text, parse_mode="html", buttons=buttons)
     else:
@@ -2990,6 +3042,27 @@ async def handle_callback(
             await event.answer("Owner access only.", alert=True)
             return
         await render_owner_resources(event, int(user_id))
+        return
+
+    if data.startswith("owner:dashboard:day:"):
+        await event.answer()
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+        raw_date = data.split(":", 3)[3]
+        try:
+            chosen = datetime.strptime(raw_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            await event.answer("Invalid dashboard date.", alert=True)
+            return
+        today = datetime.now(timezone.utc).date()
+        oldest = today - timedelta(days=6)
+        if chosen.date() < oldest or chosen.date() > today:
+            await event.answer("Dashboard is limited to the last 7 days.", alert=True)
+            return
+        await render_owner_dashboard(event, int(user_id), selected_day=chosen)
         return
 
     if data == "owner:dashboard":
