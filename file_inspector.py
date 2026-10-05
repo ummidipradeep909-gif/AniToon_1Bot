@@ -183,26 +183,28 @@ def _flt(data:bytes,s:int,e:int):
     try:return struct.unpack(">f" if e-s==4 else ">d",data[s:e])[0] if e-s in (4,8) else None
     except struct.error:return None
 _LANG_TITLE_HINTS = (
-    (re.compile(r"\benglish\b", re.I), "English"),
-    (re.compile(r"\bjapanese\b", re.I), "Japanese"),
-    (re.compile(r"\btelugu\b", re.I), "Telugu"),
-    (re.compile(r"\bhindi\b", re.I), "Hindi"),
-    (re.compile(r"\btamil\b", re.I), "Tamil"),
-    (re.compile(r"\bmalayalam\b", re.I), "Malayalam"),
-    (re.compile(r"\bkannada\b", re.I), "Kannada"),
-    (re.compile(r"\bkorean\b", re.I), "Korean"),
-    (re.compile(r"\b(?:chinese|mandarin)\b", re.I), "Chinese"),
-    (re.compile(r"\barabic\b", re.I), "Arabic"),
-    (re.compile(r"\bspanish\b", re.I), "Spanish"),
-    (re.compile(r"\bfrench\b", re.I), "French"),
-    (re.compile(r"\bgerman\b", re.I), "German"),
-    (re.compile(r"\brussian\b", re.I), "Russian"),
-    (re.compile(r"\bportuguese\b", re.I), "Portuguese"),
-    (re.compile(r"\bmarathi\b", re.I), "Marathi"),
-    (re.compile(r"\bbengali\b", re.I), "Bengali"),
-    (re.compile(r"\bgujarati\b", re.I), "Gujarati"),
-    (re.compile(r"\bpunjabi\b", re.I), "Punjabi"),
-    (re.compile(r"\burdu\b", re.I), "Urdu"),
+    (re.compile(r"\b(?:english|eng|en)\b", re.I), "English"),
+    (re.compile(r"\b(?:japanese|jpn|ja)\b", re.I), "Japanese"),
+    (re.compile(r"\b(?:telugu|tel|te)\b", re.I), "Telugu"),
+    (re.compile(r"\b(?:hindi|hin|hi)\b", re.I), "Hindi"),
+    (re.compile(r"\b(?:tamil|tam|ta)\b", re.I), "Tamil"),
+    (re.compile(r"\b(?:malayalam|mal|ml)\b", re.I), "Malayalam"),
+    (re.compile(r"\b(?:kannada|kan|kn)\b", re.I), "Kannada"),
+    (re.compile(r"\b(?:korean|kor|ko)\b", re.I), "Korean"),
+    (re.compile(r"\b(?:chinese|mandarin|zho|chi|zh)\b", re.I), "Chinese"),
+    (re.compile(r"\b(?:arabic|ara|ar)\b", re.I), "Arabic"),
+    (re.compile(r"\b(?:spanish|spa|es)\b", re.I), "Spanish"),
+    (re.compile(r"\b(?:french|fra|fre|fr)\b", re.I), "French"),
+    (re.compile(r"\b(?:german|deu|ger|de)\b", re.I), "German"),
+    (re.compile(r"\b(?:russian|rus|ru)\b", re.I), "Russian"),
+    (re.compile(r"\b(?:portuguese|por|pt)\b", re.I), "Portuguese"),
+    (re.compile(r"\b(?:marathi|mar|mr)\b", re.I), "Marathi"),
+    (re.compile(r"\b(?:bengali|ben|bn)\b", re.I), "Bengali"),
+    (re.compile(r"\b(?:gujarati|guj|gu)\b", re.I), "Gujarati"),
+    (re.compile(r"\b(?:punjabi|pan|pa)\b", re.I), "Punjabi"),
+    (re.compile(r"\b(?:urdu|urd|ur)\b", re.I), "Urdu"),
+    (re.compile(r"\b(?:nepali|nep|ne)\b", re.I), "Nepali"),
+    (re.compile(r"\b(?:sinhala|sin|si)\b", re.I), "Sinhala"),
 )
 
 def _language_from_title(title:str|None)->str|None:
@@ -213,6 +215,7 @@ def _language_from_title(title:str|None)->str|None:
         if pattern.search(value):
             return name
     return None
+
 
 def _lang(code:str|None)->str|None:
     c=(code or "").lower().replace("_","-").strip()
@@ -307,11 +310,10 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
     lname=_lang(use_lang)
-    if not lname:
-        inferred = _language_from_title(name)
-        if inferred:
-            lname = inferred
-            use_lang = inferred
+    inferred = _language_from_title(name)
+    if inferred:
+        lname = inferred
+        use_lang = inferred
     codec_display=cname or CODEC.get(cid or "") or cid
     if codec_display and str(codec_display).strip().lower() in {"unknown","unk","undefined","und"}:
         codec_display=None
