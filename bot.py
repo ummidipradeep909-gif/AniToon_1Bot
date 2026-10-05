@@ -1495,8 +1495,8 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        # Generate exactly one Telegram-provided thumbnail. The original
-        # source video/file is never sent back to the user.
+        # Keep the Telegram result text-only. The single thumbnail is
+        # stored only in the web report and is never sent back as a file/image.
         previews: list[dict[str, Any]] = []
         with suppress(Exception):
             if getattr(source_message, "media", None):
@@ -1533,37 +1533,15 @@ async def analyze_source(
             if not stored:
                 log.warning("Post-scan private storage copy was not confirmed | token=%s", scan_token)
 
-        # Telegram gets only the thumbnail (never the source file) and the two
-        # useful actions. No metadata is printed in chat.
         try:
-            thumbnail_raw = None
-            if previews:
-                data = str(previews[0].get("data") or "")
-                if data:
-                    with suppress(Exception):
-                        thumbnail_raw = base64.b64decode(data, validate=True)
-
-            if thumbnail_raw:
-                final_message = await client.send_file(
-                    status_message.chat_id,
-                    file=thumbnail_raw,
-                    caption=final_result_text,
-                    parse_mode="html",
-                    reply_to=status_message.id,
-                    buttons=result_buttons,
-                    force_document=False,
-                )
-            else:
-                final_message = await status_message.reply(
-                    final_result_text,
-                    parse_mode="html",
-                    buttons=result_buttons,
-                )
-
+            await status_message.reply(
+                final_result_text,
+                parse_mode="html",
+                buttons=result_buttons,
+            )
             log.info(
-                "Final scan result sent | token=%s | thumbnail=%s | web_only=%s",
+                "Final scan result sent | token=%s | thumbnail_web_only=%s",
                 scan_token,
-                bool(thumbnail_raw),
                 True,
             )
         except Exception:
