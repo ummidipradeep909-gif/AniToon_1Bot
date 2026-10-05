@@ -255,9 +255,10 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
     return names[:12]
 
 def compact_scan_result(report: Report) -> str:
-    # Telegram should stay minimal: all technical information belongs on the
-    # temporary 5-minute web report, not in the chat message.
-    return "✅ <b>File scan complete.</b>\n\n🌐 Open the web report below for the file information."
+    return (
+        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
+        "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
+    )
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
@@ -1546,7 +1547,7 @@ async def analyze_source(
                 final_message = await client.send_file(
                     status_message.chat_id,
                     file=thumbnail_raw,
-                    caption="",
+                    caption=final_result_text,
                     parse_mode="html",
                     reply_to=status_message.id,
                     buttons=result_buttons,
@@ -3628,11 +3629,6 @@ def web_page(
             codec = track.get("codec_name") or track.get("codec")
             details: list[tuple[str, Any]] = []
 
-            if language:
-                details.append(("Language", language))
-            if codec:
-                details.append(("Codec", codec))
-
             priority_details = [
                 ("Language", track.get("language_name") or track.get("language")),
                 ("Codec", track.get("codec_name") or track.get("codec")),
@@ -3643,7 +3639,6 @@ def web_page(
                 ("Pixel format", track.get("pixel_format")),
                 ("Profile", track.get("profile")),
                 ("Level", track.get("level")),
-                ("Channels", track.get("channels")),
                 ("Channel layout", track.get("layout")),
                 ("Sample rate", track.get("sample_rate")),
                 ("Bit depth", track.get("bit_depth")),
