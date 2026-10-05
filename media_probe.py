@@ -746,11 +746,9 @@ async def generate_video_previews(
 
             with Image.open(io.BytesIO(raw)) as image:
                 image = ImageOps.exif_transpose(image).convert("RGB")
-                image = ImageOps.fit(
-                    image,
+                image.thumbnail(
                     (3840, 2160),
-                    method=Image.Resampling.LANCZOS,
-                    centering=(0.5, 0.5),
+                    Image.Resampling.LANCZOS,
                 )
                 image = image.filter(ImageFilter.GaussianBlur(0.18))
                 output = io.BytesIO()
