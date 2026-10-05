@@ -1880,12 +1880,13 @@ async def archive_scanned_file(
     try:
         async with storage_semaphore:
             await asyncio.wait_for(
-                client.send_file(
+                # Copy the original Telegram message/media server-side. This
+                # does not download the source video to Render and preserves
+                # the original media as Telegram already stored it.
+                client.send_message(
                     peer,
-                    media,
-                    caption=caption,
-                    parse_mode="html",
-                    allow_cache=True,
+                    source_message,
+                    silent=True,
                 ),
                 timeout=STORAGE_SEND_TIMEOUT,
             )
@@ -3720,7 +3721,7 @@ def web_page(
             badges = "".join(f'<span class="badge">{esc(flag)}</span>' for flag in flags)
             cards.append(
                 f"""
-                <article class="track-card">
+                <article class="track-card" style="--track-index:{index}">
                   <div class="track-orb">{icon_for(kind)}</div>
                   <div class="track-content">
                     <div class="track-heading">
@@ -3821,6 +3822,10 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .hero-media img{{display:block;width:100%;height:100%;min-height:230px;object-fit:cover}}
 .media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
+.language-ribbon{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}}
+.language-label{{font-size:9px;font-weight:950;letter-spacing:.12em;color:var(--muted);margin-right:2px}}
+.lang-pill{{display:inline-flex;align-items:center;gap:5px;padding:5px 7px;border-radius:999px;border:1px solid rgba(155,140,255,.18);background:linear-gradient(135deg,rgba(155,140,255,.10),rgba(94,231,255,.05));font-size:9px;font-weight:850;animation:badgeFloat 4s ease-in-out infinite alternate}}
+
 .stat{{position:relative;overflow:hidden;padding:12px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.018));transition:.25s ease;animation:cardIn .65s cubic-bezier(.2,1,.2,1) both}}
 .stat::before{{content:"";position:absolute;inset:-40%;background:conic-gradient(from 180deg,transparent,rgba(155,140,255,.14),rgba(94,231,255,.12),transparent 55%);animation:statSpin 7s linear infinite;pointer-events:none}}
 .stat b,.stat span{{position:relative;z-index:1}}
@@ -3842,7 +3847,7 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .toolbar{{display:flex;align-items:center;gap:8px;margin-bottom:10px}}
 .search{{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.035);color:var(--text);outline:none;font:700 11px system-ui}}
 .search:focus{{border-color:var(--line2);box-shadow:0 0 0 3px rgba(155,140,255,.08)}}
-.track-card{{position:relative;overflow:hidden;display:flex;gap:12px;padding:13px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.032),rgba(255,255,255,.012));margin-bottom:8px;transition:.22s ease;animation:cardIn .55s cubic-bezier(.2,1,.2,1) both}}
+.track-card{{position:relative;overflow:hidden;display:flex;gap:12px;padding:13px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,rgba(255,255,255,.032),rgba(255,255,255,.012));margin-bottom:8px;transition:.22s ease;animation:cardIn .55s cubic-bezier(.2,1,.2,1) both;animation-delay:min(900ms,calc(var(--track-index) * 12ms));will-change:transform,opacity}}
 .track-card::after{{content:"";position:absolute;inset:-30%;background:radial-gradient(circle at 0 0,rgba(155,140,255,.10),transparent 36%);opacity:0;transition:.25s ease;pointer-events:none}}
 .track-card:last-child{{margin-bottom:0}}
 .track-card:hover{{transform:translateY(-2px);border-color:rgba(155,140,255,.28);box-shadow:0 16px 34px rgba(0,0,0,.15)}}
@@ -3924,11 +3929,17 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </header>
 
   <div class="summary" id="overview">
-    <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
-    <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
-    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
-    <div class="stat"><b>{esc(quality)}</b><span>Primary quality</span></div>
+    <div class="stat"><b>{len(video)}</b><span>Video tracks • max 100</span></div>
+    <div class="stat"><b>{len(audio)}</b><span>Audio tracks • max 100</span></div>
+    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks • max 100</span></div>
+    <div class="stat"><b>{esc(quality)}</b><span>Primary quality / pixels</span></div>
     <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
+  </div>
+  <div class="language-ribbon">
+    <span class="language-label">LANGUAGES</span>
+    {''.join(f'<span class="lang-pill">🎬 {esc(x)}</span>' for x in _language_names_for_report(report, "video")[:12])}
+    {''.join(f'<span class="lang-pill">🎧 {esc(x)}</span>' for x in _language_names_for_report(report, "audio")[:12])}
+    {''.join(f'<span class="lang-pill">💬 {esc(x)}</span>' for x in _language_names_for_report(report, "subtitle")[:12])}
   </div>
 
   <nav class="quick" aria-label="Quick navigation">
