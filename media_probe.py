@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import av
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 
 from file_inspector import inspect_telegram_message
 
@@ -720,7 +720,7 @@ async def generate_video_previews(
     budget: int = 256 * 1024,
     timeout: int = 5,
 ) -> list[dict[str, Any]]:
-    """Return one upscaled web thumbnail; never download/seek the source video."""
+    """Return one smooth high-resolution web thumbnail; never read source frames."""
     async with preview_semaphore:
         try:
             media = getattr(message, "media", None)
@@ -744,39 +744,36 @@ async def generate_video_previews(
                 )
                 return []
 
-            # Upscale only the Telegram-generated thumbnail for the web report.
-            # No source-video frame extraction is performed.
             with Image.open(io.BytesIO(raw)) as image:
-                image = image.convert("RGB")
-                image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
-                image = image.filter(
-                    ImageFilter.UnsharpMask(radius=1.2, percent=115, threshold=3)
+                image = ImageOps.exif_transpose(image).convert("RGB")
+                image = ImageOps.fit(
+                    image,
+                    (3840, 2160),
+                    method=Image.Resampling.LANCZOS,
+                    centering=(0.5, 0.5),
                 )
+                image = image.filter(ImageFilter.GaussianBlur(0.18))
                 output = io.BytesIO()
                 image.save(
                     output,
                     format="JPEG",
-                    quality=86,
+                    quality=82,
                     optimize=True,
                     progressive=True,
+                    subsampling="4:4:4",
                 )
                 web_raw = output.getvalue()
 
-            # Keep the generated web asset lightweight even at 4K dimensions.
             if len(web_raw) > 512 * 1024:
-                with Image.open(io.BytesIO(raw)) as image:
-                    image = image.convert("RGB")
-                    image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
-                    image = image.filter(
-                        ImageFilter.UnsharpMask(radius=1.0, percent=105, threshold=3)
-                    )
+                with Image.open(io.BytesIO(web_raw)) as image:
                     output = io.BytesIO()
                     image.save(
                         output,
                         format="JPEG",
-                        quality=70,
+                        quality=68,
                         optimize=True,
                         progressive=True,
+                        subsampling="4:2:0",
                     )
                     web_raw = output.getvalue()
 
