@@ -698,8 +698,21 @@ def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
     ):
         if used>=budget:break
         off=targets.get(eid)
-        if off is None:continue
-        read_start=max(initial, off)
+        if off is None:
+            # No SeekHead target: a common MKV layout still places Tracks soon
+            # after the initial metadata. Reserve the remaining probe budget
+            # for a contiguous recovery window below the 4 MB source limit.
+            if eid == 0x1654AE6B and used < budget and total and total > initial:
+                read_start = initial
+                n = min(1536 * 1024, budget - used, total - read_start)
+                if n > 0:
+                    ranges.append((read_start, n, "Matroska Tracks fallback window"))
+                    used += n
+            continue
+        # Keep the target as the range start even when it lies inside the
+        # initial 1 MiB probe. The intentional overlap lets us parse complete
+        # TrackEntry elements instead of losing tracks that cross the boundary.
+        read_start=max(0, off)
         if total is not None and read_start>=total:continue
         n=min(lim,budget-used)
         if total is not None:n=min(n,max(1,total-read_start))
