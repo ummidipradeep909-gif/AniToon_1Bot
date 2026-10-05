@@ -1381,96 +1381,80 @@ async def acquire_scan_slot(
     queue_position = 0
     last_notice = None
 
-    while True:
-        stats = runtime_resource_stats()
-        ram_high = stats["ram_pct"] >= RAM_PAUSE_PCT
-        egress_guard = web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES
+    try:
+        while True:
+            stats = runtime_resource_stats()
+            ram_high = stats["ram_pct"] >= RAM_PAUSE_PCT
+            egress_guard = web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES
 
-        if egress_guard:
-            raise ResourceGuardPause(
-                f"Tracked web egress reached {stats['web_egress_gb']:.2f} GB. "
-                "New heavy scans are paused by the resource guard."
-            )
+            if egress_guard:
+                raise ResourceGuardPause(
+                    f"Tracked web egress reached {stats['web_egress_gb']:.2f} GB. "
+                    "New heavy scans are paused by the resource guard."
+                )
 
-        async with scan_queue_lock:
-            full = active_processes >= MAX_CONCURRENT_CHECKS
+            async with scan_queue_lock:
+                full = active_processes >= MAX_CONCURRENT_CHECKS
 
-            if not queued and (ram_high or full):
-                queued = True
-                queued_processes += 1
-                queue_position = queued_processes
+                if not queued and (ram_high or full):
+                    queued = True
+                    queued_processes += 1
+                    queue_position = queued_processes
 
-            can_start = not ram_high and not full
+                can_start = not ram_high and not full
 
-        if can_start:
-            acquired = False
-            try:
+            if can_start:
                 await check_semaphore.acquire()
-                acquired = True
 
-                # Re-check immediately after semaphore acquisition so a memory
-                # increase during the handoff never starts another heavy scan.
+                # Re-check after acquiring the semaphore. This prevents a
+                # memory spike or another scan from starting during handoff.
                 stats = runtime_resource_stats()
-                if stats["ram_pct"] >= RAM_PAUSE_PCT:
+                if (
+                    stats["ram_pct"] >= RAM_PAUSE_PCT
+                    or web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES
+                ):
+                    check_semaphore.release()
+                    await asyncio.sleep(1.0)
                     continue
 
                 async with scan_queue_lock:
                     if active_processes >= MAX_CONCURRENT_CHECKS:
+                        check_semaphore.release()
+                        await asyncio.sleep(0.5)
                         continue
 
                     active_processes += 1
                     if queued:
                         queued_processes = max(0, queued_processes - 1)
+                        queued = False
                     return
-            finally:
-                if acquired and active_processes >= MAX_CONCURRENT_CHECKS:
-                    # Semaphore ownership is transferred only when the active
-                    # counter was incremented above.
-                    pass
 
-                # When the loop continues before transferring ownership,
-                # return the semaphore slot immediately.
-                if acquired:
-                    async with scan_queue_lock:
-                        owns_slot = (
-                            active_processes > 0
-                            and not (
-                                runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
-                                and active_processes < MAX_CONCURRENT_CHECKS
-                            )
-                        )
-                    # The explicit handoff below is safer than relying on the
-                    # resource state inside finally; only release if no active
-                    # slot was created by this attempt.
-                    if not owns_slot:
-                        with suppress(ValueError):
-                            check_semaphore.release()
-
-            # A successful handoff returns above. This path is only a defensive
-            # fallback if another task changed the slot state between checks.
-            await asyncio.sleep(0.5)
-            continue
-
-        ram_text = (
-            f"RAM is {stats['ram_pct']:.1f}%"
-            if ram_high
-            else "all scan workers are busy"
-        )
-        notice = (
-            f"⏳ <b>Please wait — your scan is queued at #{queue_position}</b>\n\n"
-            f"🔎 {ram_text}. The bot is scanning other files.\n"
-            "Your scan will start automatically when resources are available."
-        )
-
-        if notice != last_notice:
-            await edit_status(
-                status_message,
-                notice,
-                buttons=cancel_button(scan_token),
+            ram_text = (
+                f"RAM is {stats['ram_pct']:.1f}%"
+                if ram_high
+                else "all scan workers are busy"
             )
-            last_notice = notice
+            notice = (
+                f"⏳ <b>Please wait — your scan is queued at #{queue_position}</b>\n\n"
+                f"🔎 {ram_text}. The bot is scanning other files.\n"
+                "Your scan will start automatically when resources are available."
+            )
 
-        await asyncio.sleep(2.0)
+            if notice != last_notice:
+                await edit_status(
+                    status_message,
+                    notice,
+                    buttons=cancel_button(scan_token),
+                )
+                last_notice = notice
+
+            await asyncio.sleep(2.0)
+
+    except asyncio.CancelledError:
+        if queued:
+            async with scan_queue_lock:
+                queued_processes = max(0, queued_processes - 1)
+        raise
 
 
 
