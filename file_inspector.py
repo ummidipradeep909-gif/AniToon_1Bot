@@ -62,7 +62,7 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_SAFE_SOURCE_BYTES,2*1024*1024,MAX_SAFE_SOURCE_BYTES)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_SAFE_SOURCE_BYTES - 4096,2*1024*1024,MAX_SAFE_SOURCE_BYTES - 4096)
 def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,128*1024,DEFAULT_CHUNK)
 
 @dataclass(slots=True)
@@ -858,14 +858,43 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     configured_budget = deep_probe_budget()
     total_int = int(total) if isinstance(total, int) and total > 0 else None
     full_small_file = total_int is not None and total_int < MAX_SAFE_SOURCE_BYTES
-    budget = min(total_int, MAX_SAFE_SOURCE_BYTES) if full_small_file else min(configured_budget, MAX_SAFE_SOURCE_BYTES)
-    initial = min(total_int, budget) if full_small_file else min(initial_probe_bytes(), budget)
-    parts=[]
-    used=0
 
     async def say(s):
         if progress:
             await progress(s)
+
+    # A file below 5 MB is small enough to process completely. Telegram's
+    # normal media download returns exactly the file bytes, so this never
+    # crosses the strict source-processing limit.
+    if full_small_file:
+        await say("🧭 Stage 1/4 • reading the complete file…")
+        raw = await client.download_media(message, file=bytes)
+        if not raw:
+            raise RuntimeError("Telegram returned no file bytes")
+        raw = bytes(raw)
+        if len(raw) >= MAX_SAFE_SOURCE_BYTES:
+            raise RuntimeError("File reached the strict below-5-MB safety boundary")
+        parts = [ProbePiece(0, raw, "complete file")]
+        name=str(getattr(f,"name",None) or "telegram_file")
+        mime=getattr(f,"mime_type",None)
+        _,kind=magic(raw[:64],name,mime)
+
+        if kind=="mkv":
+            await say("🎯 Stage 2/4 • parsing the complete Matroska track metadata…")
+        elif kind=="mp4":
+            await say("🎯 Stage 2/4 • parsing the complete MP4 track metadata…")
+        else:
+            await say("🎯 Stage 2/4 • parsing the complete media metadata…")
+        await say("🧩 Stage 3/4 • extracting all video, audio and subtitle tracks…")
+        report = _report(message,parts)
+        await say("🧪 Stage 4/4 • assembling the final metadata report…")
+        return report,len(raw)
+
+    # Larger files remain strictly bounded below 5 MB.
+    budget = min(configured_budget, MAX_SAFE_SOURCE_BYTES - 4096)
+    initial = min(initial_probe_bytes(), budget)
+    parts=[]
+    used=0
 
     await say("🧭 Stage 1/4 • reading the file header and container metadata…")
     b,err=await _read_range(client,media,total,0,initial)
@@ -878,12 +907,10 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     mime=getattr(f,"mime_type",None)
     _,kind=magic(b,name,mime)
 
-    if full_small_file:
-        await say("🎯 Stage 2/4 • reading the complete file metadata…")
-    elif kind=="mkv":
+    if kind=="mkv":
         await say("🎯 Stage 2/4 • reading Matroska TrackEntry metadata…")
-        targets=_seek_targets(b) if not full_small_file else {}
-        if not full_small_file and 0x1654AE6B not in targets:
+        targets=_seek_targets(b)
+        if 0x1654AE6B not in targets:
             local=b.find(b"\x16\x54\xAE\x6B")
             if local>=0:
                 targets[0x1654AE6B]=local
@@ -899,7 +926,7 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
         await say("🧩 Stage 3/4 • extracting all detected video, audio and subtitle tracks…")
     elif kind=="mp4":
         await say("🧩 Stage 2/2 • reading MP4 metadata and index…")
-        if not full_small_file and total and used<budget:
+        if total and used<budget:
             tail_window=min(512*1024,budget-used,total)
             tail_offset=max(initial,total-tail_window)
             if tail_offset>=initial:
