@@ -3872,7 +3872,7 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .countdown{{color:var(--cyan);font-weight:950}}
 .hero-media{{position:relative;min-height:230px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
 .hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.58));pointer-events:none}}
-.hero-media img{{display:block;width:100%;height:100%;min-height:230px;object-fit:cover}}
+.hero-media img{{display:block;width:100%;height:auto;max-height:70vh;min-height:230px;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
 .media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
 .language-ribbon{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}}
@@ -3922,9 +3922,9 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .preview-section.visible{{display:block}}
 .preview-card{{position:relative;overflow:hidden;border:1px solid var(--line2);border-radius:18px;background:rgba(255,255,255,.025);box-shadow:0 20px 48px rgba(0,0,0,.18);animation:cardIn .7s cubic-bezier(.2,1,.2,1) both}}
 .preview-card::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.11) 50%,transparent 80%);transform:translateX(-120%);animation:shimmer 5.5s ease-in-out infinite;pointer-events:none}}
-.preview-frame{{aspect-ratio:16/9;background:#070816;overflow:hidden}}
-.preview-frame img{{display:block;width:100%;height:100%;object-fit:cover;transform:scale(1.015);transition:transform .45s ease}}
-.preview-card:hover .preview-frame img{{transform:scale(1.045)}}
+.preview-frame{{min-height:220px;background:#070816;overflow:hidden;display:flex;align-items:center;justify-content:center}}
+.preview-frame img{{display:block;width:100%;height:auto;max-height:72vh;object-fit:contain;object-position:center;transform:none;transition:transform .45s ease}}
+.preview-card:hover .preview-frame img{{transform:scale(1.008)}}
 .preview-meta{{display:flex;justify-content:space-between;gap:8px;padding:9px 11px;font-size:10px}}
 .preview-meta span{{color:var(--muted);text-align:right}}
 .tech-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
@@ -4433,14 +4433,37 @@ async def health_server():
 
                 if not state:
                     body = """<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Report expired</title></head>
-<body style="font-family:system-ui;padding:32px">
-<h2>🔎 File report expired</h2>
-<p>This report is no longer stored. Send the Telegram file to the bot again to create a new report.</p>
-</body></html>""".encode("utf-8")
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#050611">
+<title>AniToon • Link Expired</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:
+radial-gradient(circle at 20% 10%,rgba(154,140,255,.18),transparent 38%),
+radial-gradient(circle at 85% 85%,rgba(94,231,255,.12),transparent 40%),
+#050611;color:#f7f7fb;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+.card{width:min(560px,100%);padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:24px;background:rgba(11,14,31,.82);box-shadow:0 30px 90px rgba(0,0,0,.38);text-align:center}
+.icon{font-size:48px;margin-bottom:8px}
+h1{margin:0 0 10px;font-size:30px}
+p{margin:8px 0;color:#aeb5ce}
+strong{color:#fff}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="icon">⏳</div>
+<h1>Link expired</h1>
+<p>This file report link has expired.</p>
+<p><strong>Send the file to the bot again</strong> to create a new report and get a new link.</p>
+</main>
+</body>
+</html>""".encode("utf-8")
                     head = b"Content-Type: text/html; charset=utf-8\r\n"
-                    code = b"404 Not Found"
+                    code = b"410 Gone"
                 else:
                     try:
                         body = web_page(state.report, token, state.expires_at)
