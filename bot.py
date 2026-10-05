@@ -234,18 +234,9 @@ def web_report_button(
     *,
     include_clone: bool = True,
 ):
-    buttons = [
-        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
-    ]
-    if include_clone and CLONE_BOT_USERNAME:
-        buttons.append([
-            Button.url("🤖 Clone Bot", f"https://t.me/{CLONE_BOT_USERNAME}")
-        ])
-    buttons.append([
-        Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))
-    ])
-    return buttons
-
+    # Scan completion exposes only the web report entry point. No extra
+    # buttons, copied media, metadata or storage actions are shown to users.
+    return [[Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]]
 
 def _language_names_for_report(report: Report, key: str) -> list[str]:
     tracks = report.video.get("tracks", []) if key == "video" else (
