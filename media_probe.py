@@ -64,6 +64,7 @@ DEFAULT_RANGE_CHUNK = 512 * 1024
 DEFAULT_BUDGET = 2_560 * 1024
 MAX_PROBE_BUDGET = 2_560 * 1024
 RANGE_TOKEN_TTL = 10 * 60
+MAX_TRACKS_PER_KIND = 100
 PREVIEW_RATIOS = (0.50,)
 PREVIEW_BUDGET = 256 * 1024
 RANGE_IO_CONCURRENCY = 4
@@ -308,13 +309,50 @@ def _tag(metadata: Any, *names: str) -> str | None:
     return None
 
 
+_LANGUAGE_TEXT_HINTS = (
+    (re.compile(r"\b(?:english|eng|en)\b", re.I), "English"),
+    (re.compile(r"\b(?:japanese|jpn|ja)\b", re.I), "Japanese"),
+    (re.compile(r"\b(?:telugu|tel|te)\b", re.I), "Telugu"),
+    (re.compile(r"\b(?:hindi|hin|hi)\b", re.I), "Hindi"),
+    (re.compile(r"\b(?:tamil|tam|ta)\b", re.I), "Tamil"),
+    (re.compile(r"\b(?:malayalam|mal|ml)\b", re.I), "Malayalam"),
+    (re.compile(r"\b(?:kannada|kan|kn)\b", re.I), "Kannada"),
+    (re.compile(r"\b(?:korean|kor|ko)\b", re.I), "Korean"),
+    (re.compile(r"\b(?:chinese|mandarin|zho|chi|zh)\b", re.I), "Chinese"),
+    (re.compile(r"\b(?:arabic|ara|ar)\b", re.I), "Arabic"),
+    (re.compile(r"\b(?:spanish|spa|es)\b", re.I), "Spanish"),
+    (re.compile(r"\b(?:french|fra|fre|fr)\b", re.I), "French"),
+    (re.compile(r"\b(?:german|deu|ger|de)\b", re.I), "German"),
+    (re.compile(r"\b(?:russian|rus|ru)\b", re.I), "Russian"),
+    (re.compile(r"\b(?:portuguese|por|pt)\b", re.I), "Portuguese"),
+    (re.compile(r"\b(?:marathi|mar|mr)\b", re.I), "Marathi"),
+    (re.compile(r"\b(?:bengali|ben|bn)\b", re.I), "Bengali"),
+    (re.compile(r"\b(?:gujarati|guj|gu)\b", re.I), "Gujarati"),
+    (re.compile(r"\b(?:punjabi|pan|pa)\b", re.I), "Punjabi"),
+    (re.compile(r"\b(?:urdu|urd|ur)\b", re.I), "Urdu"),
+    (re.compile(r"\b(?:nepali|nep|ne)\b", re.I), "Nepali"),
+    (re.compile(r"\b(?:sinhala|sin|si)\b", re.I), "Sinhala"),
+)
+
+def _language_from_text(text: str | None) -> str | None:
+    value = (text or "").strip()
+    if not value:
+        return None
+    for pattern, canonical in _LANGUAGE_TEXT_HINTS:
+        if pattern.search(value):
+            return canonical
+    return None
+
 def _language_name(code: str | None) -> str | None:
     if not code:
         return None
     value = code.strip().lower().replace("_", "-")
-    if value in {"und", "unknown", "unk"}:
+    if not value or value in {"und", "unknown", "unk", "zxx", "none"}:
         return None
-    return LANG_NAMES.get(value) or LANG_NAMES.get(value.split("-")[0]) or f"Unknown ({value})"
+    name = LANG_NAMES.get(value) or LANG_NAMES.get(value.split("-")[0])
+    if name and name.lower() != "undetermined":
+        return name
+    return None
 
 
 def _codec_name(stream: Any) -> str:
@@ -376,19 +414,10 @@ def _stream_track(stream: Any) -> dict[str, Any]:
     }:
         clean_title = None
 
-    if not language_name and clean_title:
-        for raw, canonical in (
-            ("english", "English"), ("japanese", "Japanese"), ("telugu", "Telugu"),
-            ("hindi", "Hindi"), ("tamil", "Tamil"), ("malayalam", "Malayalam"),
-            ("kannada", "Kannada"), ("korean", "Korean"), ("chinese", "Chinese"),
-            ("arabic", "Arabic"), ("spanish", "Spanish"), ("french", "French"),
-            ("german", "German"), ("russian", "Russian"), ("portuguese", "Portuguese"),
-            ("marathi", "Marathi"), ("bengali", "Bengali"), ("gujarati", "Gujarati"),
-            ("punjabi", "Punjabi"), ("urdu", "Urdu"),
-        ):
-            if re.search(rf"\b{re.escape(raw)}\b", clean_title, re.I):
-                language_name = canonical
-                break
+    title_language = _language_from_text(clean_title)
+    if title_language:
+        language_name = title_language
+
 
     kind = str(getattr(stream, "type", "media") or "media").lower()
     base_type = {
@@ -522,11 +551,16 @@ def _build_report(message: Any, container: Any, session: RangeProbeSession) -> R
     for stream in container.streams:
         track = _stream_track(stream)
         if stream.type == "audio":
-            report.audio.setdefault("tracks", []).append(track)
+            bucket = report.audio.setdefault("tracks", [])
+            if len(bucket) < MAX_TRACKS_PER_KIND:
+                bucket.append(track)
         elif stream.type == "video":
-            report.video.setdefault("tracks", []).append(track)
+            bucket = report.video.setdefault("tracks", [])
+            if len(bucket) < MAX_TRACKS_PER_KIND:
+                bucket.append(track)
         elif stream.type in {"subtitle", "subtitles"}:
-            report.subtitles.append(track)
+            if len(report.subtitles) < MAX_TRACKS_PER_KIND:
+                report.subtitles.append(track)
 
     report.probe_ranges = [
         f"PyAV range: +{off} B ({size} B)"
@@ -582,7 +616,7 @@ def _merge_tracks(primary: list[dict[str, Any]], secondary: list[dict[str, Any]]
         else:
             index[key] = len(merged)
             merged.append(item)
-    return merged
+    return merged[:MAX_TRACKS_PER_KIND]
 
 
 def _merge_reports(primary: Report, secondary: Report) -> Report:
@@ -600,6 +634,9 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
         list(primary.subtitles or []),
         list(secondary.subtitles or []),
     )
+    primary.video["tracks"] = primary.video["tracks"][:MAX_TRACKS_PER_KIND]
+    primary.audio["tracks"] = primary.audio["tracks"][:MAX_TRACKS_PER_KIND]
+    primary.subtitles = primary.subtitles[:MAX_TRACKS_PER_KIND]
 
     for source in (secondary.video, secondary.audio):
         for key, value in source.items():
