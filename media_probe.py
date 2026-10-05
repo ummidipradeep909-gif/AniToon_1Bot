@@ -61,9 +61,9 @@ CODEC_NAMES = {
 }
 
 DEFAULT_RANGE_CHUNK = 512 * 1024
-# Source-media probing is capped well below 4 MB.
-DEFAULT_BUDGET = 2_560 * 1024
-MAX_PROBE_BUDGET = 2_560 * 1024
+# Source-media work is always strictly below 5 MB.
+DEFAULT_BUDGET = 5 * 1024 * 1024 - 4096
+MAX_PROBE_BUDGET = 5 * 1024 * 1024 - 4096
 RANGE_TOKEN_TTL = 10 * 60
 MAX_TRACKS_PER_KIND = 100
 PREVIEW_RATIOS = (0.50,)
@@ -830,7 +830,13 @@ async def inspect_telegram_player(
     name = str(getattr(f, "name", None) or "")
     mime = str(getattr(f, "mime_type", None) or "").lower()
     is_mkv = name.lower().endswith((".mkv", ".webm")) or "matroska" in mime
-    effective_budget = max(2 * 1024 * 1024, min(int(budget or DEFAULT_BUDGET), MAX_PROBE_BUDGET))
+    source_limit = MAX_PROBE_BUDGET
+    total_int = int(total) if isinstance(total, int) and total > 0 else None
+    effective_budget = (
+        total_int
+        if total_int is not None and total_int < source_limit
+        else min(int(budget or DEFAULT_BUDGET), source_limit)
+    )
 
     async def say(value: str):
         if progress:
