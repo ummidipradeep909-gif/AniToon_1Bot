@@ -5,6 +5,7 @@ import base64
 import html
 import io
 import logging
+import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -374,6 +375,20 @@ def _stream_track(stream: Any) -> dict[str, Any]:
         "unknown", "und", "undefined", "audio", "video", "subtitle", "track"
     }:
         clean_title = None
+
+    if not language_name and clean_title:
+        for raw, canonical in (
+            ("english", "English"), ("japanese", "Japanese"), ("telugu", "Telugu"),
+            ("hindi", "Hindi"), ("tamil", "Tamil"), ("malayalam", "Malayalam"),
+            ("kannada", "Kannada"), ("korean", "Korean"), ("chinese", "Chinese"),
+            ("arabic", "Arabic"), ("spanish", "Spanish"), ("french", "French"),
+            ("german", "German"), ("russian", "Russian"), ("portuguese", "Portuguese"),
+            ("marathi", "Marathi"), ("bengali", "Bengali"), ("gujarati", "Gujarati"),
+            ("punjabi", "Punjabi"), ("urdu", "Urdu"),
+        ):
+            if re.search(rf"\b{re.escape(raw)}\b", clean_title, re.I):
+                language_name = canonical
+                break
 
     kind = str(getattr(stream, "type", "media") or "media").lower()
     base_type = {
