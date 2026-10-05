@@ -734,6 +734,51 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
         }
 
 
+async def owner_daily_summary(day: datetime) -> dict[str, Any]:
+    """Return owner dashboard scan totals for one UTC calendar day."""
+    db = await _get_db()
+    empty = {
+        "available": False,
+        "date": day.date().isoformat(),
+        "users": 0,
+        "total_scans": 0,
+        "completed": 0,
+        "failed": 0,
+        "cancelled": 0,
+    }
+    if db is None:
+        return empty
+
+    try:
+        start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+        grouped = await asyncio.to_thread(
+            lambda: list(
+                db.scans.aggregate([
+                    {"$match": {"created_at": {"$gte": start, "$lt": end}}},
+                    {"$group": {
+                        "_id": "$user_id",
+                        "scans": {"$sum": 1},
+                        "completed": {"$sum": {"$cond": [{"$eq": ["$status", "completed"]}, 1, 0]}},
+                        "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}},
+                        "cancelled": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+                    }},
+                ])
+            )
+        )
+        return {
+            "available": True,
+            "date": start.date().isoformat(),
+            "users": len([row for row in grouped if row.get("_id") is not None]),
+            "total_scans": sum(int(row.get("scans", 0) or 0) for row in grouped),
+            "completed": sum(int(row.get("completed", 0) or 0) for row in grouped),
+            "failed": sum(int(row.get("failed", 0) or 0) for row in grouped),
+            "cancelled": sum(int(row.get("cancelled", 0) or 0) for row in grouped),
+        }
+    except Exception:
+        log.exception("Failed to build owner daily summary")
+        return empty
+
 async def owner_user_scans(
     user_id: int,
     days: int = 7,
