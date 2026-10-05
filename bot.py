@@ -261,32 +261,10 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
     return names[:12]
 
 def compact_scan_result(report: Report) -> str:
-    video = report.video.get("tracks", []) if isinstance(report.video, dict) else []
-    audio = report.audio.get("tracks", []) if isinstance(report.audio, dict) else []
-    subtitles = report.subtitles if isinstance(report.subtitles, list) else []
-    video_langs = _language_names_for_report(report, "video")
-    audio_langs = _language_names_for_report(report, "audio")
-    subtitle_langs = _language_names_for_report(report, "subtitle")
-    lines = [
-        "✅ <b>METADATA SCAN COMPLETE</b>",
-        "",
-        f"🎬 Video: <b>{len(video[:MAX_REPORT_TRACKS])}</b> track(s)",
-        f"🎧 Audio: <b>{len(audio[:MAX_REPORT_TRACKS])}</b> track(s)",
-        f"💬 Subtitles: <b>{len(subtitles[:MAX_REPORT_TRACKS])}</b> track(s)",
-    ]
-    if video_langs:
-        lines.append("🎬 Video languages: " + ", ".join(html.escape(x) for x in video_langs))
-    if audio_langs:
-        lines.append("🎧 Audio languages: " + ", ".join(html.escape(x) for x in audio_langs))
-    if subtitle_langs:
-        lines.append("💬 Subtitle languages: " + ", ".join(html.escape(x) for x in subtitle_langs))
-    lines += [
-        "",
-        "🖼️ One Telegram thumbnail is added to the web report when Telegram provides one.",
-        "🌐 Tap <b>Open File Info</b> for the full track-by-track technical report.",
-        "⏱️ <b>This report link expires 5 minutes after creation.</b>",
-    ]
-    return "\n".join(lines)
+    # Telegram should stay minimal: all technical information belongs on the
+    # temporary 5-minute web report, not in the chat message.
+    return "✅ <b>File scan complete.</b>\\n\\n🌐 Open the web report below for the file information."
+
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
     "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
@@ -1522,26 +1500,8 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        # Fetch exactly one Telegram-generated thumbnail before sending the final
-        # result so the bot message itself can contain the image. This never
-        # seeks or downloads the source video.
-        previews: list[dict[str, Any]] = []
-        with suppress(Exception):
-            if getattr(source_message, "media", None):
-                previews = await generate_video_previews(
-                    client,
-                    source_message,
-                    scan_token,
-                )
-        if previews:
-            state.report.previews = previews[:1]
-            with suppress(Exception):
-                await save_web_report(
-                    scan_token,
-                    asdict(state.report),
-                    expires_at,
-                )
-
+        # Keep the Telegram chat minimal. The thumbnail is stored only in the
+        # web report and is never sent back to the user as an image/file.
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
             scan_token,
@@ -1549,40 +1509,19 @@ async def analyze_source(
             include_clone=include_clone,
         )
 
-        # Completion is sent as a fresh message. Detailed metadata stays on
-        # the web report; Telegram only gets the clean completion message and,
-        # when Telegram supplied one, exactly one thumbnail.
+        # Completion is sent as a fresh text message only.
+        # Detailed metadata and the single Telegram thumbnail remain web-only.
         try:
-            thumbnail_raw = None
-            if previews:
-                data = str(previews[0].get("data") or "")
-                if data:
-                    with suppress(Exception):
-                        thumbnail_raw = base64.b64decode(data, validate=True)
-
-            if thumbnail_raw:
-                final_message = await client.send_file(
-                    status_message.chat_id,
-                    file=thumbnail_raw,
-                    caption=final_result_text,
-                    parse_mode="html",
-                    reply_to=status_message.id,
-                    buttons=result_buttons,
-                    force_document=False,
-                )
-            else:
-                final_message = await status_message.reply(
-                    final_result_text,
-                    parse_mode="html",
-                    buttons=result_buttons,
-                )
-
-            if final_message is not None:
-                log.info(
-                    "Final scan result sent | token=%s | thumbnail=%s",
-                    scan_token,
-                    bool(thumbnail_raw),
-                )
+            final_message = await status_message.reply(
+                final_result_text,
+                parse_mode="html",
+                buttons=result_buttons,
+            )
+            log.info(
+                "Final scan result sent | token=%s | web_only=%s",
+                scan_token,
+                True,
+            )
         except Exception:
             log.exception("Failed to send final scan result message | token=%s", scan_token)
             raise
