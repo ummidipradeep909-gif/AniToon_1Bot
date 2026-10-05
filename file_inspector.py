@@ -182,9 +182,41 @@ def _text(data:bytes,s:int,e:int)->str:return data[s:e].decode("utf-8","replace"
 def _flt(data:bytes,s:int,e:int):
     try:return struct.unpack(">f" if e-s==4 else ">d",data[s:e])[0] if e-s in (4,8) else None
     except struct.error:return None
+_LANG_TITLE_HINTS = (
+    (re.compile(r"\benglish\b", re.I), "English"),
+    (re.compile(r"\bjapanese\b", re.I), "Japanese"),
+    (re.compile(r"\btelugu\b", re.I), "Telugu"),
+    (re.compile(r"\bhindi\b", re.I), "Hindi"),
+    (re.compile(r"\btamil\b", re.I), "Tamil"),
+    (re.compile(r"\bmalayalam\b", re.I), "Malayalam"),
+    (re.compile(r"\bkannada\b", re.I), "Kannada"),
+    (re.compile(r"\bkorean\b", re.I), "Korean"),
+    (re.compile(r"\b(?:chinese|mandarin)\b", re.I), "Chinese"),
+    (re.compile(r"\barabic\b", re.I), "Arabic"),
+    (re.compile(r"\bspanish\b", re.I), "Spanish"),
+    (re.compile(r"\bfrench\b", re.I), "French"),
+    (re.compile(r"\bgerman\b", re.I), "German"),
+    (re.compile(r"\brussian\b", re.I), "Russian"),
+    (re.compile(r"\bportuguese\b", re.I), "Portuguese"),
+    (re.compile(r"\bmarathi\b", re.I), "Marathi"),
+    (re.compile(r"\bbengali\b", re.I), "Bengali"),
+    (re.compile(r"\bgujarati\b", re.I), "Gujarati"),
+    (re.compile(r"\bpunjabi\b", re.I), "Punjabi"),
+    (re.compile(r"\burdu\b", re.I), "Urdu"),
+)
+
+def _language_from_title(title:str|None)->str|None:
+    value=(title or "").strip()
+    if not value:
+        return None
+    for pattern,name in _LANG_TITLE_HINTS:
+        if pattern.search(value):
+            return name
+    return None
+
 def _lang(code:str|None)->str|None:
     c=(code or "").lower().replace("_","-").strip()
-    if not c or c in {"und", "unknown", "unk"}:
+    if not c or c in {"und", "unknown", "unk", "zxx"}:
         return None
     base = LANG.get(c) or LANG.get(c.split("-")[0])
     return base or f"Unknown ({c})"
@@ -275,6 +307,11 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
     lname=_lang(use_lang)
+    if not lname:
+        inferred = _language_from_title(name)
+        if inferred:
+            lname = inferred
+            use_lang = inferred
     codec_display=cname or CODEC.get(cid or "") or cid
     if codec_display and str(codec_display).strip().lower() in {"unknown","unk","undefined","und"}:
         codec_display=None
@@ -538,7 +575,7 @@ def _mp4_tracks(data:bytes,report:Report)->int:
                     "type":"video" if is_video else "audio" if is_audio else "subtitles" if is_sub else None,
                     "track":str(track_id) if track_id is not None else None,
                     "language":language,
-                    "language_name":_lang(language),
+                    "language_name":_lang(language) or _language_from_title(handler_name),
                     "codec":sample_type.decode("latin1","replace"),
                     "codec_name":codec_display,
                     "name":_mp4_track_name(handler_name,handler_type or "",codec_display,track_id),
