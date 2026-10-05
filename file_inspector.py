@@ -354,6 +354,9 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
 
     if typ=="video":
         if width and height:d["dimensions"]=f"{width} × {height}"
+        if default_duration and default_duration > 0:
+            fps=1_000_000_000/float(default_duration)
+            if 0 < fps < 1000:d["frame_rate"]=f"{fps:.3f} fps"
         if display_width and display_height:d["display_dimensions"]=f"{display_width} × {display_height}"
         if any(v is not None for v in (crop_left,crop_right,crop_top,crop_bottom)):
             d["crop"]=(f"L{crop_left or 0} / R{crop_right or 0} / "
@@ -382,15 +385,43 @@ def _merge(report:Report,track:dict[str,Any]):
         bucket.append(track)
 
 def _tracks(data:bytes,report:Report):
-    p=data.find(b"\x16\x54\xAE\x6B"); total=0
+    total=0
+    seen_positions=set()
+
+    # Primary path: parse TrackEntry children under every visible Tracks element.
+    p=data.find(b"\x16\x54\xAE\x6B")
     while p>=0:
         x=_elem(data,p)
         if not x:break
         for eid,s,e in _children(data,x[1],x[2]):
-            if eid==0xAE:
-                t=_track(data,s,e)
-                if t:_merge(report,t);total+=1
+            if eid!=0xAE or s in seen_positions:
+                continue
+            seen_positions.add(s)
+            t=_track(data,s,e)
+            if t:
+                _merge(report,t)
+                total+=1
         p=data.find(b"\x16\x54\xAE\x6B",x[2])
+
+    # Recovery path: a byte-range probe can contain TrackEntry records without
+    # the start of their parent Tracks element. Scan visible AE elements and
+    # accept only strongly validated TrackEntry structures.
+    p=data.find(b"\xAE")
+    while p>=0:
+        if p not in seen_positions:
+            x=_elem(data,p)
+            if x:
+                t=_track(data,x[1],x[2])
+                if (
+                    t
+                    and t.get("track") not in (None, "")
+                    and t.get("type") in {"audio","video","subtitles"}
+                    and any(t.get(k) for k in ("name","language","codec"))
+                ):
+                    seen_positions.add(p)
+                    _merge(report,t)
+                    total+=1
+        p=data.find(b"\xAE",p+1)
     return total
 
 def _info(data:bytes,report:Report):
@@ -656,18 +687,23 @@ def _generic(data:bytes,kind:str,report:Report):
 
 def _probe_ranges(total:int|None,budget:int,initial:int,targets:dict[int,int]):
     ranges=[];used=initial
-    # TrackEntry metadata is the highest-value part of the report. Read it
-    # first, then use whatever remains for Matroska Info/runtime/title data.
+    # TrackEntry metadata is the highest-value part of the report. The Tracks
+    # element may begin inside the initial window, so continue from the first
+    # unread byte instead of discarding the target just because it is < initial.
     for eid,label,lim in (
         (0x1654AE6B,"Matroska Tracks",16*1024*1024),
         (0x1549A966,"Matroska Info",512*1024),
     ):
         if used>=budget:break
         off=targets.get(eid)
-        if off is None or off<initial:continue
+        if off is None:continue
+        read_start=max(initial, off)
+        if total is not None and read_start>=total:continue
         n=min(lim,budget-used)
-        if total is not None:n=min(n,max(1,total-off))
-        if n>0:ranges.append((off,n,label));used+=n
+        if total is not None:n=min(n,max(1,total-read_start))
+        if n>0:
+            ranges.append((read_start,n,label))
+            used+=n
     return ranges
 
 def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
@@ -744,22 +780,27 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
     return r
 
 def _codec_hints(data:bytes,r:Report):
-    for marker,name in ((b"A_AAC","AAC"),(b"A_AC3","AC-3"),(b"A_EAC3","E-AC-3"),(b"A_OPUS","Opus"),(b"A_FLAC","FLAC"),(b"A_MPEG/L3","MP3"),(b"A_VORBIS","Vorbis")):
-        if marker in data:
-            r.audio.setdefault("sample_codecs",name)
-            if not isinstance(r.audio.get("tracks"), list):
-                r.audio["tracks"] = []
-            if not r.audio["tracks"]:
-                r.audio["tracks"].append({
-                    "type": "audio",
-                    "track": "1",
-                    "name": name,
-                    "display_name": name,
-                    "name_source": "codec marker fallback",
-                    "codec_name": name,
-                })
-    for marker,name in ((b"S_TEXT/UTF8","SubRip/UTF-8"),(b"S_TEXT/ASS","ASS"),(b"S_TEXT/SSA","SSA"),(b"S_TEXT/WEBVTT","WebVTT"),(b"S_HDMV/PGS","PGS"),(b"S_VOBSUB","VobSub")):
-        if marker in data:r.subtitles.append({"name":name,"format":name,"source":"codec marker in sample"})
+    audio_hints=[]
+    for marker,name in (
+        (b"A_AAC","AAC"),(b"A_AC3","AC-3"),(b"A_EAC3","E-AC-3"),
+        (b"A_OPUS","Opus"),(b"A_FLAC","FLAC"),(b"A_MPEG/L3","MP3"),
+        (b"A_VORBIS","Vorbis"),
+    ):
+        if marker in data and name not in audio_hints:
+            audio_hints.append(name)
+    if audio_hints:
+        r.audio["sample_codecs"]=" / ".join(audio_hints)
+
+    subtitle_hints=[]
+    for marker,name in (
+        (b"S_TEXT/UTF8","SubRip/UTF-8"),(b"S_TEXT/ASS","ASS"),
+        (b"S_TEXT/SSA","SSA"),(b"S_TEXT/WEBVTT","WebVTT"),
+        (b"S_HDMV/PGS","PGS"),(b"S_VOBSUB","VobSub"),
+    ):
+        if marker in data and name not in subtitle_hints:
+            subtitle_hints.append(name)
+    if subtitle_hints:
+        r.container["sample_subtitle_codecs"]=" / ".join(subtitle_hints)
 
 def _required_element_end(data:bytes,pos:int)->int|None:
     if pos<0 or pos>=len(data):
