@@ -386,6 +386,15 @@ def _merge(report:Report,track:dict[str,Any]):
     if len(bucket) < MAX_TRACKS_PER_KIND:
         bucket.append(track)
 
+    # Matroska's default-track flag may be omitted while player behavior still
+    # selects the first audio stream. Expose that effective playback default.
+    if track.get("type") == "audio":
+        audio_tracks = report.audio.get("tracks", [])
+        if audio_tracks and not any(x.get("default") == "yes" for x in audio_tracks):
+            first = audio_tracks[0]
+            if first.get("default") in (None, ""):
+                first["default"] = "yes"
+
 def _tracks(data:bytes,report:Report):
     total=0
     seen_positions=set()
