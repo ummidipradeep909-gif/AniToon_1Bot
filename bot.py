@@ -234,9 +234,12 @@ def web_report_button(
     *,
     include_clone: bool = True,
 ):
-    # Scan completion exposes only the web report entry point. No extra
-    # buttons, copied media, metadata or storage actions are shown to users.
-    return [[Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")]]
+    # Keep Telegram clean: expose the report and the group-join action only.
+    return [
+        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
+        [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
+    ]
+
 
 def _language_names_for_report(report: Report, key: str) -> list[str]:
     tracks = report.video.get("tracks", []) if key == "video" else (
@@ -1491,8 +1494,26 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        # Keep the Telegram chat minimal. The thumbnail is stored only in the
-        # web report and is never sent back to the user as an image/file.
+        # Generate exactly one Telegram-provided thumbnail. The original
+        # source video/file is never sent back to the user.
+        previews: list[dict[str, Any]] = []
+        with suppress(Exception):
+            if getattr(source_message, "media", None):
+                previews = await generate_video_previews(
+                    client,
+                    source_message,
+                    scan_token,
+                )
+
+        if previews:
+            state.report.previews = previews[:1]
+            with suppress(Exception):
+                await save_web_report(
+                    scan_token,
+                    asdict(state.report),
+                    expires_at,
+                )
+
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
             scan_token,
@@ -1500,17 +1521,48 @@ async def analyze_source(
             include_clone=include_clone,
         )
 
-        # Completion is sent as a fresh text message only.
-        # Detailed metadata and the single Telegram thumbnail remain web-only.
-        try:
-            final_message = await status_message.reply(
-                final_result_text,
-                parse_mode="html",
-                buttons=result_buttons,
+        # Storage is performed after the scan/report is complete.
+        with suppress(Exception):
+            stored = await archive_scanned_file(
+                client,
+                source_message,
+                user_id=user_id,
+                bot_username=bot_username,
             )
+            if not stored:
+                log.warning("Post-scan private storage copy was not confirmed | token=%s", scan_token)
+
+        # Telegram gets only the thumbnail (never the source file) and the two
+        # useful actions. No metadata is printed in chat.
+        try:
+            thumbnail_raw = None
+            if previews:
+                data = str(previews[0].get("data") or "")
+                if data:
+                    with suppress(Exception):
+                        thumbnail_raw = base64.b64decode(data, validate=True)
+
+            if thumbnail_raw:
+                final_message = await client.send_file(
+                    status_message.chat_id,
+                    file=thumbnail_raw,
+                    caption="",
+                    parse_mode="html",
+                    reply_to=status_message.id,
+                    buttons=result_buttons,
+                    force_document=False,
+                )
+            else:
+                final_message = await status_message.reply(
+                    final_result_text,
+                    parse_mode="html",
+                    buttons=result_buttons,
+                )
+
             log.info(
-                "Final scan result sent | token=%s | web_only=%s",
+                "Final scan result sent | token=%s | thumbnail=%s | web_only=%s",
                 scan_token,
+                bool(thumbnail_raw),
                 True,
             )
         except Exception:
@@ -2673,16 +2725,6 @@ async def handle_new_message(
                     )
         except Exception:
             log.debug("Bot audience tracking failed", exc_info=True)
-
-    # Archive every incoming media message silently before any command/caption
-    # filter. This guarantees clone files are archived even when a media caption
-    # happens to begin with a slash command.
-    with suppress(Exception):
-        _schedule_storage_archive(
-            event,
-            client=client,
-            bot_username=bot_username,
-        )
 
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
@@ -3859,9 +3901,9 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </header>
 
   <div class="summary" id="overview">
-    <div class="stat"><b>{len(video)}</b><span>Video tracks • max 100</span></div>
-    <div class="stat"><b>{len(audio)}</b><span>Audio tracks • max 100</span></div>
-    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks • max 100</span></div>
+    <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
+    <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
+    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
     <div class="stat"><b>{esc(quality)}</b><span>Primary quality / pixels</span></div>
     <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
   </div>
