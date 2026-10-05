@@ -10,9 +10,11 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-# Keep the total source-media read safely below 4 MB.
+# Source-media work is always strictly below 5 MB.
+# Files smaller than this limit are read completely; larger files are bounded.
+MAX_SAFE_SOURCE_BYTES = 5 * 1024 * 1024 - 1
 MAX_INITIAL_PROBE = 1 * 1024 * 1024
-MAX_DEEP_PROBE = 2_560 * 1024
+MAX_DEEP_PROBE = MAX_SAFE_SOURCE_BYTES
 DEFAULT_CHUNK = 512 * 1024
 MAX_TRACKS_PER_KIND = 100
 ProgressFn = Callable[[str], Awaitable[None]]
@@ -60,7 +62,7 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",2_560*1024,2*1024*1024,MAX_DEEP_PROBE)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_SAFE_SOURCE_BYTES,2*1024*1024,MAX_SAFE_SOURCE_BYTES)
 def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,128*1024,DEFAULT_CHUNK)
 
 @dataclass(slots=True)
@@ -310,10 +312,6 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     if typ not in {"audio","video","subtitles"}:return None
     use_lang=lang_i or lang
     lname=_lang(use_lang)
-    inferred = _language_from_title(name)
-    if inferred:
-        lname = inferred
-        use_lang = inferred
     codec_display=cname or CODEC.get(cid or "") or cid
     if codec_display and str(codec_display).strip().lower() in {"unknown","unk","undefined","und"}:
         codec_display=None
@@ -325,7 +323,7 @@ def _track(data:bytes,s:int,e:int)->dict[str,Any]|None:
     track_label=f" {num}" if num is not None else ""
 
     if clean_name:
-        display_name=clean_name; name_source="track metadata"
+        display_name=clean_name; name_source="embedded track name"
     elif lname and codec_display:
         display_name=f"{lname} {codec_display} {base_type} Track{track_label}"; name_source="language + codec metadata"
     elif lname:
@@ -799,8 +797,12 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
     for x in pieces:r.probe_ranges.append(f"{x.label}: +{human(x.offset)} ({human(len(x.data))})")
     if r.ext in SUB_EXT and not r.subtitles:r.subtitles.append({"name":SUB_EXT[r.ext],"format":SUB_EXT[r.ext],"source":"filename extension"})
     if r.ext in AUDIO_EXT and not r.audio:r.audio["format_hint"]=AUDIO_EXT[r.ext]
-    r.notes.append("Partial scan only: the scanner intentionally stopped before the end of the file.")
-    if r.size and r.sampled<r.size:r.notes.append("Metadata outside the probed ranges can remain undetected.")
+    if r.size is None or r.sampled < r.size:
+        r.notes.append("Partial scan: source processing was bounded below 5 MB.")
+        if r.size and r.sampled < r.size:
+            r.notes.append("Metadata outside the probed ranges can remain undetected.")
+    else:
+        r.notes.append("Complete source processed because the file is below the 5 MB safety limit.")
     return r
 
 def _codec_hints(data:bytes,r:Report):
@@ -853,8 +855,11 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     if not media:
         raise ValueError("Message has no media")
 
-    budget=deep_probe_budget()
-    initial=min(initial_probe_bytes(),budget)
+    configured_budget = deep_probe_budget()
+    total_int = int(total) if isinstance(total, int) and total > 0 else None
+    full_small_file = total_int is not None and total_int < MAX_SAFE_SOURCE_BYTES
+    budget = min(total_int, MAX_SAFE_SOURCE_BYTES) if full_small_file else min(configured_budget, MAX_SAFE_SOURCE_BYTES)
+    initial = min(total_int, budget) if full_small_file else min(initial_probe_bytes(), budget)
     parts=[]
     used=0
 
@@ -873,10 +878,12 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     mime=getattr(f,"mime_type",None)
     _,kind=magic(b,name,mime)
 
-    if kind=="mkv":
+    if full_small_file:
+        await say("🎯 Stage 2/4 • reading the complete file metadata…")
+    elif kind=="mkv":
         await say("🎯 Stage 2/4 • reading Matroska TrackEntry metadata…")
-        targets=_seek_targets(b)
-        if 0x1654AE6B not in targets:
+        targets=_seek_targets(b) if not full_small_file else {}
+        if not full_small_file and 0x1654AE6B not in targets:
             local=b.find(b"\x16\x54\xAE\x6B")
             if local>=0:
                 targets[0x1654AE6B]=local
@@ -891,8 +898,8 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
                 used+=len(x)
         await say("🧩 Stage 3/4 • extracting all detected video, audio and subtitle tracks…")
     elif kind=="mp4":
-        await say("🧩 Stage 2/2 • reading MP4 metadata and bounded tail index…")
-        if total and used<budget:
+        await say("🧩 Stage 2/2 • reading MP4 metadata and index…")
+        if not full_small_file and total and used<budget:
             tail_window=min(512*1024,budget-used,total)
             tail_offset=max(initial,total-tail_window)
             if tail_offset>=initial:
