@@ -801,8 +801,7 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
         r.notes.append("Partial scan: source processing was bounded below 5 MB.")
         if r.size and r.sampled < r.size:
             r.notes.append("Metadata outside the probed ranges can remain undetected.")
-    else:
-        r.notes.append("Complete source processed because the file is below the 5 MB safety limit.")
+
     return r
 
 def _codec_hints(data:bytes,r:Report):
