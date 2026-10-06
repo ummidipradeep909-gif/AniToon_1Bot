@@ -1377,7 +1377,7 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.9)
             if heartbeat_stop.is_set():
                 break
 
@@ -1388,9 +1388,9 @@ async def run_scan(
                 current = 14
 
             if current < 76:
-                visual_pct = min(35, current + 2)
+                visual_pct = min(76, current + 5)
             else:
-                visual_pct = min(98, current + 2)
+                visual_pct = min(98, current + 5)
 
             progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
@@ -3782,6 +3782,7 @@ def web_page(
             details: list[tuple[str, Any]] = []
 
             priority_details = [
+                ("Language", (track.get("language_name") or track.get("language")) if kind in {"Audio", "Subtitle"} else None),
                 ("Codec", track.get("codec_name") or track.get("codec")),
                 ("Resolution / pixels", track.get("dimensions")),
                 ("Display size", track.get("display_dimensions")),
@@ -3876,21 +3877,6 @@ def web_page(
 
     report_id = esc((report_token or "local")[:14])
 
-    useful_channels = [
-        ("🎬", "Movies", "https://t.me/+KEz_Up14hfFhOTI1"),
-        ("🍿", "All Animes", "https://t.me/anitoons_ani"),
-        ("🎧", "Dual Content", "https://t.me/ani_engjaphin"),
-        ("📚", "Manga", "https://t.me/mangauniverse_ani"),
-        ("🏴‍☠️", "One Piece", "https://t.me/ani_pocket_monster"),
-        ("⚔️", "Jujutsu Kaisen", "https://t.me/jjk_anitoon"),
-        ("🍥", "Naruto Shippuden", "https://t.me/naruto_shippuden_in_telugudub"),
-    ]
-    useful_html = "".join(
-        f'<a class="useful-link" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
-        f'<span class="useful-icon">{icon}</span><span>{html.escape(name)}</span><span class="useful-arrow">↗</span></a>'
-        for icon, name, url in useful_channels
-    )
-
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3903,11 +3889,11 @@ def web_page(
   color-scheme:dark;
   --bg:#050611;--panel:rgba(12,15,34,.76);--line:rgba(255,255,255,.10);
   --line2:rgba(155,140,255,.28);--text:#f7f7fb;--muted:#9fa6c1;
-  --accent:#9b8cff;--cyan:#5ee7ff;--good:#7cf4b0;--shadow:0 28px 80px rgba(0,0,0,.38);
+  --accent:#a78bfa;--cyan:#67e8f9;--pink:#f472b6;--violet:#8b5cf6;--good:#7cf4b0;--shadow:0 28px 80px rgba(0,0,0,.38);
 }}
 *{{box-sizing:border-box}}
 html{{scroll-behavior:smooth}}
-body{{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-x:hidden}}
+body{{margin:0;min-height:100vh;background:radial-gradient(circle at 12% 8%,rgba(139,92,246,.16),transparent 28%),radial-gradient(circle at 88% 18%,rgba(103,232,249,.12),transparent 25%),radial-gradient(circle at 50% 100%,rgba(244,114,182,.10),transparent 32%),var(--bg);color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow-x:hidden}}
 .anime-wallpaper{{position:fixed;inset:0;z-index:-6;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.22;filter:saturate(1.05) contrast(1.03);transform:scale(1.04);animation:wall 24s ease-in-out infinite alternate;pointer-events:none}}
 body::before{{content:"";position:fixed;inset:0;z-index:-5;background:radial-gradient(780px 520px at 0 0,rgba(126,107,255,.20),transparent 70%),radial-gradient(700px 480px at 100% 10%,rgba(42,217,255,.12),transparent 72%),linear-gradient(180deg,#070816 0%,#050611 52%,#03040a 100%);pointer-events:none}}
 .bg-grid{{position:fixed;inset:0;z-index:-4;opacity:.15;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,#000,transparent 88%);pointer-events:none}}
@@ -3990,15 +3976,6 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .home-button:hover{{transform:translateY(-2px) scale(1.02);border-color:rgba(94,231,255,.42);box-shadow:0 10px 28px rgba(94,231,255,.13)}}
 .home-button span{{position:relative;z-index:1}}
 .home-button{{isolation:isolate}}
-.useful-section{{margin-top:14px}}
-.useful-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}}
-.useful-link{{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:12px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.034),rgba(255,255,255,.012));transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}}
-.useful-link:hover{{transform:translateY(-2px);border-color:rgba(155,140,255,.30);box-shadow:0 10px 22px rgba(0,0,0,.13)}}
-.useful-icon{{width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto;border-radius:9px;background:rgba(155,140,255,.08);font-size:14px}}
-.useful-link span:nth-child(2){{font-size:10px;font-weight:900;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
-.useful-arrow{{color:var(--muted);font-size:13px}}
-.bottom-actions{{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:16px}}
-.bottom-home{{min-width:150px;justify-content:center}}
 @keyframes homeSheen{{0%,18%{{transform:translateX(-125%)}}62%,100%{{transform:translateX(125%)}}}}
 .footer{{display:flex;justify-content:space-between;gap:10px;margin-top:15px;padding:0 3px;color:#777e9a;font-size:9px}}
 .footer strong{{color:#bdc2d8}}
@@ -4018,7 +3995,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:620px){{.useful-grid{{grid-template-columns:1fr}} .wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
@@ -4112,18 +4089,9 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     </div>
   </details>
 
-  <section class="section useful-section" id="useful-channels">
-    <div class="section-head">
-      <h2>📲 Join Our Useful Channels</h2>
-      <span class="pill">{len(useful_channels)} channels</span>
-    </div>
-    <div class="section-body">
-      <div class="useful-grid">{useful_html}</div>
-      <div class="bottom-actions">
-        <a class="home-button bottom-home" href="/">⌂ Home <span>↗</span></a>
-      </div>
-    </div>
-  </section>
+  <div class="bottom-actions">
+    <a class="home-button bottom-home" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
+  </div>
 
   <div class="footer"><span><strong>AniToon</strong> • Advanced media report</span><span>Generated {generated_text} • Secure report</span></div>
 </div>
