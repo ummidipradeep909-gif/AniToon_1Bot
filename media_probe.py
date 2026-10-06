@@ -750,12 +750,12 @@ async def generate_video_previews(
                     (3840, 2160),
                     Image.Resampling.LANCZOS,
                 )
-                image = image.filter(ImageFilter.GaussianBlur(0.18))
+                image = image.filter(ImageFilter.UnsharpMask(radius=0.9, percent=105, threshold=3))
                 output = io.BytesIO()
                 image.save(
                     output,
                     format="JPEG",
-                    quality=82,
+                    quality=90,
                     optimize=True,
                     progressive=True,
                     subsampling="4:4:4",
