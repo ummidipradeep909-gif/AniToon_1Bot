@@ -3570,18 +3570,26 @@ def home_page(report_token: str | None = None) -> bytes:
     ]
 
     def card(icon: str, name: str, url: str) -> str:
-        hue = {
-            "Movies": 350, "All Animes": 285, "Dual Content": 200,
-            "Manga": 315, "One Piece": 30, "Jujutsu Kaisen": 275,
-            "Naruto Shippuden": 215, "Doraemon": 205, "Shin-Chan": 20,
-            "Beyblade": 330, "Pokemon": 52,
-        }.get(name, 260)
+        images = {
+            "Movies": "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=82",
+            "All Animes": "https://commons.wikimedia.org/wiki/Special:FilePath/Mahuri.jpg",
+            "Dual Content": "https://commons.wikimedia.org/wiki/Special:FilePath/Luffy.jpg",
+            "Manga": "https://commons.wikimedia.org/wiki/Special:FilePath/Manga%20%281%29.jpg",
+            "One Piece": "https://commons.wikimedia.org/wiki/Special:FilePath/Luffy.jpg",
+            "Jujutsu Kaisen": "https://commons.wikimedia.org/wiki/Special:FilePath/Sketch%20of%20gojo%20satoru.jpg",
+            "Naruto Shippuden": "https://commons.wikimedia.org/wiki/Special:FilePath/Naruto%20%2820858980350%29.jpg",
+            "Doraemon": "https://commons.wikimedia.org/wiki/Special:FilePath/Doraemon%20at%20National%20Museum%20of%20Singapore..jpg",
+            "Shin-Chan": "https://commons.wikimedia.org/wiki/Special:FilePath/Shinchan.jpg",
+            "Beyblade": "https://commons.wikimedia.org/wiki/Special:FilePath/Beyblade.jpg",
+            "Pokemon": "https://commons.wikimedia.org/wiki/Special:FilePath/Pokémon%20%288941002724%29.jpg",
+        }
+        image = images.get(name, "")
         return (
-            f'<a class="channel channel-wallpaper" style="--channel-hue:{hue}" '
+            f'<a class="channel channel-picture" style="--channel-image:url(\"{html.escape(image)}\")" '
             f'data-channel="{html.escape(name)}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
-            f'<span class="channel-icon">{icon}</span>'
-            f'<span class="channel-main"><span class="channel-name">{html.escape(name)}</span>'
-            f'<small class="channel-watermark">{html.escape(name)}</small></span>'
+            f'<span class="channel-picture-shade"></span>'
+            f'<span class="channel-picture-content"><span class="channel-name">{html.escape(name)}</span>'
+            f'<small>{("Anime" if name in {"All Animes","Dual Content","One Piece","Jujutsu Kaisen","Naruto Shippuden"} else "Cartoon" if name in {"Doraemon","Shin-Chan","Beyblade","Pokemon"} else "Manga" if name=="Manga" else "Movies")}</small></span>'
             f'<span class="channel-arrow">↗</span>'
             f'</a>'
         )
@@ -3671,18 +3679,22 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .mini-link{{color:var(--b);text-decoration:none;font-size:11px;font-weight:850}}
 .list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px}}
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
-.channel:hover{{transform:translateY(-3px);border-color:rgba(154,140,255,.30);box-shadow:0 14px 30px rgba(0,0,0,.22)}}
+.channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
 .start-art{{max-width:820px;margin:0 auto 20px;border-radius:22px;overflow:hidden;border:1px solid rgba(255,255,255,.13);box-shadow:0 0 60px rgba(255,28,60,.16),0 22px 60px rgba(0,0,0,.28);animation:artFloat 5.5s ease-in-out infinite}}
 .start-art img{{display:block;width:100%;height:auto}}
-.channel-wallpaper{{position:relative;overflow:hidden;isolation:isolate;background:linear-gradient(135deg,hsla(var(--channel-hue),90%,58%,.13),rgba(255,255,255,.02))}}
-.channel-wallpaper::before{{content:"";position:absolute;inset:0;background:radial-gradient(circle at 100% 0,hsla(var(--channel-hue),95%,70%,.18),transparent 55%);opacity:.8;pointer-events:none;z-index:-1}}
-.channel-wallpaper::after{{content:attr(data-channel);position:absolute;right:9px;bottom:-7px;font-size:28px;font-weight:1000;letter-spacing:.06em;color:hsla(var(--channel-hue),95%,72%,.09);transform:rotate(-5deg);pointer-events:none;z-index:-1}}
-.channel-main{{position:relative;display:flex;flex-direction:column;min-width:0;flex:1}}
-.channel-watermark{{font-size:8px;color:hsla(var(--channel-hue),95%,78%,.42);letter-spacing:.13em;text-transform:uppercase;opacity:0;transform:translateY(3px);transition:.22s ease}}
-.channel-wallpaper:hover .channel-watermark{{opacity:1;transform:none}}
+.channel-picture{{position:relative;min-height:112px;overflow:hidden;isolation:isolate;background:#090b16 center/cover no-repeat; background-image:var(--channel-image);border-color:rgba(255,255,255,.12)}}
+.channel-picture-shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.12) 35%,rgba(3,4,11,.84) 100%),linear-gradient(90deg,rgba(4,5,12,.58),transparent 65%);transition:.3s ease}}
+.channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:2px;min-height:112px;width:100%;padding:14px}}
+.channel-picture-content .channel-name{{font-size:15px;line-height:1.1;text-shadow:0 2px 12px rgba(0,0,0,.75)}}
+.channel-picture-content small{{font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.68)}}
+.channel-picture .channel-arrow{{position:absolute;top:10px;right:12px;z-index:3;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65)}}
+.channel-picture:hover{{background-size:110%;transform:translateY(-4px)}}
+.channel-picture:hover .channel-picture-shade{{background:linear-gradient(180deg,rgba(0,0,0,.02),rgba(0,0,0,.12) 30%,rgba(3,4,11,.72) 100%),linear-gradient(90deg,rgba(4,5,12,.42),transparent 65%)}}
+.channel-picture::after{{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.12) 46%,transparent 62%);background-size:220% 100%;animation:pictureSheen 6.5s ease-in-out infinite;pointer-events:none}}
 @keyframes startReveal{{from{{opacity:0;transform:translateY(14px)}}to{{opacity:1;transform:none}}}}
 @keyframes artFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-5px)}}}}
+@keyframes pictureSheen{{0%,18%{{background-position:-120% 0}}65%,100%{{background-position:120% 0}}}}
 .channel-icon{{width:36px;height:36px;display:grid;place-items:center;flex:0 0 auto;border-radius:12px;background:rgba(154,140,255,.08);border:1px solid rgba(154,140,255,.13);font-size:18px}}
 .channel-name{{flex:1;min-width:0;font-weight:800}}
 .channel-arrow{{color:var(--muted);font-size:18px}}
