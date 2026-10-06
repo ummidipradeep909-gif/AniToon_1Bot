@@ -665,21 +665,106 @@ def _mp4_tracks(data:bytes,report:Report)->int:
         report.container["runtime_source"] = "MP4 track duration metadata"
     return total
 
+def _pdf_value(data: bytes, key: str) -> str | None:
+    # Read common PDF document-info values from literal strings or UTF-16BE
+    # hex strings. Keep parsing bounded and forgiving because PDF syntax varies.
+    m = re.search(rb"/" + re.escape(key.encode("ascii")) + rb"\s*(\((?:\\.|[^)]){0,1200}\)|<([0-9A-Fa-f]{2,2400})>)", data, re.S)
+    if not m:
+        return None
+    raw = m.group(1) or m.group(2)
+    if raw is None:
+        return None
+    if raw.startswith(b"<"):
+        payload = re.sub(rb"\s+", b"", raw[1:-1])
+        try:
+            value = bytes.fromhex(payload.decode("ascii"))
+            if value.startswith(b"\xfe\xff"):
+                return value[2:].decode("utf-16-be", "replace").strip()
+            return value.decode("utf-8", "replace").strip()
+        except Exception:
+            return None
+    value = raw[1:-1]
+    value = re.sub(rb"\\([()\\])", rb"\1", value)
+    value = re.sub(rb"\\n", b"\n", value)
+    return value.decode("utf-8", "replace").strip()
+
+def _pdf_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    if text.startswith("D:"):
+        text = text[2:]
+    m = re.match(r"(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?", text)
+    if m:
+        parts = [p for p in m.groups()]
+        if parts[0]:
+            date = "-".join(x for x in (parts[0], parts[1], parts[2]) if x)
+            time_text = ":".join(x for x in (parts[3], parts[4], parts[5]) if x)
+            return f"{date} {time_text}".strip()
+    return value
+
 def _generic(data:bytes,kind:str,report:Report):
     if kind=="pdf":
-        report.container["format"]="PDF"
+        report.container["format"]="PDF document"
         if data.startswith(b"%PDF-"):
             report.container["pdf_version"]=data[5:8].decode("ascii","replace")
         pages=len(re.findall(rb"/Type\s*/Page\b",data))
         if pages:
             report.container["pages"]=str(pages)
-        title_match=re.search(rb"/Title\s*\(([^)]{1,240})\)",data)
-        if title_match:
-            title=title_match.group(1).decode("latin1","replace").strip()
-            if title:
-                report.container["title"]=title
-        if b"/Encrypt" in data:
+
+        for key, label in (
+            ("Title", "title"),
+            ("Author", "author"),
+            ("Subject", "subject"),
+            ("Keywords", "keywords"),
+            ("Creator", "creator"),
+            ("Producer", "producer"),
+        ):
+            value = _pdf_value(data, key)
+            if value:
+                report.container[label] = value
+
+        for key, label in (
+            ("CreationDate", "creation_date"),
+            ("ModDate", "modified_date"),
+        ):
+            value = _pdf_value(data, key)
+            if value:
+                report.container[label] = _pdf_date(value)
+
+        raw = data
+        if b"/Encrypt" in raw:
             report.container["encrypted"]="yes"
+        else:
+            report.container["encrypted"]="no"
+        report.container["linearized"]="yes" if re.search(rb"\b/Linearized\b", raw) else "no"
+        report.container["tagged"]="yes" if re.search(rb"/MarkInfo\b|/StructTreeRoot\b", raw) else "no"
+        report.container["forms"]="yes" if re.search(rb"/AcroForm\b", raw) else "no"
+        report.container["javascript"]="yes" if re.search(rb"/JavaScript\b|/JS\b", raw) else "no"
+        report.container["embedded_files"]="yes" if re.search(rb"/EmbeddedFile\b|/EmbeddedFiles\b", raw) else "no"
+        font_count=len(re.findall(rb"/Type\s*/Font\b", raw))
+        if font_count:
+            report.container["fonts"]=str(font_count)
+
+        media_box = re.search(rb"/MediaBox\s*\[\s*([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s+([-+]?\d+(?:\.\d+)?)\s*\]", raw)
+        if media_box:
+            try:
+                x0,y0,x1,y1 = (float(x) for x in media_box.groups())
+                width_pt=max(0.0,abs(x1-x0))
+                height_pt=max(0.0,abs(y1-y0))
+                if width_pt and height_pt:
+                    report.container["page_size_points"]=f"{width_pt:.1f} × {height_pt:.1f} pt"
+                    report.container["page_size_inches"]=f"{width_pt/72:.2f} × {height_pt/72:.2f} in"
+                    # Common paper-size recognition.
+                    w,h=sorted((width_pt,height_pt))
+                    if abs(w-612)<8 and abs(h-792)<8:
+                        report.container["page_size_name"]="Letter"
+                    elif abs(w-595.28)<8 and abs(h-841.89)<8:
+                        report.container["page_size_name"]="A4"
+                    elif abs(w-612)<8 and abs(h-1008)<10:
+                        report.container["page_size_name"]="Legal"
+            except Exception:
+                pass
     elif kind=="flac" and len(data)>=42:
         p=4
         while p+4<=len(data):
@@ -824,7 +909,7 @@ async def _read_range(client,media,total,offset,n):
 def _report(message:Any,pieces:list[ProbePiece])->Report:
     f=getattr(message,"file",None);name=str(getattr(f,"name",None) or "telegram_file");size=getattr(f,"size",None);mime=getattr(f,"mime_type",None)
     first=next((x for x in pieces if x.offset==0),pieces[0]);detected,kind=magic(first.data,name,mime)
-    r=Report(filename=name,size=int(size) if isinstance(size,int) else None,mime=str(mime) if mime else None,ext=_ext(name),detected=detected,media_kind="Video" if (mime or "").startswith("video/") else "File",sampled=sum(len(x.data) for x in pieces),sample_hash=hashlib.sha256(b"".join(x.data for x in pieces)).hexdigest())
+    r=Report(filename=name,size=int(size) if isinstance(size,int) else None,mime=str(mime) if mime else None,ext=_ext(name),detected=detected,media_kind=("PDF" if kind=="pdf" else "Video" if (mime or "").startswith("video/") else "File"),sampled=sum(len(x.data) for x in pieces),sample_hash=hashlib.sha256(b"".join(x.data for x in pieces)).hexdigest())
     if getattr(f,"duration",None) is not None:
         r.container["runtime"]=_fmtsec(float(f.duration));r.container["runtime_source"]="Telegram media metadata"
     if getattr(f,"width",None) and getattr(f,"height",None):
