@@ -226,7 +226,7 @@ def _lang(code:str|None)->str|None:
     base = LANG.get(c) or LANG.get(c.split("-")[0])
     return base or f"Unknown ({c})"
 def _fmtsec(sec:float|None)->str:
-    if sec is None or sec<0:return "Not available"
+    if sec is None or sec<0:return "—"
     total=int(round(sec)); h,rem=divmod(total,3600); m,s=divmod(rem,60)
     return f"{h:02d}:{m:02d}:{s:02d}"
 
