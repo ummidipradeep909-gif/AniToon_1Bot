@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import io
 import json
 import logging
 import os
@@ -200,6 +201,36 @@ def safe_filename(message: Any) -> str:
     return str(name or "telegram_file")
 
 
+_anitoon_art_cache: str | None = None
+
+def _anitoon_start_art_b64() -> str:
+    global _anitoon_art_cache
+    if _anitoon_art_cache is not None:
+        return _anitoon_art_cache
+    path = os.path.join(os.path.dirname(__file__), "assets", "anitoon_start.jpg.b64")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            _anitoon_art_cache = handle.read().strip()
+    except OSError:
+        _anitoon_art_cache = ""
+    return _anitoon_art_cache
+
+
+def _anitoon_start_art_uri() -> str:
+    data = _anitoon_start_art_b64()
+    return "data:image/jpeg;base64," + data if data else ""
+
+
+def _anitoon_start_art_bytes() -> bytes | None:
+    data = _anitoon_start_art_b64()
+    if not data:
+        return None
+    try:
+        return base64.b64decode(data, validate=True)
+    except Exception:
+        return None
+
+
 def metadata_button(token: str):
     return [[Button.inline("🔎 Scan File Info", f"scan:{token}".encode("ascii"))]]
 
@@ -309,7 +340,6 @@ HELP_TEXT = (
     "/clone — Create/connect a clone bot\n"
     "/clones — View and manage your clones\n"
     "/myclones — Same as /clones\n"
-    "/resources — Render Free Resource Guard (owner)\n"
     "/cancel — Cancel your running scan"
 )
 
@@ -1315,15 +1345,15 @@ def progress_details(line: str) -> tuple[int, str]:
     low = line.lower()
 
     if "stage 1/4" in low:
-        pct = 14
+        pct = 10
     elif "stage 2/4" in low:
-        pct = 38
+        pct = 30
     elif "stage 3/4" in low:
-        pct = 68
+        pct = 56
     elif "stage 4/4" in low:
-        pct = 90
+        pct = 88
     elif "stage 2/2" in low or "reading available media metadata" in low:
-        pct = 76
+        pct = 72
     elif "starting scan" in low:
         pct = 1
     else:
@@ -1384,13 +1414,15 @@ async def run_scan(
             # Keep the bar visibly moving while the worker is doing bounded
             # network/metadata work. Real parser callbacks can jump it forward.
             current = int(progress_state["pct"])
-            if current < 14:
-                current = 14
+            if current < 1:
+                current = 1
 
-            if current < 76:
-                visual_pct = min(76, current + 5)
+            if current < 52:
+                visual_pct = min(52, current + 3)
+            elif current < 76:
+                visual_pct = min(76, current + 2)
             else:
-                visual_pct = min(98, current + 5)
+                visual_pct = min(98, current + 2)
 
             progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
@@ -2895,16 +2927,27 @@ async def handle_new_message(
     if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(
-            home_text,
-            parse_mode="html",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                user_id=getattr(sender, "id", None),
-                show_privacy=bool(getattr(event, "is_private", True)),
-            ),
+        start_buttons = home_buttons(
+            bot_username,
+            include_clone=include_clone,
+            user_id=getattr(sender, "id", None),
+            show_privacy=bool(getattr(event, "is_private", True)),
         )
+        art = _anitoon_start_art_bytes()
+        if art:
+            await event.client.send_file(
+                event.chat_id,
+                io.BytesIO(art),
+                caption=home_text,
+                parse_mode="html",
+                buttons=start_buttons,
+            )
+        else:
+            await event.reply(
+                home_text,
+                parse_mode="html",
+                buttons=start_buttons,
+            )
         return
 
     if command == "/help":
@@ -3527,10 +3570,18 @@ def home_page(report_token: str | None = None) -> bytes:
     ]
 
     def card(icon: str, name: str, url: str) -> str:
+        hue = {
+            "Movies": 350, "All Animes": 285, "Dual Content": 200,
+            "Manga": 315, "One Piece": 30, "Jujutsu Kaisen": 275,
+            "Naruto Shippuden": 215, "Doraemon": 205, "Shin-Chan": 20,
+            "Beyblade": 330, "Pokemon": 52,
+        }.get(name, 260)
         return (
-            f'<a class="channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+            f'<a class="channel channel-wallpaper" style="--channel-hue:{hue}" '
+            f'data-channel="{html.escape(name)}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
             f'<span class="channel-icon">{icon}</span>'
-            f'<span class="channel-name">{html.escape(name)}</span>'
+            f'<span class="channel-main"><span class="channel-name">{html.escape(name)}</span>'
+            f'<small class="channel-watermark">{html.escape(name)}</small></span>'
             f'<span class="channel-arrow">↗</span>'
             f'</a>'
         )
@@ -3562,6 +3613,8 @@ def home_page(report_token: str | None = None) -> bytes:
           <iframe src="/report/{safe_token}?embed=1" title="AniToon Media Metadata" loading="lazy"></iframe>
         </section>
         """
+
+    start_art_uri = _anitoon_start_art_uri()
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -3619,6 +3672,17 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px}}
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-3px);border-color:rgba(154,140,255,.30);box-shadow:0 14px 30px rgba(0,0,0,.22)}}
+.start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
+.start-art{{max-width:820px;margin:0 auto 20px;border-radius:22px;overflow:hidden;border:1px solid rgba(255,255,255,.13);box-shadow:0 0 60px rgba(255,28,60,.16),0 22px 60px rgba(0,0,0,.28);animation:artFloat 5.5s ease-in-out infinite}}
+.start-art img{{display:block;width:100%;height:auto}}
+.channel-wallpaper{{position:relative;overflow:hidden;isolation:isolate;background:linear-gradient(135deg,hsla(var(--channel-hue),90%,58%,.13),rgba(255,255,255,.02))}}
+.channel-wallpaper::before{{content:"";position:absolute;inset:0;background:radial-gradient(circle at 100% 0,hsla(var(--channel-hue),95%,70%,.18),transparent 55%);opacity:.8;pointer-events:none;z-index:-1}}
+.channel-wallpaper::after{{content:attr(data-channel);position:absolute;right:9px;bottom:-7px;font-size:28px;font-weight:1000;letter-spacing:.06em;color:hsla(var(--channel-hue),95%,72%,.09);transform:rotate(-5deg);pointer-events:none;z-index:-1}}
+.channel-main{{position:relative;display:flex;flex-direction:column;min-width:0;flex:1}}
+.channel-watermark{{font-size:8px;color:hsla(var(--channel-hue),95%,78%,.42);letter-spacing:.13em;text-transform:uppercase;opacity:0;transform:translateY(3px);transition:.22s ease}}
+.channel-wallpaper:hover .channel-watermark{{opacity:1;transform:none}}
+@keyframes startReveal{{from{{opacity:0;transform:translateY(14px)}}to{{opacity:1;transform:none}}}}
+@keyframes artFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-5px)}}}}
 .channel-icon{{width:36px;height:36px;display:grid;place-items:center;flex:0 0 auto;border-radius:12px;background:rgba(154,140,255,.08);border:1px solid rgba(154,140,255,.13);font-size:18px}}
 .channel-name{{flex:1;min-width:0;font-weight:800}}
 .channel-arrow{{color:var(--muted);font-size:18px}}
@@ -3666,7 +3730,8 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
     </div>
   </nav>
 
-  <header class="hero">
+  <header class="hero start-hero">
+    {f'<div class="start-art"><img src="{start_art_uri}" alt="AniToon @anitoon_1bot" loading="eager"></div>' if start_art_uri else ''}
     <span class="eyebrow"><span class="dot"></span> Media intelligence</span>
     <h1>⛩ AniToon</h1>
     <div class="lead">A focused media hub for discovering AniToon channels and inspecting video, audio, subtitle and technical metadata.</div>
@@ -3742,9 +3807,9 @@ def web_page(
     generated = datetime.now(timezone.utc)
     generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
 
-    audio = list(report.audio.get("tracks", []) or [])
-    video = list(report.video.get("tracks", []) or [])
-    subtitles = list(report.subtitles or [])
+    audio = list(report.audio.get("tracks", []) or [])[:MAX_REPORT_TRACKS]
+    video = list(report.video.get("tracks", []) or [])[:MAX_REPORT_TRACKS]
+    subtitles = list(report.subtitles or [])[:MAX_REPORT_TRACKS]
 
     def esc(value: Any) -> str:
         return html.escape(str(value))
@@ -3803,8 +3868,6 @@ def web_page(
                 ("Hearing impaired", track.get("hearing_impaired")),
                 ("Visual impaired", track.get("visual_impaired")),
                 ("Stereo mode", track.get("stereo_mode")),
-                ("Codec delay", track.get("codec_delay")),
-                ("Seek preroll", track.get("seek_preroll")),
                 ("Format", track.get("subtitle_format") or track.get("format")),
             ]
             details.extend((label, value) for label, value in priority_details if value not in (None, "", []))
@@ -3813,7 +3876,7 @@ def web_page(
                 "frame_rate","scan_type","pixel_format","profile","level","channels","layout",
                 "sample_rate","bit_depth","bitrate","default","enabled","forced","original",
                 "commentary","hearing_impaired","visual_impaired","stereo_mode","codec_delay",
-                "seek_preroll","subtitle_format","format"
+                "seek_preroll","subtitle_format","format","track_uid"
             }
             for key, value in track.items():
                 if key in known_keys or key in {"type","track","name","display_name","name_source"}:
@@ -3874,6 +3937,14 @@ def web_page(
 
     # Keep the one Telegram thumbnail in the hero only.
     previews = list(getattr(report, "previews", []) or [])[:1]
+    art_uri = _anitoon_start_art_uri()
+    hero_src = (
+        "data:image/jpeg;base64," + str(previews[0].get("data") or "")
+        if previews and previews[0].get("data")
+        else art_uri
+    )
+    hero_alt = "Telegram thumbnail" if previews and previews[0].get("data") else "AniToon artwork"
+    hero_label = "🎞️ Telegram thumbnail" if previews and previews[0].get("data") else "🎨 AniToon artwork"
 
     report_id = esc((report_token or "local")[:14])
 
@@ -3972,6 +4043,7 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .tech small{{display:block;color:var(--muted);font-size:9px;margin-bottom:4px}}
 .tech b{{display:block;font-size:11px;overflow-wrap:anywhere}}
 .home-button{{position:relative;display:inline-flex;align-items:center;gap:5px;padding:8px 12px;border:1px solid rgba(155,140,255,.30);border-radius:999px;color:#f7f7fb;text-decoration:none;font-size:11px;font-weight:950;background:linear-gradient(135deg,rgba(155,140,255,.16),rgba(94,231,255,.08));box-shadow:0 6px 20px rgba(0,0,0,.14);overflow:hidden;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}}
+.bottom-actions>.home-button{{width:100%;min-height:62px;justify-content:center;font-size:14px;letter-spacing:.02em}}
 .home-button::before{{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.20) 48%,transparent 70%);transform:translateX(-125%);animation:homeSheen 4.5s ease-in-out infinite;pointer-events:none}}
 .home-button:hover{{transform:translateY(-2px) scale(1.02);border-color:rgba(94,231,255,.42);box-shadow:0 10px 28px rgba(94,231,255,.13)}}
 .home-button span{{position:relative;z-index:1}}
@@ -4027,7 +4099,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
         <span class="pill">⏱️ <span id="countdown" class="countdown">--:--</span></span>
       </div>
     </div>
-    {f'<div class="hero-media" id="hero-media"><img src="data:image/jpeg;base64,{str(previews[0].get("data") or "")}" alt="Telegram thumbnail" loading="eager"><span class="media-label">🎞️ Telegram thumbnail</span></div>' if previews and previews[0].get("data") else ''}
+    {f'<div class="hero-media" id="hero-media"><img src="{hero_src}" alt="{hero_alt}" loading="eager"><span class="media-label">{hero_label}</span></div>' if hero_src else ''}
   </header>
 
   <div class="summary" id="overview">
@@ -4076,7 +4148,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </details>
 
   <details id="technical-section" class="section" open>
-    <summary class="section-head"><h2>⚙️ Technical</h2><span class="pill">ID {report_id} <span class="chev">⌄</span></span></summary>
+    <summary class="section-head"><h2>⚙️ Technical</h2><span class="pill">File details <span class="chev">⌄</span></span></summary>
     <div class="section-body">
       <div class="tech-grid">
         <div class="tech"><small>Container</small><b>{esc(container_name)}</b></div>
@@ -4084,7 +4156,6 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
         <div class="tech"><small>Runtime</small><b>{esc(runtime)}</b></div>
         <div class="tech"><small>File size</small><b>{esc(size_text)}</b></div>
         <div class="tech"><small>Average bitrate</small><b>{esc(bitrate)}</b></div>
-        <div class="tech"><small>Metadata sampled</small><b>{esc(sampled_text)}</b></div>
       </div>
     </div>
   </details>
@@ -4093,7 +4164,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     <a class="home-button bottom-home" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
   </div>
 
-  <div class="footer"><span><strong>AniToon</strong> • Advanced media report</span><span>Generated {generated_text} • Secure report</span></div>
+  <div class="footer"><span><strong>AniToon</strong> • Media Intelligence</span></div>
 </div>
 
 <script>
