@@ -342,6 +342,95 @@ async def record_clone_request(
         log.exception("Failed to persist clone configuration")
 
 
+async def clone_daily_summary(clone_id: int, days: int = 7) -> dict[str, Any]:
+    db = await _get_db()
+    if db is None:
+        return {"available": False, "days": []}
+
+    days = max(1, min(int(days), 7))
+    today = datetime.now(timezone.utc).date()
+    start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc) - timedelta(days=days - 1)
+    try:
+        rows = await asyncio.to_thread(
+            lambda: list(
+                db.clone_daily_activity.find(
+                    {
+                        "clone_id": int(clone_id),
+                        "date": {"$gte": start.strftime("%Y-%m-%d"), "$lte": today.strftime("%Y-%m-%d")},
+                    },
+                    {
+                        "_id": 0,
+                        "date": 1,
+                        "messages_received": 1,
+                        "scans_started": 1,
+                        "scans_completed": 1,
+                        "scans_failed": 1,
+                        "scans_cancelled": 1,
+                    },
+                ).sort("date", 1)
+            )
+        )
+        by_date = {str(row.get("date")): row for row in rows}
+        result = []
+        for offset in range(days):
+            day = start.date() + timedelta(days=offset)
+            key = day.isoformat()
+            row = by_date.get(key, {})
+            result.append({
+                "date": key,
+                "messages_received": int(row.get("messages_received", 0) or 0),
+                "scans_started": int(row.get("scans_started", 0) or 0),
+                "scans_completed": int(row.get("scans_completed", 0) or 0),
+                "scans_failed": int(row.get("scans_failed", 0) or 0),
+                "scans_cancelled": int(row.get("scans_cancelled", 0) or 0),
+            })
+        return {"available": True, "days": result}
+    except Exception:
+        log.exception("Failed to load clone daily summary")
+        return {"available": False, "days": []}
+
+
+async def record_clone_daily_activity(
+    clone_id: int,
+    *,
+    messages_received: int = 0,
+    scans_started: int = 0,
+    scans_completed: int = 0,
+    scans_failed: int = 0,
+    scans_cancelled: int = 0,
+) -> None:
+    db = await _get_db()
+    if db is None:
+        return
+
+    increments = {
+        "messages_received": int(messages_received),
+        "scans_started": int(scans_started),
+        "scans_completed": int(scans_completed),
+        "scans_failed": int(scans_failed),
+        "scans_cancelled": int(scans_cancelled),
+    }
+    increments = {k: v for k, v in increments.items() if v}
+    if not increments:
+        return
+
+    now = datetime.now(timezone.utc)
+    day = now.strftime("%Y-%m-%d")
+    try:
+        await asyncio.to_thread(
+            db.clone_daily_activity.update_one,
+            {"clone_id": int(clone_id), "date": day},
+            {
+                "$set": {"updated_at": now},
+                "$setOnInsert": {"clone_id": int(clone_id), "date": day},
+                "$inc": increments,
+            },
+            upsert=True,
+        )
+    except Exception:
+        log.exception("Failed to persist clone daily activity")
+
+
 async def update_clone_stats(
     *,
     clone_id: int,
