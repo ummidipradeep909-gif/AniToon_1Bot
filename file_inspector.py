@@ -384,14 +384,20 @@ def _merge(report:Report,track:dict[str,Any]):
     if len(bucket) < MAX_TRACKS_PER_KIND:
         bucket.append(track)
 
-    # Matroska's default-track flag may be omitted while player behavior still
-    # selects the first audio stream. Expose that effective playback default.
+    # Expose player-effective defaults for user-facing metadata.
     if track.get("type") == "audio":
         audio_tracks = report.audio.get("tracks", [])
         if audio_tracks and not any(x.get("default") == "yes" for x in audio_tracks):
             first = audio_tracks[0]
             if first.get("default") in (None, ""):
                 first["default"] = "yes"
+    elif track.get("type") == "subtitles":
+        for item in report.subtitles:
+            item["default"] = "yes"
+    elif track.get("type") == "video":
+        video_tracks = report.video.get("tracks", [])
+        if len(video_tracks) > 1 and not any(x.get("default") == "yes" for x in video_tracks):
+            video_tracks[0]["default"] = "yes"
 
 def _tracks(data:bytes,report:Report):
     total=0
@@ -651,7 +657,21 @@ def _mp4_tracks(data:bytes,report:Report)->int:
     return total
 
 def _generic(data:bytes,kind:str,report:Report):
-    if kind=="flac" and len(data)>=42:
+    if kind=="pdf":
+        report.container["format"]="PDF"
+        if data.startswith(b"%PDF-"):
+            report.container["pdf_version"]=data[5:8].decode("ascii","replace")
+        pages=len(re.findall(rb"/Type\s*/Page\b",data))
+        if pages:
+            report.container["pages"]=str(pages)
+        title_match=re.search(rb"/Title\s*\(([^)]{1,240})\)",data)
+        if title_match:
+            title=title_match.group(1).decode("latin1","replace").strip()
+            if title:
+                report.container["title"]=title
+        if b"/Encrypt" in data:
+            report.container["encrypted"]="yes"
+    elif kind=="flac" and len(data)>=42:
         p=4
         while p+4<=len(data):
             last=bool(data[p]&0x80);typ=data[p]&0x7f;n=int.from_bytes(data[p+1:p+4],"big");s,e=p+4,p+4+n
