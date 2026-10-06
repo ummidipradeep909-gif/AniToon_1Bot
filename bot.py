@@ -3782,7 +3782,7 @@ def web_page(
             details: list[tuple[str, Any]] = []
 
             priority_details = [
-                ("Language", track.get("language_name") or track.get("language")),
+                ("Language", None if kind == "Video" else (track.get("language_name") or track.get("language"))),
                 ("Codec", track.get("codec_name") or track.get("codec")),
                 ("Resolution / pixels", track.get("dimensions")),
                 ("Display size", track.get("display_dimensions")),
@@ -3875,6 +3875,21 @@ def web_page(
 
     report_id = esc((report_token or "local")[:14])
 
+    useful_channels = [
+        ("🎬", "Movies", "https://t.me/+KEz_Up14hfFhOTI1"),
+        ("🍿", "All Animes", "https://t.me/anitoons_ani"),
+        ("🎧", "Dual Content", "https://t.me/ani_engjaphin"),
+        ("📚", "Manga", "https://t.me/mangauniverse_ani"),
+        ("🏴‍☠️", "One Piece", "https://t.me/ani_pocket_monster"),
+        ("⚔️", "Jujutsu Kaisen", "https://t.me/jjk_anitoon"),
+        ("🍥", "Naruto Shippuden", "https://t.me/naruto_shippuden_in_telugudub"),
+    ]
+    useful_html = "".join(
+        f'<a class="useful-link" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+        f'<span class="useful-icon">{icon}</span><span>{html.escape(name)}</span><span class="useful-arrow">↗</span></a>'
+        for icon, name, url in useful_channels
+    )
+
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3966,6 +3981,21 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .tech{{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.028)}}
 .tech small{{display:block;color:var(--muted);font-size:9px;margin-bottom:4px}}
 .tech b{{display:block;font-size:11px;overflow-wrap:anywhere}}
+.home-button{{position:relative;display:inline-flex;align-items:center;gap:5px;padding:8px 12px;border:1px solid rgba(155,140,255,.30);border-radius:999px;color:#f7f7fb;text-decoration:none;font-size:11px;font-weight:950;background:linear-gradient(135deg,rgba(155,140,255,.16),rgba(94,231,255,.08));box-shadow:0 6px 20px rgba(0,0,0,.14);overflow:hidden;transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}}
+.home-button::before{{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.20) 48%,transparent 70%);transform:translateX(-125%);animation:homeSheen 4.5s ease-in-out infinite;pointer-events:none}}
+.home-button:hover{{transform:translateY(-2px) scale(1.02);border-color:rgba(94,231,255,.42);box-shadow:0 10px 28px rgba(94,231,255,.13)}}
+.home-button span{{position:relative;z-index:1}}
+.home-button{{isolation:isolate}}
+.useful-section{{margin-top:14px}}
+.useful-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}}
+.useful-link{{display:flex;align-items:center;gap:9px;padding:9px 10px;border:1px solid var(--line);border-radius:12px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.034),rgba(255,255,255,.012));transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}}
+.useful-link:hover{{transform:translateY(-2px);border-color:rgba(155,140,255,.30);box-shadow:0 10px 22px rgba(0,0,0,.13)}}
+.useful-icon{{width:28px;height:28px;display:grid;place-items:center;flex:0 0 auto;border-radius:9px;background:rgba(155,140,255,.08);font-size:14px}}
+.useful-link span:nth-child(2){{font-size:10px;font-weight:900;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.useful-arrow{{color:var(--muted);font-size:13px}}
+.bottom-actions{{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:16px}}
+.bottom-home{{min-width:150px;justify-content:center}}
+@keyframes homeSheen{{0%,18%{{transform:translateX(-125%)}}62%,100%{{transform:translateX(125%)}}}}
 .footer{{display:flex;justify-content:space-between;gap:10px;margin-top:15px;padding:0 3px;color:#777e9a;font-size:9px}}
 .footer strong{{color:#bdc2d8}}
 html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.80);--line:rgba(37,45,80,.12);--line2:rgba(103,87,232,.27);--text:#18203b;--muted:#5d6788;--accent:#6757e8;--cyan:#0b7ea0;--good:#128b52;--shadow:0 24px 65px rgba(44,55,100,.14)}}
@@ -3981,7 +4011,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(max-width:620px){{.useful-grid{{grid-template-columns:1fr}} .wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
@@ -3991,7 +4021,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   <nav class="nav">
     <div class="brand">AniToon • Media Intelligence</div>
     <div class="nav-tools">
-      <a href="/">Home ↗</a>
+      <a class="home-button" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
       <div class="controls">
         <button type="button" id="theme-toggle">☀️ Light</button>
         <button type="button" id="zoom-out" title="Zoom out">−</button>
@@ -4025,7 +4055,6 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </div>
   <div class="language-ribbon">
     <span class="language-label">LANGUAGES</span>
-    {''.join(f'<span class="lang-pill">🎬 {esc(x)}</span>' for x in _language_names_for_report(report, "video")[:12])}
     {''.join(f'<span class="lang-pill">🎧 {esc(x)}</span>' for x in _language_names_for_report(report, "audio")[:12])}
     {''.join(f'<span class="lang-pill">💬 {esc(x)}</span>' for x in _language_names_for_report(report, "subtitle")[:12])}
   </div>
@@ -4075,6 +4104,19 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
       </div>
     </div>
   </details>
+
+  <section class="section useful-section" id="useful-channels">
+    <div class="section-head">
+      <h2>📲 Join Our Useful Channels</h2>
+      <span class="pill">{len(useful_channels)} channels</span>
+    </div>
+    <div class="section-body">
+      <div class="useful-grid">{useful_html}</div>
+      <div class="bottom-actions">
+        <a class="home-button bottom-home" href="/">⌂ Home <span>↗</span></a>
+      </div>
+    </div>
+  </section>
 
   <div class="footer"><span><strong>AniToon</strong> • Advanced media report</span><span>Generated {generated_text} • Secure report</span></div>
 </div>
