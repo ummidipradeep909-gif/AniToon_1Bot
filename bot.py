@@ -3887,7 +3887,7 @@ def web_page(
                 f'<div class="empty-state">'
                 f'<span class="empty-icon">{icon_for(kind)}</span>'
                 f'<div><strong>0 {esc(kind.lower())} tracks</strong>'
-                f'<p>No confirmed {esc(kind.lower())} stream was detected in the inspected metadata.</p></div>'
+                f'<p>This report contains 0 detected {esc(kind.lower())} streams.</p></div>'
                 f'</div>'
             )
 
@@ -3909,10 +3909,13 @@ def web_page(
                 ("Profile", track.get("profile")),
                 ("Level", track.get("level")),
                 ("Channel layout", track.get("layout")),
+                ("Channels", track.get("channels")),
                 ("Sample rate", track.get("sample_rate")),
+                ("Duration", track.get("duration")),
                 ("Bit depth", track.get("bit_depth")),
                 ("Bitrate", track.get("bitrate")),
-                ("Default", "yes" if kind == "Subtitle" else track.get("default")),
+                ("Track", track.get("track")),
+                ("Default", track.get("default")),
                 ("Enabled", track.get("enabled")),
                 ("Forced", track.get("forced")),
                 ("Original", track.get("original")),
@@ -3932,7 +3935,7 @@ def web_page(
                 "frame_rate","scan_type","pixel_format","profile","level","channels","layout",
                 "sample_rate","bit_depth","bitrate","default","enabled","forced","original",
                 "commentary","hearing_impaired","visual_impaired","stereo_mode","codec_delay",
-                "seek_preroll","subtitle_format","format","track_uid"
+                "seek_preroll","subtitle_format","format","track_uid","duration"
             }
             for key, value in track.items():
                 if key in known_keys or key in {"type","track","name","display_name","name_source"}:
@@ -3979,7 +3982,8 @@ def web_page(
             )
         return "".join(cards)
 
-    runtime = report.container.get("runtime") or "—"
+    runtime = report.container.get("runtime") or "N/A"
+    runtime_source = report.container.get("runtime_source")
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
     size_text = human_size(report.size)
@@ -3991,7 +3995,8 @@ def web_page(
     bitrate = report.container.get("average_bitrate") or "—"
     title = report.container.get("title")
 
-    # Keep the one Telegram thumbnail in the hero only.
+    # The preview is the automatic Telegram thumbnail generated from the file.
+    # Keep exactly one thumbnail in the web report.
     previews = list(getattr(report, "previews", []) or [])[:1]
     art_uri = _anitoon_start_art_uri()
     hero_src = (
@@ -3999,8 +4004,8 @@ def web_page(
         if previews and previews[0].get("data")
         else art_uri
     )
-    hero_alt = "Telegram thumbnail" if previews and previews[0].get("data") else "AniToon artwork"
-    hero_label = "🎞️ Telegram thumbnail" if previews and previews[0].get("data") else "🎨 AniToon artwork"
+    hero_alt = "Automatic file thumbnail" if previews and previews[0].get("data") else "AniToon fallback artwork"
+    hero_label = "🎞️ Auto thumbnail from file" if previews and previews[0].get("data") else "🎨 Preview unavailable"
 
     report_id = esc((report_token or "local")[:14])
 
@@ -4212,6 +4217,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
         <div class="tech"><small>Runtime</small><b>{esc(runtime)}</b></div>
         <div class="tech"><small>File size</small><b>{esc(size_text)}</b></div>
         <div class="tech"><small>Average bitrate</small><b>{esc(bitrate)}</b></div>
+        <div class="tech"><small>Runtime source</small><b>{esc(runtime_source or "Telegram/container metadata")}</b></div>
+        <div class="tech"><small>Detected type</small><b>{esc(report.media_kind or "File")}</b></div>
       </div>
     </div>
   </details>
