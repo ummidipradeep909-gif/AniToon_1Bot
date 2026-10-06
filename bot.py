@@ -3838,12 +3838,233 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
     return document.encode("utf-8")
 
 
+def pdf_web_page(
+    report: Report,
+    report_token: str | None = None,
+    expires_at: datetime | None = None,
+) -> bytes:
+    report = _coerce_report(report)
+    c = report.container if isinstance(report.container, dict) else {}
+
+    def esc(value: Any) -> str:
+        return html.escape(str(value))
+
+    def human_size(value: Any) -> str:
+        try:
+            size = float(value)
+        except Exception:
+            return "—"
+        units = ("B", "KB", "MB", "GB", "TB")
+        i = 0
+        while size >= 1024 and i < len(units) - 1:
+            size /= 1024
+            i += 1
+        return f"{size:.1f} {units[i]}" if i else f"{int(size)} {units[i]}"
+
+    def row(label: str, value: Any) -> str:
+        if value is None or str(value).strip() == "":
+            return ""
+        return (
+            f'<div class="pdf-spec"><span>{esc(label)}</span>'
+            f'<strong>{esc(value)}</strong></div>'
+        )
+
+    def yes_no(value: Any) -> str:
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        text = str(value or "").strip().lower()
+        if text == "yes":
+            return "Yes"
+        if text == "no":
+            return "No"
+        return str(value) if value is not None else ""
+
+    filename = esc(report.filename or "PDF document")
+    size_text = human_size(report.size)
+    pages = c.get("pages")
+    page_count = int(pages) if str(pages or "").isdigit() else 0
+    version = c.get("pdf_version") or "PDF"
+    title = c.get("title")
+    subtitle = c.get("subject")
+    author = c.get("author")
+    keywords = c.get("keywords")
+    creator = c.get("creator")
+    producer = c.get("producer")
+    creation_date = c.get("creation_date")
+    modified_date = c.get("modified_date")
+    page_size_name = c.get("page_size_name")
+    page_size_points = c.get("page_size_points")
+    page_size_inches = c.get("page_size_inches")
+    runtime = c.get("runtime")
+
+    previews = list(getattr(report, "previews", []) or [])[:1]
+    art_uri = _anitoon_start_art_uri()
+    hero_src = (
+        "data:image/jpeg;base64," + str(previews[0].get("data") or "")
+        if previews and previews[0].get("data")
+        else art_uri
+    )
+    hero_label = "📄 Automatic PDF thumbnail" if previews and previews[0].get("data") else "📄 PDF document"
+
+    info_rows = "".join([
+        row("PDF version", version),
+        row("Pages", pages),
+        row("Page size", " • ".join(x for x in (page_size_name, page_size_points, page_size_inches) if x)),
+        row("Title", title),
+        row("Author", author),
+        row("Subject", subtitle),
+        row("Keywords", keywords),
+        row("Creator", creator),
+        row("Producer", producer),
+        row("Creation date", creation_date),
+        row("Modified date", modified_date),
+    ])
+
+    security_rows = "".join([
+        row("Encrypted", yes_no(c.get("encrypted"))),
+        row("Tagged document", yes_no(c.get("tagged"))),
+        row("Linearized", yes_no(c.get("linearized"))),
+        row("Forms", yes_no(c.get("forms"))),
+        row("JavaScript", yes_no(c.get("javascript"))),
+        row("Embedded files", yes_no(c.get("embedded_files"))),
+        row("Fonts detected", c.get("fonts")),
+    ])
+
+    technical_rows = "".join([
+        row("MIME type", report.mime or "application/pdf"),
+        row("File size", size_text),
+        row("Document type", "PDF document"),
+        row("Runtime", runtime),
+        row("Runtime source", c.get("runtime_source")),
+    ])
+
+    expiry_ms = int(expires_at.timestamp() * 1000) if expires_at else 0
+    report_id = esc((report_token or "local")[:14])
+
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#070816">
+<title>AniToon • PDF Intelligence</title>
+<style>
+:root {{
+  color-scheme:dark;
+  --bg:#050611;--panel:rgba(12,15,34,.78);--line:rgba(255,255,255,.10);
+  --text:#f7f7fb;--muted:#9fa6c1;--a:#a78bfa;--b:#67e8f9;--good:#7cf4b0;
+}}
+*{{box-sizing:border-box}}
+body{{margin:0;min-height:100vh;background:
+radial-gradient(circle at 10% 5%,rgba(139,92,246,.17),transparent 28%),
+radial-gradient(circle at 90% 15%,rgba(103,232,249,.12),transparent 25%),
+#050611;color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
+.anime{{position:fixed;inset:0;z-index:-2;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.14;filter:saturate(1.05)}}
+.wrap{{max-width:1080px;margin:auto;padding:18px 16px 52px}}
+.nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:14px;border:1px solid var(--line);border-radius:18px;background:rgba(7,9,22,.74);backdrop-filter:blur(18px)}}
+.brand{{font-size:11px;font-weight:950;letter-spacing:.10em;text-transform:uppercase}}
+.home{{color:var(--text);text-decoration:none;padding:8px 12px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px}}
+.hero{{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(260px,380px);gap:18px;padding:20px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:0 28px 80px rgba(0,0,0,.34)}}
+.eyebrow{{display:inline-flex;padding:6px 9px;border:1px solid rgba(124,244,176,.16);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.12em;text-transform:uppercase}}
+h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spacing:-.045em}}
+.file{{color:#cbd0e4;overflow-wrap:anywhere}}
+.pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}}
+.pill{{display:inline-flex;align-items:center;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);font-size:10px;color:var(--muted)}}
+.countdown{{color:var(--b);font-weight:950}}
+.hero-media{{height:235px;overflow:hidden;border-radius:18px;border:1px solid rgba(167,139,250,.30);background:rgba(255,255,255,.03);position:relative}}
+.hero-media img{{display:block;width:100%;height:100%;object-fit:contain;background:rgba(0,0,0,.15)}}
+.media-label{{position:absolute;left:10px;bottom:10px;padding:6px 8px;border-radius:8px;background:rgba(5,6,17,.72);font-size:10px;font-weight:900}}
+.stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}}
+.stat{{padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.03)}}
+.stat b{{display:block;font-size:19px}} .stat span{{font-size:10px;color:var(--muted)}}
+.section{{margin-top:12px;padding:15px;border:1px solid var(--line);border-radius:19px;background:var(--panel);backdrop-filter:blur(17px)}}
+.section h2{{margin:0 0 11px;font-size:16px}}
+.pdf-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}}
+.pdf-spec{{display:flex;justify-content:space-between;gap:12px;padding:10px;border-radius:10px;background:rgba(255,255,255,.028)}}
+.pdf-spec span{{color:var(--muted);font-size:10px}} .pdf-spec strong{{font-size:10px;text-align:right;overflow-wrap:anywhere}}
+.footer{{margin-top:14px;color:#7b819b;font-size:9px;display:flex;justify-content:space-between}}
+@media(max-width:820px){{.hero{{grid-template-columns:1fr}}.hero-media{{height:220px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
+</style>
+</head>
+<body>
+<div class="anime"></div>
+<div class="wrap">
+  <nav class="nav">
+    <div class="brand">AniToon • PDF Intelligence</div>
+    <a class="home" href="/">⌂ Home ↗</a>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <span class="eyebrow">DOCUMENT INTELLIGENCE</span>
+      <h1>PDF Document</h1>
+      <div class="file">{filename}</div>
+      <div class="pills">
+        <span class="pill">📚 {esc(pages or "PDF") } pages</span>
+        <span class="pill">📦 PDF {esc(version)}</span>
+        <span class="pill">📏 {esc(size_text)}</span>
+        <span class="pill">⏱️ <span id="countdown" class="countdown">--:--</span></span>
+      </div>
+    </div>
+    {f'<div class="hero-media"><img src="{hero_src}" alt="{hero_label}" loading="eager"><span class="media-label">{hero_label}</span></div>' if hero_src else ''}
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b>{esc(pages or "0")}</b><span>Pages</span></div>
+    <div class="stat"><b>{esc(version)}</b><span>PDF version</span></div>
+    <div class="stat"><b>{esc(size_text)}</b><span>File size</span></div>
+    <div class="stat"><b>{esc("Yes" if str(c.get("encrypted","")).lower()=="yes" else "No")}</b><span>Encrypted</span></div>
+  </div>
+
+  <section class="section">
+    <h2>📄 Document information</h2>
+    <div class="pdf-grid">{info_rows}</div>
+  </section>
+
+  <section class="section">
+    <h2>🔐 PDF features & security</h2>
+    <div class="pdf-grid">{security_rows}</div>
+  </section>
+
+  <section class="section">
+    <h2>⚙️ File details</h2>
+    <div class="pdf-grid">{technical_rows}</div>
+  </section>
+
+  <div class="footer">
+    <span><strong>AniToon</strong> • PDF Media Intelligence</span>
+    <span>Report ID {report_id}</span>
+  </div>
+</div>
+
+<script>
+(() => {{
+  const expiresAt = {expiry_ms};
+  const el = document.getElementById("countdown");
+  const tick = () => {{
+    if (!el) return;
+    if (!expiresAt) {{ el.textContent = "ACTIVE"; return; }}
+    const left = Math.max(0, Math.floor((expiresAt-Date.now())/1000));
+    el.textContent = String(Math.floor(left/60)).padStart(2,"0")+":"+String(left%60).padStart(2,"0");
+    if (left > 0) setTimeout(tick,1000); else el.textContent = "EXPIRED";
+  }};
+  tick();
+}})();
+</script>
+</body>
+</html>"""
+    return document.encode("utf-8")
+
+
 def web_page(
     report: Report,
     report_token: str | None = None,
     expires_at: datetime | None = None,
 ) -> bytes:
     report = _coerce_report(report)
+    if report.ext == ".pdf" or str(report.detected or "").lower().startswith("pdf") or report.media_kind == "PDF":
+        return pdf_web_page(report, report_token, expires_at)
     filename = html.escape(report.filename or "Telegram media file")
     generated = datetime.now(timezone.utc)
     generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
