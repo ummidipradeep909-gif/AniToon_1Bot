@@ -1340,9 +1340,7 @@ def progress_details(line: str) -> tuple[int, str]:
 def status_text(filename: str, line: str, pct: int | None = None) -> str:
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
-    pct = max(0, min(99, current_pct))
-    if pct >= 99:
-        pct = 99
+    pct = max(0, min(100, current_pct))
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
     return (
@@ -1392,7 +1390,7 @@ async def run_scan(
             if current < 76:
                 visual_pct = min(35, current + 2)
             else:
-                visual_pct = min(96, current + 2)
+                visual_pct = min(98, current + 2)
 
             progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
@@ -1422,8 +1420,13 @@ async def run_scan(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
-        progress_state["pct"] = max(int(progress_state["pct"]), 96)
-        progress_state["label"] = "✅ Worker finished — building report…"
+        progress_state["pct"] = 100
+        progress_state["label"] = "✅ Scan complete — report ready."
+        await edit_status(
+            status_message,
+            status_text(filename, progress_state["label"], 100),
+            buttons=cancel_button(scan_token),
+        )
         return report
     finally:
         heartbeat_stop.set()
@@ -3908,9 +3911,9 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .hero-pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px}}
 .pill{{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:10px}}
 .countdown{{color:var(--cyan);font-weight:950}}
-.hero-media{{position:relative;min-height:230px;max-height:252px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
+.hero-media{{position:relative;width:min(100%,400px);height:230px;min-height:0;max-height:230px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
 .hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.58));pointer-events:none}}
-.hero-media img{{display:block;width:100%;height:auto;max-height:250px;min-height:0;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
+.hero-media img{{display:block;width:100%;height:100%;max-height:none;min-height:0;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
 .media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
 .language-ribbon{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}}
@@ -3974,8 +3977,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes statSpin{{to{{transform:rotate(360deg)}}}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
-@media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{min-height:210px;max-height:260px}} .hero-media img{{min-height:0;max-height:258px}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{min-height:180px;max-height:220px}} .hero-media img{{min-height:0;max-height:218px}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
