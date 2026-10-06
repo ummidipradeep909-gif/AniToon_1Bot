@@ -3798,31 +3798,6 @@ def web_page(
     size_text = human_size(report.size)
     sampled_text = human_size(report.sampled)
 
-    previews = list(getattr(report, "previews", []) or [])
-    preview_cards = ""
-    if previews:
-        cards = []
-        for index, preview in enumerate(previews[:1], 1):
-            data = str(preview.get("data") or "")
-            if not data:
-                continue
-            ratio = int(preview.get("ratio") or 0)
-            preview_label = str(preview.get("label") or "").strip()
-            try:
-                seconds = int(float(preview.get("seconds") or 0))
-            except Exception:
-                seconds = 0
-            minutes, secs = divmod(max(0, seconds), 60)
-            hours, minutes = divmod(minutes, 60)
-            stamp = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
-            cards.append(
-                f'<article class="preview-card">'
-                f'<div class="preview-frame"><img src="data:image/jpeg;base64,{data}" alt="Video preview {index}" loading="lazy"></div>'
-                f'<div class="preview-meta"><b>Telegram thumbnail</b><span>{html.escape(preview_label or "Telegram thumbnail")}</span></div>'
-                f'</article>'
-            )
-        preview_cards = "".join(cards)
-
     first_video = video[0] if video else {}
     quality = first_video.get("dimensions") or "Not available"
     primary_codec = first_video.get("codec_name") or first_video.get("codec") or "Not available"
@@ -3861,7 +3836,7 @@ body::before{{content:"";position:fixed;inset:0;z-index:-5;background:radial-gra
 .controls button{{border:0;border-radius:8px;background:transparent;color:var(--text);padding:6px 8px;font:850 11px/1 system-ui;cursor:pointer}}
 .controls button:hover{{background:rgba(255,255,255,.08)}}
 .controls #zoom-label{{min-width:44px;color:var(--muted)}}
-.hero{{position:relative;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:18px;overflow:hidden;padding:20px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:var(--shadow);backdrop-filter:blur(22px)}}
+.hero{{position:relative;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(320px,420px);gap:18px;overflow:hidden;padding:20px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:var(--shadow);backdrop-filter:blur(22px)}}
 .hero-copy{{min-width:0;padding:5px 2px}}
 .eyebrow{{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid rgba(124,244,176,.15);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.13em;text-transform:uppercase}}
 .eyebrow i{{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 14px rgba(124,244,176,.70);animation:pulse 1.8s ease-in-out infinite}}
@@ -3870,9 +3845,9 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .hero-pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px}}
 .pill{{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:10px}}
 .countdown{{color:var(--cyan);font-weight:950}}
-.hero-media{{position:relative;min-height:230px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
+.hero-media{{position:relative;min-height:230px;max-height:252px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
 .hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.58));pointer-events:none}}
-.hero-media img{{display:block;width:100%;height:auto;max-height:70vh;min-height:230px;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
+.hero-media img{{display:block;width:100%;height:auto;max-height:250px;min-height:0;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
 .media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
 .language-ribbon{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}}
@@ -3918,15 +3893,6 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .spec span{{color:var(--muted);font-size:10px}}
 .spec strong{{font-size:10px;text-align:right;overflow-wrap:anywhere}}
 .empty{{padding:14px;border:1px dashed rgba(255,255,255,.11);border-radius:14px;color:var(--muted);font-size:11px}}
-.preview-section{{display:none}}
-.preview-section.visible{{display:block}}
-.preview-card{{position:relative;overflow:hidden;border:1px solid var(--line2);border-radius:18px;background:rgba(255,255,255,.025);box-shadow:0 20px 48px rgba(0,0,0,.18);animation:cardIn .7s cubic-bezier(.2,1,.2,1) both}}
-.preview-card::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.11) 50%,transparent 80%);transform:translateX(-120%);animation:shimmer 5.5s ease-in-out infinite;pointer-events:none}}
-.preview-frame{{min-height:220px;background:#070816;overflow:hidden;display:flex;align-items:center;justify-content:center}}
-.preview-frame img{{display:block;width:100%;height:auto;max-height:72vh;object-fit:contain;object-position:center;transform:none;transition:transform .45s ease}}
-.preview-card:hover .preview-frame img{{transform:scale(1.008)}}
-.preview-meta{{display:flex;justify-content:space-between;gap:8px;padding:9px 11px;font-size:10px}}
-.preview-meta span{{color:var(--muted);text-align:right}}
 .tech-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
 .tech{{padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.028)}}
 .tech small{{display:block;color:var(--muted);font-size:9px;margin-bottom:4px}}
@@ -3945,8 +3911,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes statSpin{{to{{transform:rotate(360deg)}}}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
-@media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media,.hero-media img{{min-height:210px}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media,.hero-media img{{min-height:180px}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
+@media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{min-height:210px;max-height:260px}} .hero-media img{{min-height:0;max-height:258px}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{min-height:180px;max-height:220px}} .hero-media img{{min-height:0;max-height:218px}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 </style>
 </head>
@@ -3997,17 +3963,11 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 
   <nav class="quick" aria-label="Quick navigation">
     <a href="#overview">Overview</a>
-    <a href="#preview-section" id="preview-nav" style="display:none">Thumbnail</a>
     <a href="#video-section">Video</a>
     <a href="#audio-section">Audio</a>
     <a href="#subs-section">Subtitles</a>
     <a href="#technical-section">Technical</a>
   </nav>
-
-  <section id="preview-section" class="section preview-section{' visible' if preview_cards else ''}">
-    <div class="section-head"><h2>🎞️ Thumbnail preview</h2><span class="pill">1 image</span></div>
-    <div class="section-body" id="preview-grid">{preview_cards}</div>
-  </section>
 
   <details id="video-section" class="section" open>
     <summary class="section-head"><h2>🎬 Video</h2><span class="pill">{len(video)} track{'s' if len(video)!=1 else ''} <span class="chev">⌄</span></span></summary>
@@ -4089,39 +4049,6 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   }});
 }})();
 
-(() => {{
-  const token="{html.escape(report_token or "")}", section=document.getElementById("preview-section"), grid=document.getElementById("preview-grid");
-  if(!token||!section||!grid)return;
-  const render=item=>{{
-    if(!item||!item.data)return;
-    const label=String(item.label||"").trim()||"Telegram thumbnail";
-    grid.innerHTML='<article class="preview-card"><div class="preview-frame"><img src="data:image/jpeg;base64,'+String(item.data)+'" alt="Telegram thumbnail" loading="lazy"></div><div class="preview-meta"><b>Thumbnail</b><span>'+label+'</span></div></article>';
-    section.classList.add("visible");
-    const nav=document.getElementById("preview-nav");
-    if(nav)nav.style.display="inline-flex";
-    if(!document.getElementById("hero-media")){{
-      const hero=document.querySelector(".hero");
-      if(hero){{
-        const media=document.createElement("div"); media.className="hero-media"; media.id="hero-media";
-        media.innerHTML='<img src="data:image/jpeg;base64,'+String(item.data)+'" alt="Telegram thumbnail" loading="eager"><span class="media-label">🎞️ '+label+'</span>';
-        hero.appendChild(media);
-      }}
-    }}
-  }};
-  let attempts=0;
-  const poll=async()=>{{
-    if(attempts++>12)return;
-    try{{
-      const r=await fetch("/preview/"+encodeURIComponent(token),{{cache:"no-store"}});
-      if(r.ok){{
-        const p=await r.json();
-        if(p.previews&&p.previews.length){{render(p.previews[0]);return;}}
-      }}
-    }}catch(_ ){{}}
-    setTimeout(poll,1200);
-  }};
-  poll();
-}})();
 </script>
 </body>
 </html>"""
