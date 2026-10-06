@@ -3782,7 +3782,6 @@ def web_page(
             details: list[tuple[str, Any]] = []
 
             priority_details = [
-                ("Language", None if kind == "Video" else (track.get("language_name") or track.get("language"))),
                 ("Codec", track.get("codec_name") or track.get("codec")),
                 ("Resolution / pixels", track.get("dimensions")),
                 ("Display size", track.get("display_dimensions")),
@@ -3795,7 +3794,7 @@ def web_page(
                 ("Sample rate", track.get("sample_rate")),
                 ("Bit depth", track.get("bit_depth")),
                 ("Bitrate", track.get("bitrate")),
-                ("Default", track.get("default")),
+                ("Default", "yes" if kind == "Subtitle" else track.get("default")),
                 ("Enabled", track.get("enabled")),
                 ("Forced", track.get("forced")),
                 ("Original", track.get("original")),
@@ -3818,6 +3817,8 @@ def web_page(
             for key, value in track.items():
                 if key in known_keys or key in {"type","track","name","display_name","name_source"}:
                     continue
+                if kind == "Video" and key in {"language", "language_name"}:
+                    continue
                 if value not in (None, "", []):
                     details.append((key.replace("_", " ").title(), value))
             rows = "".join(
@@ -3834,7 +3835,7 @@ def web_page(
                 ("hearing_impaired", "HI"),
                 ("visual_impaired", "VI"),
             ):
-                if track.get(key) == "yes":
+                if (kind == "Subtitle" and key == "default") or track.get(key) == "yes":
                     flags.append(label)
 
             badges = "".join(f'<span class="badge">{esc(flag)}</span>' for flag in flags)
