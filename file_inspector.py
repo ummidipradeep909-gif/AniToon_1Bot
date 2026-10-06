@@ -392,8 +392,9 @@ def _merge(report:Report,track:dict[str,Any]):
             if first.get("default") in (None, ""):
                 first["default"] = "yes"
     elif track.get("type") == "subtitles":
-        for item in report.subtitles:
-            item["default"] = "yes"
+        # Preserve the embedded subtitle default flag exactly; do not invent
+        # a default when the container says it is not default.
+        return
     elif track.get("type") == "video":
         video_tracks = report.video.get("tracks", [])
         if len(video_tracks) > 1 and not any(x.get("default") == "yes" for x in video_tracks):
@@ -559,6 +560,7 @@ def _mp4_track_name(handler_name:str|None,handler_type:str,codec_display:str|Non
 
 def _mp4_tracks(data:bytes,report:Report)->int:
     total=0
+    max_runtime_seconds = 0.0
     for typ,moov_s,moov_e in _mp4_boxes(data):
         if typ!=b"moov":continue
         for ttyp,trak_s,trak_e in _mp4_children(data,moov_s,moov_e):
@@ -629,7 +631,10 @@ def _mp4_tracks(data:bytes,report:Report)->int:
                     "name_source":"MP4 handler/track metadata",
                 }
                 if duration is not None and timescale:
-                    item["duration"]=_fmtsec(duration/timescale)
+                    track_seconds = float(duration) / float(timescale)
+                    if track_seconds >= max_runtime_seconds:
+                        max_runtime_seconds = track_seconds
+                    item["duration"]=_fmtsec(track_seconds)
 
                 if is_video and se-ss>=28:
                     width=int.from_bytes(data[ss+24:ss+26],"big")
@@ -654,6 +659,10 @@ def _mp4_tracks(data:bytes,report:Report)->int:
                     _merge(report,item)
                     total+=1
             # A track with a non-standard handler still gets represented as generic media.
+    if max_runtime_seconds > 0 and not report.container.get("runtime"):
+        report.container["runtime"] = _fmtsec(max_runtime_seconds)
+        report.container["runtime_seconds"] = f"{max_runtime_seconds:.3f}"
+        report.container["runtime_source"] = "MP4 track duration metadata"
     return total
 
 def _generic(data:bytes,kind:str,report:Report):
@@ -677,7 +686,20 @@ def _generic(data:bytes,kind:str,report:Report):
             last=bool(data[p]&0x80);typ=data[p]&0x7f;n=int.from_bytes(data[p+1:p+4],"big");s,e=p+4,p+4+n
             if e>len(data):break
             if typ==0 and n>=34:
-                packed=int.from_bytes(data[s+10:s+18],"big");report.audio.update(sample_rate=f"{packed>>44} Hz",channels=str(((packed>>41)&7)+1),bits_per_sample=str(((packed>>36)&31)+1));break
+                packed=int.from_bytes(data[s+10:s+18],"big")
+                sample_rate = packed >> 44
+                total_samples = packed & ((1 << 36) - 1)
+                report.audio.update(
+                    sample_rate=f"{sample_rate} Hz",
+                    channels=str(((packed>>41)&7)+1),
+                    bits_per_sample=str(((packed>>36)&31)+1),
+                )
+                if sample_rate and total_samples:
+                    sec = total_samples / float(sample_rate)
+                    report.container["runtime"] = _fmtsec(sec)
+                    report.container["runtime_seconds"] = f"{sec:.3f}"
+                    report.container["runtime_source"] = "FLAC STREAMINFO"
+                break
             if last:break
             p=e
     elif kind=="wav" and len(data)>=20:
@@ -685,14 +707,28 @@ def _generic(data:bytes,kind:str,report:Report):
         while p+8<=len(data):
             cid=data[p:p+4];n=int.from_bytes(data[p+4:p+8],"little");s,e=p+8,p+8+n
             if e>len(data):break
-            if cid==b"fmt " and n>=16:report.audio.update(channels=str(int.from_bytes(data[s+2:s+4],"little")),sample_rate=f"{int.from_bytes(data[s+4:s+8],'little')} Hz",bits_per_sample=str(int.from_bytes(data[s+14:s+16],'little')));break
+            if cid==b"fmt " and n>=16:
+                channels = int.from_bytes(data[s+2:s+4],"little")
+                sample_rate = int.from_bytes(data[s+4:s+8],"little")
+                bits = int.from_bytes(data[s+14:s+16],"little")
+                report.audio.update(channels=str(channels),sample_rate=f"{sample_rate} Hz",bits_per_sample=str(bits))
+                fmt_chunk=(int.from_bytes(data[s:s+4],"little") if False else 0)
+                # Duration is resolved from the WAV data chunk below once its
+                # byte count and byte rate are known.
+                byte_rate = int.from_bytes(data[s+8:s+12],"little")
+                report.container["_wav_byte_rate"] = str(byte_rate) if byte_rate else ""
+                break
             p=e+(n&1)
     elif kind=="ogg":
         p=data.find(b"OpusHead")
-        if p>=0 and p+16<=len(data):report.audio.update(codec="Opus",channels=str(data[p+9]),sample_rate=f"{int.from_bytes(data[p+12:p+16],'little')} Hz")
+        if p>=0 and p+16<=len(data):
+            rate = int.from_bytes(data[p+12:p+16],"little")
+            report.audio.update(codec="Opus",channels=str(data[p+9]),sample_rate=f"{rate} Hz")
         else:
             p=data.find(b"vorbis")
-            if p>=0 and p+16<=len(data):report.audio.update(codec="Vorbis",channels=str(data[p+11]),sample_rate=f"{int.from_bytes(data[p+12:p+16],'little')} Hz")
+            if p>=0 and p+16<=len(data):
+                rate = int.from_bytes(data[p+12:p+16],"little")
+                report.audio.update(codec="Vorbis",channels=str(data[p+11]),sample_rate=f"{rate} Hz")
     elif kind=="mp4":
         parsed=_mp4_tracks(data,report)
         handlers=[]
@@ -805,8 +841,21 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
     for p in pieces:
         if kind=="mkv":_info(p.data,r);_tracks(p.data,r)
         else:_generic(p.data,kind,r)
+    if kind=="wav":
+        byte_rate = int(r.container.pop("_wav_byte_rate", "0") or 0)
+        data_match = re.search(rb"data(.{4})", b"".join(x.data for x in pieces), re.S)
+        if byte_rate and data_match:
+            raw_all = b"".join(x.data for x in pieces)
+            pos = data_match.start(1)
+            if pos + 4 <= len(raw_all):
+                data_size = int.from_bytes(raw_all[pos:pos+4],"little")
+                if data_size > 0:
+                    sec = data_size / float(byte_rate)
+                    r.container["runtime"] = _fmtsec(sec)
+                    r.container["runtime_seconds"] = f"{sec:.3f}"
+                    r.container["runtime_source"] = "WAV data chunk duration"
     if kind=="mkv":
-        if not r.audio.get("tracks"):r.notes.append("No audio TrackEntry found in the probed metadata windows.")
+        if not r.audio.get("tracks"):
         if not r.subtitles:r.notes.append("No subtitle TrackEntry found in the probed metadata windows.")
         if not r.audio.get("tracks"):_codec_hints(b"".join(x.data for x in pieces),r)
     if r.container.get("runtime") and r.size:
