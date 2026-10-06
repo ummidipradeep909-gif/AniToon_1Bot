@@ -50,6 +50,8 @@ from mongo_store import (
     list_bot_users,
     save_web_report,
     update_clone_stats,
+    clone_daily_summary,
+    record_clone_daily_activity,
     record_group_chat,
     list_group_chats,
     update_group_onboarding,
@@ -535,7 +537,14 @@ async def bump_clone_stat(client: Any, field: str, amount: int = 1) -> None:
     stats[field] = int(stats.get(field, 0)) + int(amount)
     stats["last_activity"] = datetime.now(timezone.utc)
 
-    # Batch high-frequency message counters to reduce database traffic.
+    # Keep a precise 7-day activity history for the owner's clone dashboard.
+    with suppress(Exception):
+        await record_clone_daily_activity(
+            clone_id,
+            **{field: int(amount)},
+        )
+
+    # Batch high-frequency cumulative message counters to reduce database traffic.
     if field == "messages_received":
         pending = clone_message_pending.get(clone_id, 0) + int(amount)
         clone_message_pending[clone_id] = pending
@@ -664,27 +673,80 @@ async def render_clone_stats(event, user_id: int, clone_id: int) -> None:
     ).lstrip("@")
     live = clone_id in clone_clients and clone_clients[clone_id].is_connected()
 
-    text = (
-        "📊 <b>Clone Bot Stats</b>\n\n"
-        f"🤖 <b>@{html.escape(username)}</b>\n"
-        f"{'🟢 Online' if live else '🔴 Offline'}\n\n"
-        f"📨 Messages received: <b>{int(stats['messages_received'])}</b>\n"
-        f"🔎 Scans started: <b>{int(stats['scans_started'])}</b>\n"
-        f"✅ Scans completed: <b>{int(stats['scans_completed'])}</b>\n"
-        f"❌ Scans failed: <b>{int(stats['scans_failed'])}</b>\n"
-        f"🛑 Scans cancelled: <b>{int(stats['scans_cancelled'])}</b>\n\n"
-        f"📅 Created: {_fmt_clone_time(stats.get('created_at'))}\n"
-        f"🕒 Last activity: {_fmt_clone_time(stats.get('last_activity'))}"
-    )
+    daily = await clone_daily_summary(clone_id, 7)
+    days = daily.get("days", []) if daily.get("available") else []
+    total_7 = {
+        key: sum(int(day.get(key, 0) or 0) for day in days)
+        for key in (
+            "messages_received",
+            "scans_started",
+            "scans_completed",
+            "scans_failed",
+            "scans_cancelled",
+        )
+    }
+    started = total_7["scans_completed"] + total_7["scans_failed"]
+    success_rate = (total_7["scans_completed"] / started * 100) if started else 0.0
+
+    lines = [
+        "📊 <b>Clone Bot Analytics</b>",
+        "",
+        f"🤖 <b>@{html.escape(username)}</b>",
+        f"{'🟢 Online' if live else '🔴 Offline'}",
+        f"🆔 Clone ID: <code>{clone_id}</code>",
+        "",
+        "📈 <b>Last 7 Days</b>",
+        f"📨 Messages: <b>{total_7['messages_received']}</b>",
+        f"🔎 Scans started: <b>{total_7['scans_started']}</b>",
+        f"✅ Completed: <b>{total_7['scans_completed']}</b>",
+        f"❌ Failed: <b>{total_7['scans_failed']}</b>",
+        f"🛑 Cancelled: <b>{total_7['scans_cancelled']}</b>",
+        f"📊 Success rate: <b>{success_rate:.1f}%</b>",
+        "",
+        "🗓️ <b>Daily Activity</b>",
+    ]
+
+    if days:
+        for day in days:
+            dt = str(day.get("date") or "")
+            try:
+                label = datetime.strptime(dt, "%Y-%m-%d").strftime("%d %b")
+            except ValueError:
+                label = dt
+            msg = int(day.get("messages_received", 0) or 0)
+            scans = int(day.get("scans_started", 0) or 0)
+            done = int(day.get("scans_completed", 0) or 0)
+            failed = int(day.get("scans_failed", 0) or 0)
+            cancelled = int(day.get("scans_cancelled", 0) or 0)
+            lines.append(
+                f"• <b>{label}</b> — 📨 {msg}  🔎 {scans}  ✅ {done}  ❌ {failed}  🛑 {cancelled}"
+            )
+    else:
+        lines.append("• No daily activity recorded yet.")
+
+    lines += [
+        "",
+        "📦 <b>All-Time</b>",
+        f"📨 Messages: <b>{int(stats['messages_received'])}</b>",
+        f"🔎 Scans: <b>{int(stats['scans_started'])}</b>",
+        f"✅ Completed: <b>{int(stats['scans_completed'])}</b>",
+        f"❌ Failed: <b>{int(stats['scans_failed'])}</b>",
+        f"🛑 Cancelled: <b>{int(stats['scans_cancelled'])}</b>",
+        "",
+        f"📅 Created: {_fmt_clone_time(stats.get('created_at'))}",
+        f"🕒 Last activity: {_fmt_clone_time(stats.get('last_activity'))}",
+    ]
 
     buttons = []
     if username != "Unnamed":
         buttons.append([Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")])
     buttons.append([
-        Button.inline("🗑 Remove Clone", f"clone:remove:{clone_id}".encode("ascii")),
-        Button.inline("⬅️ My Clones", b"clone:list"),
+        Button.inline("🔄 Refresh", f"clone:stats:{clone_id}".encode("ascii")),
+        Button.inline("🗑 Remove", f"clone:remove:{clone_id}".encode("ascii")),
     ])
-    await event.edit(text, parse_mode="html", buttons=buttons)
+    buttons.append([Button.inline("⬅️ My Clones", b"clone:list")])
+    await event.edit("\n".join(lines), parse_mode="html", buttons=buttons)
+
 
 
 async def remove_clone_for_user(user_id: int, clone_id: int) -> bool:
@@ -2915,7 +2977,8 @@ async def handle_new_message(
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
         if not _owner_allowed(user_id):
-            await event.reply("ℹ️ Render resource details are available to the owner only.")
+            # Owner-only resource/status commands are intentionally invisible
+            # to ordinary users.
             return
         await record_user(event)
         if command == "/resources":
