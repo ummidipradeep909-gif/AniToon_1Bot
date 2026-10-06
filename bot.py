@@ -3930,10 +3930,13 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .hero-pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:13px}}
 .pill{{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:10px}}
 .countdown{{color:var(--cyan);font-weight:950}}
-.hero-media{{position:relative;width:min(100%,400px);height:230px;min-height:0;max-height:230px;border-radius:20px;overflow:hidden;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(155,140,255,.10),rgba(94,231,255,.04))}}
-.hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,.58));pointer-events:none}}
-.hero-media img{{display:block;width:100%;height:100%;max-height:none;min-height:0;object-fit:contain;object-position:center;background:rgba(0,0,0,.14);image-rendering:auto}}
-.media-label{{position:absolute;left:11px;bottom:10px;z-index:2;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
+.hero-media{{position:relative;width:min(100%,400px);height:230px;min-height:0;max-height:230px;border-radius:20px;overflow:hidden;border:1px solid rgba(155,140,255,.34);background:linear-gradient(145deg,rgba(155,140,255,.12),rgba(94,231,255,.055));box-shadow:0 18px 46px rgba(0,0,0,.25),0 0 34px rgba(155,140,255,.10);transform:translateZ(0);animation:thumbFloat 6.5s ease-in-out infinite}}
+.hero-media::before{{content:"";position:absolute;inset:-2px;border-radius:22px;padding:1px;background:conic-gradient(from 0deg,rgba(155,140,255,.0),rgba(155,140,255,.72),rgba(94,231,255,.72),rgba(124,244,176,.35),rgba(155,140,255,.0));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:thumbRing 7s linear infinite;pointer-events:none;z-index:3}}
+.hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 18%,rgba(255,255,255,.08) 43%,transparent 59%),linear-gradient(180deg,transparent 45%,rgba(0,0,0,.48));background-size:220% 100%,100% 100%;background-position:-120% 0,0 0;background-repeat:no-repeat;animation:thumbSheen 6s ease-in-out infinite;pointer-events:none;z-index:2}}
+.hero-media img{{display:block;width:100%;height:100%;max-height:none;min-height:0;object-fit:contain;object-position:center;background:rgba(0,0,0,.12);image-rendering:auto;transform:scale(1.005);transition:transform .55s cubic-bezier(.2,1,.2,1),filter .55s ease}}
+.hero-media:hover{{animation-play-state:paused;box-shadow:0 22px 54px rgba(0,0,0,.30),0 0 44px rgba(94,231,255,.14)}}
+.hero-media:hover img{{transform:scale(1.02);filter:saturate(1.04) contrast(1.02)}}
+.media-label{{position:absolute;left:11px;bottom:10px;z-index:4;padding:6px 8px;border-radius:9px;background:rgba(5,6,17,.66);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(10px);font-size:10px;font-weight:900}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}}
 .language-ribbon{{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;padding:9px 10px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025)}}
 .language-label{{font-size:9px;font-weight:950;letter-spacing:.12em;color:var(--muted);margin-right:2px}}
@@ -4009,6 +4012,9 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes scan{{0%{{background-position:0%}}100%{{background-position:200%}}}}
 @keyframes pulse{{0%,100%{{transform:scale(.86);opacity:.78}}50%{{transform:scale(1.16);opacity:1}}}}
 @keyframes statSpin{{to{{transform:rotate(360deg)}}}}
+@keyframes thumbRing{{to{{transform:rotate(360deg)}}}}
+@keyframes thumbSheen{{0%,18%{{background-position:-120% 0,0 0}}62%,100%{{background-position:120% 0,0 0}}}}
+@keyframes thumbFloat{{0%,100%{{transform:translate3d(0,0,0)}}50%{{transform:translate3d(0,-3px,0)}}}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
@@ -4034,7 +4040,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 
   <header class="hero">
     <div class="hero-copy">
-      <span class="eyebrow"><i></i> Analysis Complete</span>
+      <span class="eyebrow"><i></i> @anitoon_1bot</span>
       <h1>Media Intelligence</h1>
       <div class="file">{filename}</div>
       {f'<div class="hero-pills"><span class="pill">🎞️ {esc(title)}</span></div>' if title else ''}
