@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable
 
 # Source-media work is always strictly below 5 MB.
 # Files smaller than this limit are read completely; larger files are bounded.
-MAX_SAFE_SOURCE_BYTES = 5 * 1024 * 1024 - 1
+MAX_SAFE_SOURCE_BYTES = 4_999_000
 MAX_INITIAL_PROBE = 1 * 1024 * 1024
 MAX_DEEP_PROBE = MAX_SAFE_SOURCE_BYTES
 DEFAULT_CHUNK = 512 * 1024
@@ -62,7 +62,7 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     return max(lo,min(hi,value))
 
 def initial_probe_bytes()->int: return _env_int("FILE_PROBE_BYTES",MAX_INITIAL_PROBE,512*1024,MAX_INITIAL_PROBE)
-def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_SAFE_SOURCE_BYTES - 4096,2*1024*1024,MAX_SAFE_SOURCE_BYTES - 4096)
+def deep_probe_budget()->int: return _env_int("FILE_DEEP_PROBE_BYTES",MAX_SAFE_SOURCE_BYTES,2*1024*1024,MAX_SAFE_SOURCE_BYTES)
 def probe_chunk()->int: return _env_int("FILE_PROBE_CHUNK_BYTES",DEFAULT_CHUNK,128*1024,DEFAULT_CHUNK)
 
 @dataclass(slots=True)
@@ -757,7 +757,7 @@ def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
 async def _read_range(client,media,total,offset,n):
     chunk=min(probe_chunk(),n);out=io.BytesIO()
     try:
-        async for part in client.iter_download(media,offset=max(0,offset),limit=(n+chunk-1)//chunk,chunk_size=chunk,request_size=chunk,file_size=total):
+        async for part in client.iter_download(media,offset=max(0,offset),limit=n,chunk_size=chunk,request_size=chunk,file_size=total):
             remain=n-out.tell()
             if remain<=0:break
             out.write(bytes(part[:remain]))
@@ -890,8 +890,9 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
         return report,len(raw)
 
     # Larger files remain strictly bounded below 5 MB.
-    budget = min(configured_budget, MAX_SAFE_SOURCE_BYTES - 4096)
-    initial = min(initial_probe_bytes(), budget)
+    budget = min(configured_budget, MAX_SAFE_SOURCE_BYTES)
+    # One contiguous bounded window is faster than several sequential range requests.
+    initial = budget
     parts=[]
     used=0
 
@@ -907,32 +908,12 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     _,kind=magic(b,name,mime)
 
     if kind=="mkv":
-        await say("🎯 Stage 2/4 • reading Matroska TrackEntry metadata…")
-        targets=_seek_targets(b)
-        if 0x1654AE6B not in targets:
-            local=b.find(b"\x16\x54\xAE\x6B")
-            if local>=0:
-                targets[0x1654AE6B]=local
-        if 0x1549A966 not in targets:
-            local=b.find(b"\x15\x49\xA9\x66")
-            if local>=0:
-                targets[0x1549A966]=local
-        for off,n,label in _probe_ranges(total,budget,initial,targets):
-            x,_=await _read_range(client,media,total,off,n)
-            if x:
-                parts.append(ProbePiece(off,x,label))
-                used+=len(x)
+        await say("🎯 Stage 2/4 • reading bounded Matroska track metadata…")
+        # The initial bounded window already contains the metadata we can inspect
+        # without paying the latency of multiple sequential Telegram range calls.
         await say("🧩 Stage 3/4 • extracting all detected video, audio and subtitle tracks…")
     elif kind=="mp4":
-        await say("🧩 Stage 2/2 • reading MP4 metadata and index…")
-        if total and used<budget:
-            tail_window=min(512*1024,budget-used,total)
-            tail_offset=max(initial,total-tail_window)
-            if tail_offset>=initial:
-                x,_=await _read_range(client,media,total,tail_offset,tail_window)
-                if x:
-                    parts.append(ProbePiece(tail_offset,x,"MP4 tail metadata"))
-                    used+=len(x)
+        await say("🧩 Stage 2/2 • reading bounded MP4 metadata…")
     else:
         await say("🧩 Stage 2/2 • reading available media metadata…")
 
