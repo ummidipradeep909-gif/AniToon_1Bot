@@ -599,7 +599,7 @@ def _fmt_clone_time(value: Any) -> str:
     elif isinstance(value, (int, float)):
         dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
     else:
-        return "Not available"
+        return "—"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.strftime("%Y-%m-%d %H:%M UTC")
@@ -3855,11 +3855,22 @@ def web_page(
     def esc(value: Any) -> str:
         return html.escape(str(value))
 
+    def pretty_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        text = str(value)
+        low = text.strip().lower()
+        if low == "yes":
+            return "Yes"
+        if low == "no":
+            return "No"
+        return text
+
     def human_size(value: Any) -> str:
         try:
             size = float(value)
         except Exception:
-            return "Not available"
+            return "—"
         units = ("B", "KB", "MB", "GB", "TB")
         i = 0
         while size >= 1024 and i < len(units) - 1:
@@ -3875,8 +3886,8 @@ def web_page(
             return (
                 f'<div class="empty-state">'
                 f'<span class="empty-icon">{icon_for(kind)}</span>'
-                f'<div><strong>No {esc(kind.lower())} tracks detected</strong>'
-                f'<p>The inspected metadata did not expose a confirmed {esc(kind.lower())} stream.</p></div>'
+                f'<div><strong>0 {esc(kind.lower())} tracks</strong>'
+                f'<p>No confirmed {esc(kind.lower())} stream was detected in the inspected metadata.</p></div>'
                 f'</div>'
             )
 
@@ -3911,7 +3922,11 @@ def web_page(
                 ("Stereo mode", track.get("stereo_mode")),
                 ("Format", track.get("subtitle_format") or track.get("format")),
             ]
-            details.extend((label, value) for label, value in priority_details if value not in (None, "", []))
+            details.extend(
+                (label, pretty_value(value))
+                for label, value in priority_details
+                if value is not None and value != "" and value != []
+            )
             known_keys = {
                 "language","language_name","codec","codec_name","dimensions","display_dimensions",
                 "frame_rate","scan_type","pixel_format","profile","level","channels","layout",
@@ -3924,8 +3939,8 @@ def web_page(
                     continue
                 if kind == "Video" and key in {"language", "language_name"}:
                     continue
-                if value not in (None, "", []):
-                    details.append((key.replace("_", " ").title(), value))
+                if value is not None and value != "" and value != []:
+                    details.append((key.replace("_", " ").title(), pretty_value(value)))
             rows = "".join(
                 f'<div class="spec"><span>{esc(label)}</span><strong>{esc(value)}</strong></div>'
                 for label, value in details
@@ -3964,16 +3979,16 @@ def web_page(
             )
         return "".join(cards)
 
-    runtime = report.container.get("runtime") or "Not available"
+    runtime = report.container.get("runtime") or "—"
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
     size_text = human_size(report.size)
     sampled_text = human_size(report.sampled)
 
     first_video = video[0] if video else {}
-    quality = first_video.get("dimensions") or "Not available"
-    primary_codec = first_video.get("codec_name") or first_video.get("codec") or "Not available"
-    bitrate = report.container.get("average_bitrate") or "Not available"
+    quality = first_video.get("dimensions") or "—"
+    primary_codec = first_video.get("codec_name") or first_video.get("codec") or "—"
+    bitrate = report.container.get("average_bitrate") or "—"
     title = report.container.get("title")
 
     # Keep the one Telegram thumbnail in the hero only.
@@ -4277,7 +4292,7 @@ def minimal_web_report_page(
     expiry_text = (
         expires_at.strftime("%d %b %Y %H:%M UTC")
         if isinstance(expires_at, datetime)
-        else "Not available"
+        else "—"
     )
     document = f"""<!doctype html>
 <html lang="en">
