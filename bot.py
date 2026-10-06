@@ -3565,8 +3565,8 @@ def home_page(report_token: str | None = None) -> bytes:
         ("⚡", "Pokemon", "https://t.me/poketmonster_01"),
     ]
     socials = [
-        ("◎", "Instagram", "@AniToonHQ", "https://www.instagram.com/AniToonHQ"),
-        ("▶", "YouTube", "AniToon HQ", "https://www.youtube.com/channel/UC5LrPauKQX6PkO8mLd-DxEg"),
+        ("instagram", "Instagram", "@AniToonHQ", "https://www.instagram.com/AniToonHQ"),
+        ("youtube", "YouTube", "AniToon HQ", "https://www.youtube.com/channel/UC5LrPauKQX6PkO8mLd-DxEg"),
     ]
 
     def card(icon: str, name: str, url: str) -> str:
@@ -3597,9 +3597,28 @@ def home_page(report_token: str | None = None) -> bytes:
     current_html = "".join(card(*item) for item in channels)
     completed_html = "".join(card(*item) for item in completed)
 
+    social_logos = {
+        "instagram": (
+            '<span class="social-icon social-instagram" aria-hidden="true">'
+            '<svg viewBox="0 0 24 24" role="img"><defs>'
+            '<linearGradient id="igGradient" x1="0" y1="1" x2="1" y2="0">'
+            '<stop offset="0%" stop-color="#FEDA75"/><stop offset="35%" stop-color="#FA7E1E"/>'
+            '<stop offset="62%" stop-color="#D62976"/><stop offset="82%" stop-color="#962FBF"/>'
+            '<stop offset="100%" stop-color="#4F5BD5"/>'
+            '</linearGradient></defs><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="5.4" fill="url(#igGradient)"/>'
+            '<rect x="7" y="7" width="10" height="10" rx="3.2" fill="none" stroke="#fff" stroke-width="1.8"/>'
+            '<circle cx="12" cy="12" r="2.7" fill="none" stroke="#fff" stroke-width="1.8"/>'
+            '<circle cx="17.2" cy="6.9" r="1.15" fill="#fff"/></svg></span>'
+        ),
+        "youtube": (
+            '<span class="social-icon social-youtube" aria-hidden="true">'
+            '<svg viewBox="0 0 24 24" role="img"><rect x="2" y="5.2" width="20" height="13.6" rx="4.1" fill="#FF0000"/>'
+            '<path d="M10.1 8.6 16 12l-5.9 3.4Z" fill="#fff"/></svg></span>'
+        ),
+    }
     social_html = "".join(
-        f'<a class="social-channel" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
-        f'<span class="social-icon">{icon}</span>'
+        f'<a class="social-channel social-{icon}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
+        f'{social_logos.get(icon, "")}'
         f'<span class="social-main"><strong>{html.escape(name)}</strong><small>{html.escape(handle)}</small></span>'
         f'<span class="channel-arrow">↗</span>'
         f'</a>'
@@ -3700,7 +3719,7 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel-arrow{{color:var(--muted);font-size:18px}}
 .social-channel{{display:flex;align-items:center;gap:12px;min-height:72px;padding:12px 13px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.012));transition:.20s ease}}
 .social-channel:hover{{transform:translateY(-3px);border-color:rgba(94,231,255,.30);box-shadow:0 14px 30px rgba(0,0,0,.22)}}
-.social-icon{{width:40px;height:40px;display:grid;place-items:center;flex:0 0 auto;border-radius:13px;background:linear-gradient(145deg,rgba(154,140,255,.13),rgba(94,231,255,.08));border:1px solid rgba(255,255,255,.10);font-size:20px;font-weight:900}}
+.social-icon{{width:42px;height:42px;display:grid;place-items:center;flex:0 0 auto;border-radius:13px;border:1px solid rgba(255,255,255,.13);overflow:hidden;box-shadow:0 7px 18px rgba(0,0,0,.20)}} .social-icon svg{{width:100%;height:100%;display:block}} .social-icon.social-instagram{{background:linear-gradient(145deg,#ffdc80,#fcaf45 28%,#e1306c 62%,#833ab4 82%,#5851db)}} .social-icon.social-youtube{{background:#ff0000}} .social-instagram .social-icon{{background:transparent}}
 .social-main{{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0}}
 .social-main strong{{font-size:12px}}
 .social-main small{{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
