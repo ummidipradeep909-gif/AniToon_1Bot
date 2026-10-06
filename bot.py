@@ -3870,6 +3870,9 @@ def web_page(
     bitrate = report.container.get("average_bitrate") or "Not available"
     title = report.container.get("title")
 
+    # Keep the one Telegram thumbnail in the hero only.
+    previews = list(getattr(report, "previews", []) or [])[:1]
+
     report_id = esc((report_token or "local")[:14])
 
     document = f"""<!doctype html>
