@@ -855,9 +855,10 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
                     r.container["runtime_seconds"] = f"{sec:.3f}"
                     r.container["runtime_source"] = "WAV data chunk duration"
     if kind=="mkv":
+        if not r.subtitles:
+            r.notes.append("Subtitle track count: 0")
         if not r.audio.get("tracks"):
-        if not r.subtitles:r.notes.append("No subtitle TrackEntry found in the probed metadata windows.")
-        if not r.audio.get("tracks"):_codec_hints(b"".join(x.data for x in pieces),r)
+            _codec_hints(b"".join(x.data for x in pieces),r)
     if r.container.get("runtime") and r.size:
         try:
             sec=float(r.container["runtime_seconds"]) if r.container.get("runtime_seconds") else None
