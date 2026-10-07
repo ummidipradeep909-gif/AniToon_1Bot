@@ -17,6 +17,8 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import urlsplit
 from typing import Any
 
+from PIL import Image, ImageEnhance, ImageFilter
+
 from dotenv import load_dotenv
 from telethon import Button, TelegramClient, errors, events, functions, types
 from telethon.sessions import MemorySession
@@ -202,6 +204,7 @@ def safe_filename(message: Any) -> str:
 
 
 _anitoon_art_cache: str | None = None
+_anitoon_art_photo_cache: bytes | None = None
 
 def _anitoon_start_art_b64() -> str:
     global _anitoon_art_cache
@@ -222,13 +225,43 @@ def _anitoon_start_art_uri() -> str:
 
 
 def _anitoon_start_art_bytes() -> bytes | None:
+    """Return a clearer, upscaled Telegram photo while keeping the source art unchanged."""
+    global _anitoon_art_photo_cache
+    if _anitoon_art_photo_cache is not None:
+        return _anitoon_art_photo_cache
+
     data = _anitoon_start_art_b64()
     if not data:
         return None
+
     try:
-        return base64.b64decode(data, validate=True)
+        raw = base64.b64decode(data, validate=True)
+        with Image.open(io.BytesIO(raw)) as source:
+            image = source.convert("RGB")
+            image = image.resize((768, 768), Image.Resampling.LANCZOS)
+            image = ImageEnhance.Contrast(image).enhance(1.04)
+            image = ImageEnhance.Color(image).enhance(1.03)
+            image = image.filter(
+                ImageFilter.UnsharpMask(radius=0.9, percent=120, threshold=3)
+            )
+            out = io.BytesIO()
+            image.save(
+                out,
+                format="JPEG",
+                quality=95,
+                optimize=True,
+                progressive=True,
+                subsampling=0,
+            )
+            _anitoon_art_photo_cache = out.getvalue()
     except Exception:
-        return None
+        log.exception("Failed to enhance AniToon start artwork")
+        try:
+            _anitoon_art_photo_cache = base64.b64decode(data, validate=True)
+        except Exception:
+            return None
+
+    return _anitoon_art_photo_cache
 
 
 def metadata_button(token: str):
@@ -2941,12 +2974,15 @@ async def handle_new_message(
         )
         art = _anitoon_start_art_bytes()
         if art:
+            art_stream = io.BytesIO(art)
+            art_stream.name = "AniToon.jpg"
             await event.client.send_file(
                 event.chat_id,
-                io.BytesIO(art),
+                art_stream,
                 caption=home_text,
                 parse_mode="html",
                 buttons=start_buttons,
+                force_document=False,
             )
         else:
             await event.reply(
@@ -3647,8 +3683,6 @@ def home_page(report_token: str | None = None) -> bytes:
         </section>
         """
 
-    start_art_uri = _anitoon_start_art_uri()
-
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3706,8 +3740,6 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
-.start-art{{max-width:820px;margin:0 auto 20px;border-radius:22px;overflow:hidden;border:1px solid rgba(255,255,255,.13);box-shadow:0 0 60px rgba(255,28,60,.16),0 22px 60px rgba(0,0,0,.28);animation:artFloat 5.5s ease-in-out infinite}}
-.start-art img{{display:block;width:100%;height:auto}}
 .channel-picture{{position:relative;min-height:112px;overflow:hidden;isolation:isolate;background:#090b16 center/cover no-repeat; background-image:var(--channel-image);border-color:rgba(255,255,255,.12)}}
 .channel-picture-shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.12) 35%,rgba(3,4,11,.84) 100%),linear-gradient(90deg,rgba(4,5,12,.58),transparent 65%);transition:.3s ease}}
 .channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:2px;min-height:112px;width:100%;padding:14px}}
@@ -3768,7 +3800,6 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
   </nav>
 
   <header class="hero start-hero">
-    {f'<div class="start-art"><img src="{start_art_uri}" alt="AniToon @anitoon_1bot" loading="eager"></div>' if start_art_uri else ''}
     <span class="eyebrow"><span class="dot"></span> Media intelligence</span>
     <h1>⛩ AniToon</h1>
     <div class="lead">A focused media hub for discovering AniToon channels and inspecting video, audio, subtitle and technical metadata.</div>
@@ -3894,13 +3925,12 @@ def pdf_web_page(
     runtime = c.get("runtime")
 
     previews = list(getattr(report, "previews", []) or [])[:1]
-    art_uri = _anitoon_start_art_uri()
     hero_src = (
         "data:image/jpeg;base64," + str(previews[0].get("data") or "")
         if previews and previews[0].get("data")
-        else art_uri
+        else ""
     )
-    hero_label = "📄 Automatic PDF thumbnail" if previews and previews[0].get("data") else "📄 PDF document"
+    hero_label = "📄 Automatic PDF thumbnail" if previews and previews[0].get("data") else ""
 
     info_rows = "".join([
         row("PDF version", version),
@@ -4282,14 +4312,13 @@ def web_page(
     # The preview is the automatic Telegram thumbnail generated from the file.
     # Keep exactly one thumbnail in the web report.
     previews = list(getattr(report, "previews", []) or [])[:1]
-    art_uri = _anitoon_start_art_uri()
     hero_src = (
         "data:image/jpeg;base64," + str(previews[0].get("data") or "")
         if previews and previews[0].get("data")
-        else art_uri
+        else ""
     )
-    hero_alt = "Automatic file thumbnail" if previews and previews[0].get("data") else "AniToon fallback artwork"
-    hero_label = "🎞️ Auto thumbnail from file" if previews and previews[0].get("data") else "🎨 Preview unavailable"
+    hero_alt = "Automatic file thumbnail" if previews and previews[0].get("data") else ""
+    hero_label = "🎞️ Auto thumbnail from file" if previews and previews[0].get("data") else ""
 
     report_id = esc((report_token or "local")[:14])
 
