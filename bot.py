@@ -3967,9 +3967,12 @@ h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spa
 .pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}}
 .pill{{display:inline-flex;align-items:center;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);font-size:10px;color:var(--muted)}}
 .countdown{{color:var(--b);font-weight:950}}
-.hero-media{{height:235px;overflow:hidden;border-radius:18px;border:1px solid rgba(167,139,250,.30);background:rgba(255,255,255,.03);position:relative}}
+.hero-media{{height:235px;overflow:hidden;border-radius:18px;border:1px solid rgba(167,139,250,.30);background:rgba(255,255,255,.03);position:relative;animation:thumbFloat 6.5s ease-in-out infinite}}
+.hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 18%,rgba(255,255,255,.08) 43%,transparent 59%);background-size:220% 100%;background-position:-120% 0;background-repeat:no-repeat;animation:thumbSheen 6s ease-in-out infinite;pointer-events:none}}
 .hero-media img{{display:block;width:100%;height:100%;object-fit:contain;background:rgba(0,0,0,.15)}}
-.media-label{{position:absolute;left:10px;bottom:10px;padding:6px 8px;border-radius:8px;background:rgba(5,6,17,.72);font-size:10px;font-weight:900}}
+.media-label{{position:absolute;left:10px;bottom:10px;padding:6px 8px;border-radius:8px;background:rgba(5,6,17,.72);font-size:10px;font-weight:900;z-index:2}}
+@keyframes thumbSheen{{0%,18%{{background-position:-120% 0}}62%,100%{{background-position:120% 0}}}}
+@keyframes thumbFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-3px)}}}}
 .stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}}
 .stat{{padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.03)}}
 .stat b{{display:block;font-size:19px}} .stat span{{font-size:10px;color:var(--muted)}}
@@ -4044,6 +4047,9 @@ html[data-theme="light"] .file{{color:#4e5878}}
   <div class="footer">
     <span><strong>AniToon</strong> • PDF Media Intelligence</span>
     <span>Report ID {report_id}</span>
+  </div>
+  <div style="margin-top:18px">
+    <a class="home" href="/" style="display:flex;justify-content:center;padding:14px 18px;border-radius:14px">⌂ Home <span>↗</span></a>
   </div>
 </div>
 
