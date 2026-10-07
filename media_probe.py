@@ -846,6 +846,35 @@ async def generate_video_previews(
                 timeout=timeout,
             )
             if not thumb:
+                # Some Telegram documents/videos have no generated thumbnail.
+                # Create exactly one first-frame preview from a bounded source
+                # read, never exceeding the strict below-5-MB source budget.
+                try:
+                    raw_source = await _bounded_pdf_bytes(client, message, token)
+                    if raw_source and not raw_source.startswith(b"%PDF-") and av is not None:
+                        container = av.open(io.BytesIO(raw_source), mode="r")
+                        try:
+                            stream = next((st for st in container.streams if st.type == "video"), None)
+                            if stream is not None:
+                                frame = next(container.decode(stream), None)
+                                if frame is not None:
+                                    image = frame.to_image().convert("RGB")
+                                    image.thumbnail((1800, 1200), Image.Resampling.LANCZOS)
+                                    output = io.BytesIO()
+                                    image.save(output, format="JPEG", quality=84, optimize=True, progressive=True)
+                                    generated = output.getvalue()
+                                    if generated and len(generated) <= 512 * 1024:
+                                        return [{
+                                            "ratio": 0,
+                                            "seconds": 0,
+                                            "data": base64.b64encode(generated).decode("ascii"),
+                                            "mime": "image/jpeg",
+                                            "label": "Automatic first-frame thumbnail",
+                                        }]
+                        finally:
+                            container.close()
+                except Exception:
+                    log.info("Automatic first-frame thumbnail unavailable | token=%s", token, exc_info=True)
                 log.info("No Telegram thumbnail available | token=%s", token)
                 return []
 
