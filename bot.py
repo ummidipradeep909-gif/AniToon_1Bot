@@ -219,49 +219,44 @@ def _anitoon_start_art_b64() -> str:
     return _anitoon_art_cache
 
 
-def _anitoon_start_art_uri() -> str:
-    data = _anitoon_start_art_b64()
-    return "data:image/jpeg;base64," + data if data else ""
-
-
 def _anitoon_start_art_bytes() -> bytes | None:
-    """Return a clearer, upscaled Telegram photo while keeping the source art unchanged."""
+    """Return the horizontal 4K AniToon start banner as a real Telegram photo."""
     global _anitoon_art_photo_cache
     if _anitoon_art_photo_cache is not None:
         return _anitoon_art_photo_cache
 
-    data = _anitoon_start_art_b64()
-    if not data:
-        return None
-
+    asset_path = os.path.join(os.path.dirname(__file__), "assets", "anitoon_start_4k.jpg")
     try:
-        raw = base64.b64decode(data, validate=True)
+        with open(asset_path, "rb") as handle:
+            raw = handle.read()
         with Image.open(io.BytesIO(raw)) as source:
             image = source.convert("RGB")
-            image = image.resize((768, 768), Image.Resampling.LANCZOS)
-            image = ImageEnhance.Contrast(image).enhance(1.04)
-            image = ImageEnhance.Color(image).enhance(1.03)
             image = image.filter(
-                ImageFilter.UnsharpMask(radius=0.9, percent=120, threshold=3)
+                ImageFilter.UnsharpMask(radius=0.65, percent=105, threshold=3)
             )
             out = io.BytesIO()
             image.save(
                 out,
                 format="JPEG",
-                quality=95,
+                quality=92,
                 optimize=True,
                 progressive=True,
                 subsampling=0,
             )
             _anitoon_art_photo_cache = out.getvalue()
+            return _anitoon_art_photo_cache
+    except (OSError, ValueError):
+        pass
     except Exception:
-        log.exception("Failed to enhance AniToon start artwork")
-        try:
-            _anitoon_art_photo_cache = base64.b64decode(data, validate=True)
-        except Exception:
-            return None
+        log.exception("Failed to load AniToon 4K start artwork")
 
-    return _anitoon_art_photo_cache
+    data = _anitoon_start_art_b64()
+    if not data:
+        return None
+    try:
+        return base64.b64decode(data, validate=True)
+    except Exception:
+        return None
 
 
 def metadata_button(token: str):
@@ -328,7 +323,7 @@ def compact_scan_result(report: Report) -> str:
     )
 
 HOME_TEXT = (
-    "⛩ <b>Welcome to AniToon</b> ⛩\n\n"
+    "⛩ <b>Welcome to AniToon Media Intelligence Bot</b> ⛩\n\n"
     "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
     "⚡ Fast, bounded media inspection with a clean web report.\n\n"
     "✨ Simple, fast and easy to use."
