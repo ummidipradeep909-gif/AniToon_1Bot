@@ -1417,22 +1417,18 @@ async def run_scan(
             if current < 1:
                 current = 1
 
-            # Use clear milestone jumps in the middle of the scan:
-            # 34% → 44% → 56% → 68% → 88% → 97% → 100%.
+            # Clear scan milestones after the initial phase:
+            # 34% → 56% → 79% → 96% → 100%.
             if current < 34:
                 visual_pct = min(34, current + 3)
-            elif current < 44:
-                visual_pct = 44
             elif current < 56:
                 visual_pct = 56
-            elif current < 68:
-                visual_pct = 68
-            elif current < 88:
-                visual_pct = 88
-            elif current < 97:
-                visual_pct = 97
+            elif current < 79:
+                visual_pct = 79
+            elif current < 96:
+                visual_pct = 96
             else:
-                visual_pct = min(97, current)
+                visual_pct = min(96, current)
 
             progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
