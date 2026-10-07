@@ -3984,7 +3984,12 @@ h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spa
 .pdf-spec span{{color:var(--muted);font-size:10px}} .pdf-spec strong{{font-size:10px;text-align:right;overflow-wrap:anywhere}}
 .footer{{margin-top:14px;color:#7b819b;font-size:9px;display:flex;justify-content:space-between}}
 @media(max-width:820px){{.hero{{grid-template-columns:1fr}}.hero-media{{height:220px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-@media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
+html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.80);--line:rgba(37,45,80,.12);--text:#18203b;--muted:#5d6788;--a:#6757e8;--b:#0b7ea0;--good:#128b52}}
+html[data-theme="light"] body{{background:linear-gradient(180deg,#f7f9ff,#e6ebff);color:var(--text)}}
+html[data-theme="light"] .anime{{opacity:.08}}
+html[data-theme="light"] .nav,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.80)}}
+html[data-theme="light"] .file{{color:#4e5878}}
+@media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.nav{{align-items:flex-start}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
 </style>
 </head>
 <body>
@@ -3992,7 +3997,15 @@ h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spa
 <div class="wrap">
   <nav class="nav">
     <div class="brand">AniToon • PDF Intelligence</div>
-    <a class="home" href="/">⌂ Home ↗</a>
+    <div class="nav-tools">
+      <a class="home" href="/" aria-label="Go to AniToon home">⌂ Home ↗</a>
+      <div class="controls">
+        <button type="button" id="theme-toggle">☀️ Light</button>
+        <button type="button" id="zoom-out" title="Zoom out">−</button>
+        <button type="button" id="zoom-label" title="Reset zoom">100%</button>
+        <button type="button" id="zoom-in" title="Zoom in">+</button>
+      </div>
+    </div>
   </nav>
 
   <header class="hero">
@@ -4050,6 +4063,22 @@ h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spa
     if (left > 0) setTimeout(tick,1000); else el.textContent = "EXPIRED";
   }};
   tick();
+}})();
+
+(() => {{
+  const root=document.documentElement, wrap=document.querySelector(".wrap");
+  const themeBtn=document.getElementById("theme-toggle");
+  const zoomOut=document.getElementById("zoom-out"), zoomIn=document.getElementById("zoom-in"), zoomLabel=document.getElementById("zoom-label");
+  const read=(k,f)=>{{try{{return localStorage.getItem(k)??f}}catch(_){{return f}}}};
+  const write=(k,v)=>{{try{{localStorage.setItem(k,v)}}catch(_){{}}}};
+  const applyTheme=t=>{{root.dataset.theme=t;if(themeBtn)themeBtn.textContent=t==="light"?"🌙 Dark":"☀️ Light";write("anitoon-theme",t)}};
+  const applyZoom=v=>{{const z=Math.max(.80,Math.min(1.20,Number(v)||1));if(wrap)wrap.style.zoom=z;if(zoomLabel)zoomLabel.textContent=Math.round(z*100)+"%";write("anitoon-zoom",String(z))}};
+  applyTheme(read("anitoon-theme","dark")==="light"?"light":"dark");
+  applyZoom(Number(read("anitoon-zoom","1")));
+  themeBtn?.addEventListener("click",()=>applyTheme(root.dataset.theme==="light"?"dark":"light"));
+  zoomOut?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))-.10));
+  zoomIn?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))+.10));
+  zoomLabel?.addEventListener("click",()=>applyZoom(1));
 }})();
 </script>
 </body>
