@@ -220,43 +220,67 @@ def _anitoon_start_art_b64() -> str:
 
 
 def _anitoon_start_art_bytes() -> bytes | None:
-    """Return the horizontal 4K AniToon start banner as a real Telegram photo."""
+    """Return a Telegram-safe JPEG for the AniToon start photo."""
     global _anitoon_art_photo_cache
     if _anitoon_art_photo_cache is not None:
         return _anitoon_art_photo_cache
 
-    asset_path = os.path.join(os.path.dirname(__file__), "assets", "anitoon_start_4k.jpg")
-    try:
-        with open(asset_path, "rb") as handle:
-            raw = handle.read()
-        with Image.open(io.BytesIO(raw)) as source:
-            image = source.convert("RGB")
-            image = image.filter(
-                ImageFilter.UnsharpMask(radius=0.65, percent=105, threshold=3)
-            )
-            out = io.BytesIO()
-            image.save(
-                out,
-                format="JPEG",
-                quality=92,
-                optimize=True,
-                progressive=True,
-                subsampling=0,
-            )
-            _anitoon_art_photo_cache = out.getvalue()
-            return _anitoon_art_photo_cache
-    except (OSError, ValueError):
-        pass
-    except Exception:
-        log.exception("Failed to load AniToon 4K start artwork")
+    def normalize(raw: bytes) -> bytes | None:
+        try:
+            with Image.open(io.BytesIO(raw)) as source:
+                source.verify()
+            with Image.open(io.BytesIO(raw)) as source:
+                image = source.convert("RGB")
+                # Telegram is stricter about image decoding than Pillow; always
+                # send a freshly encoded baseline JPEG rather than raw bytes.
+                image = image.filter(
+                    ImageFilter.UnsharpMask(radius=0.55, percent=95, threshold=3)
+                )
+                out = io.BytesIO()
+                image.save(
+                    out,
+                    format="JPEG",
+                    quality=88,
+                    optimize=True,
+                    progressive=False,
+                    subsampling=2,
+                )
+                return out.getvalue()
+        except Exception:
+            return None
 
+    # Preferred new banner asset. A missing asset is handled gracefully.
+    asset_candidates = (
+        os.path.join(os.path.dirname(__file__), "assets", "anitoon_start_4k.jpg"),
+        os.path.join(os.path.dirname(__file__), "assets", "anitoon_start_4k.png"),
+    )
+    for asset_path in asset_candidates:
+        try:
+            with open(asset_path, "rb") as handle:
+                normalized = normalize(handle.read())
+            if normalized:
+                _anitoon_art_photo_cache = normalized
+                return normalized
+        except OSError:
+            continue
+
+    # Backward-compatible bundled artwork, also normalized before upload.
     data = _anitoon_start_art_b64()
-    if not data:
-        return None
-    try:
-        return base64.b64decode(data, validate=True)
-    except Exception:
-        return None
+    if data:
+        try:
+            raw = base64.b64decode(data, validate=True)
+            normalized = normalize(raw)
+            if normalized:
+                _anitoon_art_photo_cache = normalized
+                return normalized
+        except Exception:
+            log.exception("Failed to normalize bundled AniToon start artwork")
+
+    log.error(
+        "AniToon start artwork unavailable; expected assets/anitoon_start_4k.jpg "
+        "or assets/anitoon_start_4k.png"
+    )
+    return None
 
 
 def metadata_button(token: str):
@@ -2971,14 +2995,22 @@ async def handle_new_message(
         if art:
             art_stream = io.BytesIO(art)
             art_stream.name = "AniToon.jpg"
-            await event.client.send_file(
-                event.chat_id,
-                art_stream,
-                caption=home_text,
-                parse_mode="html",
-                buttons=start_buttons,
-                force_document=False,
-            )
+            try:
+                await event.client.send_file(
+                    event.chat_id,
+                    art_stream,
+                    caption=home_text,
+                    parse_mode="html",
+                    buttons=start_buttons,
+                    force_document=False,
+                )
+            except errors.ImageProcessFailedError:
+                log.exception("Telegram rejected AniToon start image; falling back to text home")
+                await event.reply(
+                    home_text,
+                    parse_mode="html",
+                    buttons=start_buttons,
+                )
         else:
             await event.reply(
                 home_text,
