@@ -4,3 +4,4 @@ av==18.1.0
 pymongo>=4.6,<5
 cryptography>=43,<46
 Pillow>=11,<13
+PyMuPDF>=1.24,<2
