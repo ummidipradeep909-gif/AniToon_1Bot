@@ -4208,7 +4208,7 @@ def web_page(
                 ("hearing_impaired", "HI"),
                 ("visual_impaired", "VI"),
             ):
-                if (kind == "Subtitle" and key == "default") or track.get(key) == "yes":
+                if track.get(key) == "yes":
                     flags.append(label)
 
             badges = "".join(f'<span class="badge">{esc(flag)}</span>' for flag in flags)
