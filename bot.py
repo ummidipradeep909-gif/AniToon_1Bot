@@ -3951,14 +3951,22 @@ def pdf_web_page(
   --text:#f7f7fb;--muted:#9fa6c1;--a:#a78bfa;--b:#67e8f9;--good:#7cf4b0;
 }}
 *{{box-sizing:border-box}}
+html{{scroll-behavior:smooth}}
 body{{margin:0;min-height:100vh;background:
 radial-gradient(circle at 10% 5%,rgba(139,92,246,.17),transparent 28%),
 radial-gradient(circle at 90% 15%,rgba(103,232,249,.12),transparent 25%),
 #050611;color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
-.anime{{position:fixed;inset:0;z-index:-2;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.14;filter:saturate(1.05)}}
+.anime{{position:fixed;inset:0;z-index:-2;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.22;filter:saturate(1.05);animation:wallpaperZoom 18s ease-in-out infinite alternate}}
+body::after{{content:"";position:fixed;inset:-35%;z-index:-1;background:conic-gradient(from 0deg,transparent 0 20%,rgba(167,139,250,.11) 28%,transparent 38% 56%,rgba(103,232,249,.09) 64%,transparent 78%);filter:blur(40px);animation:spin 26s linear infinite;pointer-events:none}}
+.topline{{height:3px;background:linear-gradient(90deg,transparent,var(--a),var(--b),transparent);background-size:200% 100%;animation:flow 5s linear infinite}}
 .wrap{{max-width:1080px;margin:auto;padding:18px 16px 52px}}
 .nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:14px;border:1px solid var(--line);border-radius:18px;background:rgba(7,9,22,.74);backdrop-filter:blur(18px)}}
 .brand{{font-size:11px;font-weight:950;letter-spacing:.10em;text-transform:uppercase}}
+.nav-actions{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
+.tool,.home{{color:var(--text);text-decoration:none;padding:8px 10px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px;cursor:pointer}}
+.tool:hover,.home:hover{{transform:translateY(-1px);background:rgba(167,139,250,.16)}}
+.display-controls{{display:flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px}}
+.display-controls button{{border:0;border-radius:7px;padding:6px 8px;background:transparent;color:var(--text);font:800 11px system-ui;cursor:pointer}}
 .nav-actions{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}} .tool,.home{{color:var(--text);text-decoration:none;padding:8px 10px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px;cursor:pointer}} .tool:hover,.home:hover{{transform:translateY(-1px);background:rgba(167,139,250,.16)}}
 .hero{{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(260px,380px);gap:18px;padding:20px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:0 28px 80px rgba(0,0,0,.34)}}
 .eyebrow{{display:inline-flex;padding:6px 9px;border:1px solid rgba(124,244,176,.16);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.12em;text-transform:uppercase}}
@@ -3988,6 +3996,9 @@ html[data-theme="light"] body{{background:linear-gradient(180deg,#f7f9ff,#e6ebff
 html[data-theme="light"] .anime{{opacity:.08}}
 html[data-theme="light"] .nav,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.80)}}
 html[data-theme="light"] .file{{color:#4e5878}}
+@keyframes wallpaperZoom{{from{{transform:scale(1.03)}}to{{transform:scale(1.08)}}}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+@keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
 @media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.nav{{align-items:flex-start}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
 </style>
 </head>
