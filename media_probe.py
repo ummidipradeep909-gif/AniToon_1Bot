@@ -14,6 +14,11 @@ from typing import Any
 import av
 from PIL import Image, ImageFilter, ImageOps
 
+try:
+    import fitz  # PyMuPDF
+except Exception:
+    fitz = None
+
 from file_inspector import inspect_telegram_message
 
 from file_inspector import Report
@@ -713,6 +718,102 @@ def _extract_video_previews(container: Any, stream: Any) -> list[dict[str, Any]]
 PREVIEW_CONCURRENCY = 1
 preview_semaphore = asyncio.Semaphore(PREVIEW_CONCURRENCY)
 
+async def _bounded_pdf_bytes(client: Any, message: Any, token: str) -> bytes | None:
+    """Read at most the strict below-5-MB PDF processing budget."""
+    f = getattr(message, "file", None)
+    total = getattr(f, "size", None)
+    limit = MAX_SAFE_SOURCE_BYTES
+    if isinstance(total, int) and total > 0 and total < limit:
+        raw = await asyncio.wait_for(
+            client.download_media(message, file=bytes),
+            timeout=8,
+        )
+        return bytes(raw) if raw else None
+
+    media = getattr(message, "media", None)
+    if not media:
+        return None
+
+    out = io.BytesIO()
+    chunk = min(DEFAULT_RANGE_CHUNK, limit)
+    async for part in client.iter_download(
+        media,
+        offset=0,
+        limit=limit,
+        chunk_size=chunk,
+        request_size=chunk,
+        file_size=total,
+    ):
+        remain = limit - out.tell()
+        if remain <= 0:
+            break
+        out.write(bytes(part[:remain]))
+        if out.tell() >= limit:
+            break
+    raw = out.getvalue()
+    return raw or None
+
+
+async def _pdf_first_page_preview(client: Any, message: Any, token: str) -> dict[str, Any] | None:
+    if fitz is None:
+        log.warning("PyMuPDF is unavailable for PDF thumbnail | token=%s", token)
+        return None
+
+    try:
+        raw = await _bounded_pdf_bytes(client, message, token)
+        if not raw or not raw.startswith(b"%PDF-"):
+            return None
+
+        # Rendering happens only from the bounded bytes above; no full source copy
+        # is created for PDFs over the strict 5-MB boundary.
+        document = fitz.open(stream=raw, filetype="pdf")
+        try:
+            if document.page_count < 1:
+                return None
+            page = document.load_page(0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(1.45, 1.45), alpha=False)
+            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            image.thumbnail((1800, 1200), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(
+                output,
+                format="JPEG",
+                quality=88,
+                optimize=True,
+                progressive=True,
+                subsampling="4:2:0",
+            )
+            web_raw = output.getvalue()
+            if len(web_raw) > 512 * 1024:
+                output = io.BytesIO()
+                image.save(
+                    output,
+                    format="JPEG",
+                    quality=68,
+                    optimize=True,
+                    progressive=True,
+                    subsampling="4:2:0",
+                )
+                web_raw = output.getvalue()
+            if not web_raw or len(web_raw) > 512 * 1024:
+                return None
+            return {
+                "ratio": 0,
+                "seconds": 0,
+                "data": base64.b64encode(web_raw).decode("ascii"),
+                "mime": "image/jpeg",
+                "label": "PDF first page",
+            }
+        finally:
+            document.close()
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        log.info("PDF first-page thumbnail unavailable | token=%s", token)
+        return None
+    except Exception:
+        log.exception("PDF first-page thumbnail failed | token=%s", token)
+        return None
+
+
 async def generate_video_previews(
     client: Any,
     message: Any,
@@ -721,13 +822,25 @@ async def generate_video_previews(
     budget: int = 256 * 1024,
     timeout: int = 5,
 ) -> list[dict[str, Any]]:
-    """Return one smooth high-resolution web thumbnail; never read source frames."""
+    """Generate one web preview: PDF first page, otherwise Telegram's thumbnail."""
     async with preview_semaphore:
         try:
+            f = getattr(message, "file", None)
+            mime = str(getattr(f, "mime_type", None) or "").lower()
+            name = str(getattr(f, "name", None) or "").lower()
+            is_pdf = name.endswith(".pdf") or mime == "application/pdf" or mime.endswith("/pdf")
+
+            if is_pdf:
+                pdf_preview = await _pdf_first_page_preview(client, message, token)
+                if pdf_preview:
+                    return [pdf_preview]
+
             media = getattr(message, "media", None)
             if not media:
                 return []
 
+            # For video/images and other Telegram media, use only Telegram's
+            # existing generated thumbnail; never seek frames from the source.
             thumb = await asyncio.wait_for(
                 client.download_media(message, file=bytes, thumb=0),
                 timeout=timeout,
@@ -747,10 +860,7 @@ async def generate_video_previews(
 
             with Image.open(io.BytesIO(raw)) as image:
                 image = ImageOps.exif_transpose(image).convert("RGB")
-                image.thumbnail(
-                    (3840, 2160),
-                    Image.Resampling.LANCZOS,
-                )
+                image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
                 image = image.filter(ImageFilter.UnsharpMask(radius=0.9, percent=105, threshold=3))
                 output = io.BytesIO()
                 image.save(
@@ -787,10 +897,10 @@ async def generate_video_previews(
                 "label": "Telegram thumbnail",
             }]
         except (asyncio.TimeoutError, asyncio.CancelledError):
-            log.info("Telegram thumbnail preview unavailable | token=%s", token)
+            log.info("Web preview unavailable | token=%s", token)
             return []
         except Exception:
-            log.exception("Telegram thumbnail preview failed | token=%s", token)
+            log.exception("Web preview failed | token=%s", token)
             return []
 
 
