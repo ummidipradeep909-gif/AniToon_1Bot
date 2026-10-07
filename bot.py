@@ -3963,7 +3963,7 @@ radial-gradient(circle at 90% 15%,rgba(103,232,249,.12),transparent 25%),
 .wrap{{max-width:1080px;margin:auto;padding:18px 16px 52px}}
 .nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:14px;border:1px solid var(--line);border-radius:18px;background:rgba(7,9,22,.74);backdrop-filter:blur(18px)}}
 .brand{{font-size:11px;font-weight:950;letter-spacing:.10em;text-transform:uppercase}}
-.home{{color:var(--text);text-decoration:none;padding:8px 12px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px}}
+.nav-actions{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}} .tool,.home{{color:var(--text);text-decoration:none;padding:8px 10px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px;cursor:pointer}} .tool:hover,.home:hover{{transform:translateY(-1px);background:rgba(167,139,250,.16)}}
 .hero{{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(260px,380px);gap:18px;padding:20px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:0 28px 80px rgba(0,0,0,.34)}}
 .eyebrow{{display:inline-flex;padding:6px 9px;border:1px solid rgba(124,244,176,.16);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.12em;text-transform:uppercase}}
 h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spacing:-.045em}}
@@ -4053,6 +4053,27 @@ html[data-theme="light"] .file{{color:#4e5878}}
 
 <script>
 (() => {{
+  const root = document.documentElement;
+  let scale = 1;
+  window.zoom = (delta) => {{
+    scale = delta === 0 ? 1 : Math.max(.8, Math.min(1.25, scale + delta));
+    document.body.style.zoom = scale;
+  }};
+  window.toggleTheme = () => {{
+    const light = root.dataset.theme === "light";
+    root.dataset.theme = light ? "dark" : "light";
+    if (!light) {{
+      root.style.setProperty("--bg","#f5f7fb");
+      root.style.setProperty("--panel","rgba(255,255,255,.88)");
+      root.style.setProperty("--text","#111827");
+      root.style.setProperty("--muted","#667085");
+    }} else {{
+      root.style.setProperty("--bg","#050611");
+      root.style.setProperty("--panel","rgba(12,15,34,.78)");
+      root.style.setProperty("--text","#f7f7fb");
+      root.style.setProperty("--muted","#9fa6c1");
+    }}
+  }};
   const expiresAt = {expiry_ms};
   const el = document.getElementById("countdown");
   const tick = () => {{
