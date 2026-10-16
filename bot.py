@@ -116,7 +116,18 @@ logging.basicConfig(
 )
 log = logging.getLogger("anitoons-file-checker")
 
-bot = TelegramClient("file_checker_bot", API_ID, API_HASH)
+# Bound Telegram network handshakes/retries so a data-center migration cannot
+# leave the web process alive while the bot is stuck in startup indefinitely.
+bot = TelegramClient(
+    "file_checker_bot",
+    API_ID,
+    API_HASH,
+    timeout=15,
+    connection_retries=3,
+    request_retries=3,
+    retry_delay=2,
+    auto_reconnect=True,
+)
 bot.flood_sleep_threshold = 15 * 60
 check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 scan_queue_lock = asyncio.Lock()
@@ -5608,7 +5619,15 @@ async def main():
     try:
         while True:
             try:
-                await bot.start(bot_token=BOT_TOKEN)
+                log.info("Starting main Telegram bot connection")
+                # Telethon can wait on a data-center migration. Bound the
+                # whole startup operation and restart the client if it stalls.
+                await asyncio.wait_for(
+                    bot.start(bot_token=BOT_TOKEN),
+                    timeout=45,
+                )
+                if not bot.is_connected():
+                    raise ConnectionError("Telegram client did not stay connected after startup")
                 break
             except errors.FloodWaitError as exc:
                 wait_seconds = max(1, int(exc.seconds) + 5)
@@ -5616,7 +5635,23 @@ async def main():
                     "Telegram authorization rate-limited; waiting %s seconds before retry",
                     wait_seconds,
                 )
+                with suppress(Exception):
+                    await bot.disconnect()
                 await asyncio.sleep(wait_seconds)
+            except TimeoutError:
+                log.exception(
+                    "Telegram startup timed out after 45 seconds; resetting connection and retrying"
+                )
+                with suppress(Exception):
+                    await bot.disconnect()
+                await asyncio.sleep(5)
+            except Exception:
+                log.exception(
+                    "Telegram startup failed; resetting connection and retrying in 10 seconds"
+                )
+                with suppress(Exception):
+                    await bot.disconnect()
+                await asyncio.sleep(10)
 
         try:
             mongo_ok = await ensure_mongodb()
