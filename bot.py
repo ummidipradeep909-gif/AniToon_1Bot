@@ -369,40 +369,35 @@ CLONE_HOME_TEXT = (
 )
 
 CLONE_HELP_TEXT = (
-    "📖 <b>AniToon Media Info Clone</b>\n\n"
-    "📤 Send a photo, video, GIF, sticker, PDF, audio file or document.\n"
-    "🔎 Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full web report.\n\n"
-    "📋 <b>Commands</b>\n"
-    "/start or /menu — Open this clone bot\n"
-    "/help or /commands — Show usage and all commands\n"
+    "📚 <b>AniToon Clone — Command Guide</b>\n\n"
+    "📤 <b>Scan a file</b>\n"
+    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "⌨️ <b>Commands</b>\n"
+    "/start — Open the bot menu\n"
+    "/help — Show this command guide\n"
+    "/about — Learn about AniToon\n"
+    "/scan — Show file-scanning instructions\n"
     "/stats — View your scan statistics\n"
-    "/ping — Check that the bot is online\n"
-    "/id — Show your Telegram user and chat IDs\n"
+    "/addtogroup — Get the group invite link\n"
     "/cancel — Cancel your active scan\n"
-    "/group or /addtogroup — Get the group invite link\n"
-    "/about — About AniToon\n"
     "/main — Open the main bot for clone management"
 )
 
 HELP_TEXT = (
-    "📖 <b>How to Use AniToon</b>\n\n"
-    "1️⃣ Send a photo, video, sticker, GIF, PDF, audio file, document or supported post media.\n"
-    "2️⃣ Tap <b>🔎 Scan Files</b>.\n"
-    "3️⃣ Tap <b>🌐 Open File Info</b> for the complete web report.\n\n"
-    "🤖 <b>Clone Bots</b>\n"
-    "Use <b>Clone Manager</b> on the home screen to create, view or manage your clone bots.\n\n"
-    "📋 <b>Commands</b>\n"
-    "/start or /menu — Open the main menu\n"
-    "/help or /commands — Show usage and all commands\n"
+    "📚 <b>AniToon — Command Guide</b>\n\n"
+    "🔎 <b>Scan a file</b>\n"
+    "Send a photo, video, GIF, sticker, PDF, audio file, document or supported post media. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "⌨️ <b>Commands</b>\n"
+    "/start — Open the main menu\n"
+    "/help — Show this command guide\n"
+    "/about — Learn about AniToon\n"
+    "/scan — Show file-scanning instructions\n"
     "/stats — View your scan statistics\n"
-    "/about — About AniToon\n"
     "/clone — Create or connect a clone bot\n"
     "/myclones — View and manage your clone bots\n"
-    "/ping — Check that the bot is online\n"
-    "/id — Show your Telegram user and chat IDs\n"
-    "/cancel — Cancel your active scan\n"
-    "/group or /addtogroup — Get the group invite link\n\n"
-    "💡 Use the home buttons for Scan Files and Clone Manager."
+    "/addtogroup — Get the group invite link\n"
+    "/cancel — Cancel your active scan\n\n"
+    "💡 The Help button and /help show this same guide."
 )
 
 ABOUT_TEXT = (
@@ -2653,33 +2648,25 @@ def _owner_broadcast_pending(user_id: int) -> bool:
 async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
     if include_clone:
         commands = [
-            types.BotCommand(command="start", description="Open menu and scan media"),
-            types.BotCommand(command="menu", description="Open the main menu"),
-            types.BotCommand(command="help", description="Show usage and supported files"),
-            types.BotCommand(command="commands", description="List all bot commands"),
-            types.BotCommand(command="stats", description="View your scan statistics"),
+            types.BotCommand(command="start", description="Open the main menu"),
+            types.BotCommand(command="help", description="Show the command guide"),
             types.BotCommand(command="about", description="About AniToon"),
+            types.BotCommand(command="scan", description="How to scan a file"),
+            types.BotCommand(command="stats", description="View your scan statistics"),
             types.BotCommand(command="clone", description="Create or connect a clone bot"),
-            types.BotCommand(command="myclones", description="View and manage your clones"),
-            types.BotCommand(command="addtogroup", description="Get the group invite link"),
-            types.BotCommand(command="group", description="Get the group invite link"),
-            types.BotCommand(command="ping", description="Check whether the bot is online"),
-            types.BotCommand(command="id", description="Show your Telegram IDs"),
+            types.BotCommand(command="myclones", description="Manage your clone bots"),
+            types.BotCommand(command="addtogroup", description="Add AniToon to a group"),
             types.BotCommand(command="cancel", description="Cancel your active scan"),
         ]
     else:
         commands = [
-            types.BotCommand(command="start", description="Open clone bot menu"),
-            types.BotCommand(command="menu", description="Open the clone menu"),
-            types.BotCommand(command="help", description="How to scan files"),
-            types.BotCommand(command="commands", description="List all bot commands"),
-            types.BotCommand(command="stats", description="View your scan statistics"),
+            types.BotCommand(command="start", description="Open the clone menu"),
+            types.BotCommand(command="help", description="Show the command guide"),
             types.BotCommand(command="about", description="About AniToon"),
+            types.BotCommand(command="scan", description="How to scan a file"),
+            types.BotCommand(command="stats", description="View your scan statistics"),
             types.BotCommand(command="main", description="Open main bot and clone tools"),
-            types.BotCommand(command="addtogroup", description="Get the group invite link"),
-            types.BotCommand(command="group", description="Get the group invite link"),
-            types.BotCommand(command="ping", description="Check whether the bot is online"),
-            types.BotCommand(command="id", description="Show your Telegram IDs"),
+            types.BotCommand(command="addtogroup", description="Add this bot to a group"),
             types.BotCommand(command="cancel", description="Cancel your active scan"),
         ]
 
@@ -3124,7 +3111,7 @@ async def handle_new_message(
         await show_main_bot_redirect(event)
         return
 
-    if command in {"/start", "/menu"}:
+    if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
         start_parts = text.split(maxsplit=1)
@@ -3169,36 +3156,21 @@ async def handle_new_message(
             )
         return
 
-    if command in {"/help", "/commands"}:
+    if command == "/help":
         await record_user(event)
         sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
-    if command == "/ping":
+    if command == "/scan":
         await record_user(event)
-        uptime_seconds = max(
-            0,
-            int((datetime.now(timezone.utc) - started_at).total_seconds()),
-        )
-        uptime = str(timedelta(seconds=uptime_seconds))
         await event.reply(
-            "🏓 <b>Pong!</b> AniToon is online.\n"
-            f"⏱ Runtime uptime: <code>{html.escape(uptime)}</code>",
+            "🔎 <b>How to Scan a File</b>\n\n"
+            "1. Send a photo, video, GIF, sticker, PDF, audio file or document.\n"
+            "2. Tap <b>Scan Files</b>.\n"
+            "3. Open <b>Open File Info</b> to view the full web report.",
             parse_mode="html",
-        )
-        return
-
-    if command == "/id":
-        await record_user(event)
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
-        chat_id = getattr(event, "chat_id", None)
-        await event.reply(
-            "🪪 <b>Telegram IDs</b>\n\n"
-            f"👤 User ID: <code>{html.escape(str(user_id if user_id is not None else 'unavailable'))}</code>\n"
-            f"💬 Chat ID: <code>{html.escape(str(chat_id if chat_id is not None else 'unavailable'))}</code>",
-            parse_mode="html",
+            buttons=back_buttons(),
         )
         return
 
@@ -3216,7 +3188,7 @@ async def handle_new_message(
         )
         return
 
-    if command in {"/addtogroup", "/group"}:
+    if command == "/addtogroup":
         await record_user(event)
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
