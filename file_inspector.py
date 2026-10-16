@@ -106,6 +106,8 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     mime_clean=(mime or "").strip().lower()
 
     if h.startswith(b"\x1aE\xdf\xa3"): return "Matroska/WebM container","mkv"
+    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"avif", b"avis"}: return "AVIF image","avif"
+    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"}: return "HEIF/HEIC image","heic"
     if len(data)>=12 and data[4:8]==b"ftyp": return "ISO Base Media File Format (MP4/MOV)","mp4"
     if h.startswith(b"fLaC"): return "FLAC audio","flac"
     if h.startswith(b"OggS"): return "Ogg container","ogg"
@@ -150,8 +152,6 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     if h.startswith(b"BM"): return "Bitmap image","bmp"
     if h.startswith((b"II*\x00", b"MM\x00*")): return "TIFF image","tiff"
     if h.startswith(b"\x00\x00\x01\x00"): return "Icon image","ico"
-    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"avif", b"avis"}: return "AVIF image","avif"
-    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"}: return "HEIF/HEIC image","heic"
 
     txt=data[:8192].decode("utf-8","replace").lstrip("\ufeff \t\r\n")
     if re.search(r"<svg(?:\s|>)", txt, re.I) or (txt.startswith("<?xml") and re.search(r"<svg(?:\s|>)", txt, re.I)):
@@ -1109,10 +1109,19 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
             date_value = date_value.replace(tzinfo=timezone.utc)
         put("message_date_utc", date_value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
     put("post_author", getattr(message, "post_author", None))
+    put("is_channel_post", bool(getattr(message, "post", False) or getattr(message, "views", None) is not None))
     put("views", getattr(message, "views", None))
     put("forwards", getattr(message, "forwards", None))
     put("replies", getattr(getattr(message, "replies", None), "replies", None))
     put("grouped_media_album", bool(getattr(message, "grouped_id", None)))
+    forwarded = getattr(message, "fwd_from", None)
+    put("forwarded_from_name", getattr(forwarded, "from_name", None))
+    put("forwarded_post_number", getattr(forwarded, "channel_post", None))
+    forwarded_date = getattr(forwarded, "date", None)
+    if isinstance(forwarded_date, datetime):
+        if forwarded_date.tzinfo is None:
+            forwarded_date = forwarded_date.replace(tzinfo=timezone.utc)
+        put("forwarded_date_utc", forwarded_date.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     filename_attr = next((v for k, v in attr_map.items() if "documentattributefilename" in k), None)
     put("telegram_filename_attribute", getattr(filename_attr, "file_name", None))
@@ -1130,6 +1139,7 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
         emoji_attr = next((v for k, v in attr_map.items() if "documentattributecustomemoji" in k), None)
         put("custom_emoji_id_present", getattr(emoji_attr, "document_id", None) is not None)
         put("custom_emoji_free", getattr(emoji_attr, "free", None))
+        put("custom_emoji_alt_text", getattr(emoji_attr, "alt", None))
 
     if video_attr is not None:
         put("video_width", getattr(video_attr, "w", None))
@@ -1138,7 +1148,7 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
         put("video_duration_seconds", f"{float(dur):.3f}" if dur is not None else None)
         put("supports_streaming", getattr(video_attr, "supports_streaming", None))
         put("video_is_round_note", getattr(video_attr, "round_message", None))
-        put("video_is_silent", getattr(video_attr, " nosound", None) or getattr(video_attr, "nosound", None))
+        put("video_is_silent", getattr(video_attr, "nosound", None))
     if audio_attr is not None:
         put("audio_title", getattr(audio_attr, "title", None))
         put("audio_performer", getattr(audio_attr, "performer", None))
@@ -1212,6 +1222,17 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
         put("contact_phone_present", bool(getattr(contact, "phone_number", None)))
     dice = getattr(media, "value", None) if "dice" in media_type.lower() else None
     put("dice_value", dice)
+    game = getattr(media, "game", None)
+    if game is not None:
+        put("game_title", getattr(game, "title", None))
+        put("game_description", getattr(game, "description", None))
+
+    invoice = getattr(media, "invoice", None)
+    if invoice is not None:
+        put("invoice_title", getattr(invoice, "title", None))
+        put("invoice_description", getattr(invoice, "description", None))
+        put("invoice_currency", getattr(invoice, "currency", None))
+        put("invoice_total_amount", getattr(invoice, "total_amount", None))
 
     # Read image headers/EXIF safely; never expose GPS coordinates or private EXIF blocks.
     if raw and Image is not None and (is_image or report.detected.lower().endswith("image")):
