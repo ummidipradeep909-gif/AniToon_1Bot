@@ -673,13 +673,12 @@ def home_buttons(
     stats = Button.inline("📊 My Stats", b"home:stats")
     help_btn = Button.inline("📖 Help", b"home:help")
     about = Button.inline("ℹ️ About", b"home:about")
-    intel = Button.inline("🧠 Media Intelligence", b"home:intel")
     add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
 
     if include_clone:
         clone = Button.inline("🤖 Clone Manager", b"home:clones")
         buttons = [
-            [scan, intel],
+            [scan],
             [clone, stats],
             [help_btn, about],
             [add_group],
@@ -692,7 +691,7 @@ def home_buttons(
     else:
         create_clone = Button.url("🤖 Open Clone Manager", main_bot_start_url("clones"))
         buttons = [
-            [scan, intel],
+            [scan],
             [stats, help_btn],
             [about],
             [create_clone],
