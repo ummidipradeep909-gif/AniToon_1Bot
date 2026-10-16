@@ -58,20 +58,7 @@ from mongo_store import (
     record_group_chat,
     list_group_chats,
     update_group_onboarding,
-    add_intel_watch,
-    due_intel_watches,
-    list_intel_watches,
-    remove_intel_watch,
 )
-from intelligence import (
-    IntelligenceError,
-    gemini_intelligence,
-    news_rss_intelligence,
-    intelligence_html,
-    youtube_videos,
-    videos_html,
-)
-
 load_dotenv()
 
 API_ID = int(os.environ["API_ID"])
@@ -358,64 +345,6 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
         if shown and shown not in names:
             names.append(shown)
     return names[:12]
-
-
-INTELLIGENCE_HELP_TEXT = (
-    "🧠 <b>AniToon Media Intelligence</b>\n\n"
-    "Explore news and related media with AniToon."
-)
-
-
-def intelligence_buttons() -> list[list[Any]]:
-    return [[Button.inline("⬅️ Home", b"home:back")]]
-
-
-async def intelligence_watch_loop() -> None:
-    """Run a small, bounded batch of opted-in topic reports from the existing process."""
-    while True:
-        await asyncio.sleep(300)
-        if not mongodb_is_connected():
-            continue
-        try:
-            due = await due_intel_watches(limit=2)
-            for watch in due:
-                chat_id = int(watch.get("chat_id") or 0)
-                topic = str(watch.get("topic") or "").strip()
-                if chat_id <= 0 or not topic:
-                    continue
-                try:
-                    if os.getenv("GEMINI_API_KEY", "").strip():
-                        try:
-                            report = await asyncio.to_thread(gemini_intelligence, topic)
-                        except IntelligenceError as exc:
-                            log.warning("Scheduled Gemini unavailable; falling back to RSS: %s", str(exc)[:160])
-                            report = await asyncio.to_thread(news_rss_intelligence, topic)
-                    else:
-                        report = await asyncio.to_thread(news_rss_intelligence, topic)
-                    await bot.send_message(
-                        chat_id,
-                        intelligence_html(report),
-                        parse_mode="html",
-                        link_preview=False,
-                        buttons=intelligence_buttons(),
-                    )
-                except IntelligenceError as exc:
-                    # Do not repeatedly retry the same failed report in a hot loop.
-                    with suppress(Exception):
-                        await bot.send_message(
-                            chat_id,
-                            "⚠️ Scheduled report for <code>" + html.escape(topic[:140]) +
-                            "</code> failed: " + html.escape(str(exc)),
-                            parse_mode="html",
-                            buttons=intelligence_buttons(),
-                        )
-                except Exception:
-                    log.exception("Scheduled intelligence report failed | topic=%s", topic[:100])
-                await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("Intelligence watch scheduler failed")
 
 
 def compact_scan_result(report: Report) -> str:
@@ -2741,12 +2670,6 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
             types.BotCommand(command="clone", description="Open Clone Manager"),
             types.BotCommand(command="addtogroup", description="Add AniToon to a group"),
             types.BotCommand(command="cancel", description="Cancel all your active scans"),
-            types.BotCommand(command="intel", description="Gemini web intelligence report"),
-            types.BotCommand(command="videos", description="Search YouTube video links"),
-            types.BotCommand(command="shorts", description="Search short-form YouTube videos"),
-            types.BotCommand(command="watch", description="Schedule topic reports"),
-            types.BotCommand(command="watches", description="List scheduled topics"),
-            types.BotCommand(command="unwatch", description="Stop a scheduled topic"),
         ]
     else:
         commands = [
@@ -3201,19 +3124,13 @@ async def handle_new_message(
         sender = await event.get_sender()
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
-        if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel", "intel", "videos", "shorts"}:
+        if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
             if start_payload == "help":
                 await event.reply(help_text, parse_mode="html", buttons=help_buttons())
             elif start_payload == "about":
                 await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
             elif start_payload == "scan_files":
                 await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
-            elif start_payload == "intel":
-                await event.reply(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
-            elif start_payload == "videos":
-                await event.reply("Use <code>/videos topic</code> to find individual YouTube videos and source metadata.", parse_mode="html", buttons=intelligence_buttons())
-            elif start_payload == "shorts":
-                await event.reply("Use <code>/shorts topic</code> to search short-duration videos. Search results are not guaranteed to be YouTube Shorts.", parse_mode="html", buttons=intelligence_buttons())
             elif start_payload == "stats":
                 await render_user_stats(event, int(sender.id), edit=False)
             elif start_payload == "clones":
@@ -3280,118 +3197,6 @@ async def handle_new_message(
         sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
-
-    if command in {"/intel", "/videos", "/shorts", "/watch", "/watches", "/unwatch"}:
-        await record_user(event)
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
-        if not include_clone:
-            await event.reply(
-                "🧠 Media intelligence is available on the main AniToon bot.",
-                buttons=[[Button.url("🤖 Open Main AniToon", main_bot_start_url("intel"))], [Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")]],
-            )
-            return
-        argument = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
-        if command == "/intel":
-            if not argument:
-                await event.reply(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
-                return
-            has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
-            status = await event.reply(
-                "🧠 Preparing a Gemini-grounded report…" if has_gemini
-                else "📰 Preparing a live news digest…"
-            )
-            try:
-                if has_gemini:
-                    try:
-                        report = await asyncio.to_thread(gemini_intelligence, argument)
-                    except IntelligenceError as exc:
-                        log.warning("Gemini unavailable; falling back to public news RSS: %s", str(exc)[:160])
-                        report = await asyncio.to_thread(news_rss_intelligence, argument)
-                else:
-                    report = await asyncio.to_thread(news_rss_intelligence, argument)
-                await status.edit(
-                    intelligence_html(report), parse_mode="html", link_preview=False,
-                    buttons=intelligence_buttons()
-                )
-            except IntelligenceError as exc:
-                await status.edit("⚠️ " + html.escape(str(exc)), parse_mode="html", buttons=intelligence_buttons())
-            except Exception:
-                log.exception("Media intelligence report failed")
-                await status.edit(
-                    "⚠️ The report could not be completed. Try again later, or use /videos topic.",
-                    buttons=intelligence_buttons()
-                )
-            return
-        if command in {"/videos", "/shorts"}:
-            if not argument:
-                mode = "short-form YouTube videos" if command == "/shorts" else "YouTube videos"
-                await event.reply(f"Use <code>{command} topic</code> to find {mode}.", parse_mode="html", buttons=intelligence_buttons())
-                return
-            try:
-                result = await asyncio.to_thread(youtube_videos, argument, shorts=(command == "/shorts"))
-                await event.reply(videos_html(result), parse_mode="html", link_preview=False, buttons=intelligence_buttons())
-            except IntelligenceError as exc:
-                await event.reply("⚠️ " + html.escape(str(exc)), parse_mode="html", buttons=intelligence_buttons())
-            except Exception:
-                log.exception("YouTube search failed")
-                await event.reply("⚠️ YouTube search failed. Check the API configuration or try again.", buttons=intelligence_buttons())
-            return
-        if command == "/watch":
-            if not getattr(event, "is_private", False):
-                await event.reply("For privacy and to avoid group spam, use <code>/watch topic</code> in a private chat with AniToon.", parse_mode="html")
-                return
-            if not argument:
-                await event.reply("Use <code>/watch topic</code>. By default, AniToon sends a grounded Gemini report every 12 hours. Use <code>/watches</code> and <code>/unwatch topic</code> to manage alerts.", parse_mode="html", buttons=intelligence_buttons())
-                return
-            # Public RSS digest is available without a Gemini API key. If configured,
-            # the scheduled job prefers Gemini and falls back to RSS during outages.
-            try:
-                interval = int(os.getenv("INTEL_WATCH_INTERVAL_HOURS", "12") or "12")
-            except (TypeError, ValueError):
-                interval = 12
-            interval = max(6, min(interval, 24))
-            result = await add_intel_watch(user_id=int(user_id), chat_id=int(event.chat_id), topic=argument, interval_hours=interval)
-            if result.get("ok"):
-                await event.reply(
-                    f"✅ <b>Topic scheduled</b>\n\n<code>{html.escape(str(result.get('topic') or argument)[:140])}</code>\nReports run every {int(result.get('interval_hours') or interval)} hours. The first report is scheduled after that interval.\n\nUse /watches to review or /unwatch topic to stop it.",
-                    parse_mode="html", buttons=intelligence_buttons()
-                )
-            else:
-                reason = result.get("reason")
-                messages = {
-                    "mongodb_unavailable": "Scheduled topics need MongoDB to be configured and reachable. The owner must configure MONGODB_URI.",
-                    "user_limit": "You can follow up to 2 topics at once. Remove one with /unwatch topic before adding another.",
-                    "global_limit": "The bot has reached its small global watch limit to protect free-tier usage. Try again later.",
-                }
-                await event.reply("⚠️ " + html.escape(messages.get(reason, "The topic could not be saved. Try again later.")), parse_mode="html", buttons=intelligence_buttons())
-            return
-        if command == "/watches":
-            if not mongodb_is_connected():
-                await event.reply("Scheduled topic storage is not connected. The owner must configure MONGODB_URI and restart the bot.", buttons=intelligence_buttons())
-                return
-            watches = await list_intel_watches(int(user_id))
-            if not watches:
-                await event.reply("You have no scheduled topics yet. Use <code>/watch topic</code> to start one.", parse_mode="html", buttons=intelligence_buttons())
-            else:
-                lines = ["🗓️ <b>Your scheduled topics</b>"]
-                for watch in watches:
-                    topic = html.escape(str(watch.get("topic") or "Topic")[:140])
-                    next_run = watch.get("next_run")
-                    next_text = next_run.strftime("%d %b %H:%M UTC") if isinstance(next_run, datetime) else "scheduled"
-                    lines.append(f"• <code>{topic}</code> — every {int(watch.get('interval_hours') or 12)}h; next: {html.escape(next_text)}")
-                await event.reply("\n".join(lines), parse_mode="html", buttons=intelligence_buttons())
-            return
-        if command == "/unwatch":
-            if not mongodb_is_connected():
-                await event.reply("Scheduled topic storage is not connected. The owner must configure MONGODB_URI and restart the bot.", buttons=intelligence_buttons())
-                return
-            if not argument:
-                await event.reply("Use <code>/unwatch exact topic</code> to stop a scheduled report.", parse_mode="html", buttons=intelligence_buttons())
-                return
-            removed = await remove_intel_watch(user_id=int(user_id), topic=argument)
-            await event.reply("✅ Scheduled topic removed." if removed else "No matching active topic was found. Use /watches to see the exact topic.", buttons=intelligence_buttons())
-            return
 
     if command == "/scan_files":
         await record_user(event)
@@ -3798,14 +3603,6 @@ async def handle_callback(
         await render_public_status(event)
         return
 
-    if data == "home:intel":
-        await event.answer()
-        if not include_clone:
-            await show_main_bot_redirect(event, edit=True)
-        else:
-            await event.edit(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
-        return
-
     if data == "home:help":
         await event.answer()
         text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
@@ -4053,7 +3850,7 @@ def home_page(report_token: str | None = None) -> bytes:
           <div class="section-head">
             <div>
               <small>LIVE REPORT</small>
-              <h2>🔬 File Intelligence</h2>
+              <h2>🔬 File Metadata</h2>
             </div>
             <a class="mini-link" href="/report/{safe_token}">Open ↗</a>
           </div>
@@ -4494,7 +4291,7 @@ html[data-theme="light"] .file{{color:#4e5878}}
   </section>
 
   <div class="footer">
-    <span><strong>AniToon</strong> • PDF Media Intelligence</span>
+    <span><strong>AniToon</strong> • PDF File Report</span>
     <span>Report ID {report_id}</span>
   </div>
   <div style="margin-top:18px">
@@ -5149,7 +4946,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 <div class="anime-wallpaper"></div><div class="bg-grid"></div><div class="topline"></div>
 <div class="wrap">
   <nav class="nav">
-    <div class="brand">AniToon • Media Intelligence</div>
+    <div class="brand">AniToon • File Reports</div>
     <div class="nav-tools">
       <a class="home-button" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
       <button class="home-button" type="button" id="print-report" title="Print or save this report as PDF"><span>🖨️ Save PDF</span></button>
@@ -5165,7 +4962,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   <header class="hero">
     <div class="hero-copy">
       <span class="eyebrow"><i></i> @anitoon_1bot</span>
-      <h1>Media Intelligence</h1>
+      <h1>File Report</h1>
       <div class="file">{filename}</div>
       {f'<div class="hero-pills"><span class="pill">🎞️ {esc(title)}</span></div>' if title else ''}
       <div class="hero-pills">
@@ -5194,7 +4991,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     <a class="home-button bottom-home" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
   </div>
 
-  <div class="footer"><span><strong>AniToon</strong> • Media Intelligence</span></div>
+  <div class="footer"><span><strong>AniToon</strong> • File Reports</span></div>
 </div>
 
 <script>
@@ -5296,7 +5093,7 @@ h1{{overflow-wrap:anywhere}} h2{{font-size:17px}} .summary{{color:#b9bfd8}}
 </style>
 </head>
 <body><main>
-<h1>⛩ AniToon Media Intelligence</h1>
+<h1>⛩ AniToon File Report</h1>
 <p><strong>{filename}</strong></p>
 <p class="summary">{summary}</p>
 {''.join(sections)}
@@ -5676,7 +5473,6 @@ strong{color:#fff}
 async def main():
     clone_monitor_task: asyncio.Task | None = None
     group_onboarding_task: asyncio.Task | None = None
-    intelligence_watch_task: asyncio.Task | None = None
     temp_cleanup_task: asyncio.Task | None = None
     _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
     cleanup_app_temp()
@@ -5772,8 +5568,6 @@ async def main():
 
         clone_monitor_task = asyncio.create_task(monitor_clone_bots())
         group_onboarding_task = asyncio.create_task(_group_onboarding_loop())
-        if mongodb_is_connected():
-            intelligence_watch_task = asyncio.create_task(intelligence_watch_loop())
 
         log.info(
             "Telegram bot online as @%s | private_only=%s | clones=%s | concurrency=%s | scan_timeout=%ss | web=%s",
@@ -5792,10 +5586,6 @@ async def main():
             group_onboarding_task.cancel()
             with suppress(asyncio.CancelledError):
                 await group_onboarding_task
-        if intelligence_watch_task is not None:
-            intelligence_watch_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await intelligence_watch_task
         if clone_monitor_task is not None:
             clone_monitor_task.cancel()
             with suppress(asyncio.CancelledError):
