@@ -362,19 +362,17 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
 
 INTELLIGENCE_HELP_TEXT = (
     "🧠 <b>AniToon Media Intelligence</b>\n\n"
-    "📰 <b>Web report</b>\n/intel topic — Gemini report with grounded source links when the key is configured; otherwise a keyless news headline digest.\n\n"
-    "🎬 <b>YouTube links</b>\n/videos topic — Search videos with title, channel, date and links.\n"
-    "/shorts topic — Search short-duration videos. The official API's under-4-minute filter cannot prove a video is a YouTube Short.\n\n"
-    "🗓️ <b>Scheduled reports</b>\n/watch topic — Follow a topic; reports run every 12 hours by default.\n/watches — Review your topics.\n/unwatch exact topic — Stop a topic.\n\n"
-    "🔐 The owner must configure GEMINI_API_KEY and YOUTUBE_API_KEY in Render. Scheduled reports require MongoDB. Topics are capped to protect limited free-tier resources.\n"
-    "📌 Search results are not exhaustive; sentiment is not a representative poll.\n"
-    "🆘 Creator support: @AniToon_0Bot"
+    "📰 /intel topic — Get a news report.\n"
+    "🎬 /videos topic or /shorts topic — Find YouTube videos.\n"
+    "🗓️ /watch topic — Get updates; /watches to view and /unwatch topic to stop.\n\n"
+    "🔐 AI and detailed video info need owner API keys. Scheduled updates need MongoDB.\n"
+    "📣 Updates &amp; support: @AniToon_0Bot"
 )
 
 
 def intelligence_buttons() -> list[list[Any]]:
     return [
-        [Button.inline("⬅️ Home", b"home:back"), Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")],
+        [Button.inline("⬅️ Home", b"home:back"), Button.url("📣 Updates & Support", "https://t.me/AniToon_0Bot")],
     ]
 
 
