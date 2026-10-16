@@ -3831,7 +3831,6 @@ def home_page(report_token: str | None = None) -> bytes:
         ("/stats", "Your scan statistics", "stats", "📊"),
         ("/clone", "Open Clone Manager", "clones", "🤖"),
         ("/addtogroup", "Add the bot to a group", "addtogroup", "➕"),
-        ("/cancel", "Cancel all your scan jobs", "cancel", "🛑"),
     ]
     bot_link = f"https://t.me/{html.escape(BOT_USERNAME, quote=True)}"
     command_html = "".join(
