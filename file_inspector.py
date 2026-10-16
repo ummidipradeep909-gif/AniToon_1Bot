@@ -8,7 +8,14 @@ import os
 import re
 import struct
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
+
+try:
+    from PIL import Image, ExifTags
+except Exception:  # Pillow is optional for metadata-only deployments.
+    Image = None
+    ExifTags = None
 
 # Source-media work is always strictly below 5 MB.
 # Files smaller than this limit are read completely; larger files are bounded.
@@ -79,6 +86,7 @@ class Report:
     subtitles:list[dict[str,Any]]=field(default_factory=list); container:dict[str,str]=field(default_factory=dict)
     probe_ranges:list[str]=field(default_factory=list)
     previews:list[dict[str,Any]]=field(default_factory=list)
+    media_info:dict[str,Any]=field(default_factory=dict)
 
 def human(n:int|None)->str:
     if n is None:return "Not available"
@@ -106,8 +114,17 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     if h.startswith(b"PK\x03\x04"): return "ZIP archive","zip"
     if h.startswith(b"\x89PNG\r\n\x1a\n"): return "PNG image","png"
     if h.startswith(b"\xff\xd8\xff"): return "JPEG image","jpeg"
+    if h.startswith((b"GIF87a", b"GIF89a")): return "GIF image","gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP": return "WebP image","webp"
+    if h.startswith(b"BM"): return "Bitmap image","bmp"
+    if h.startswith((b"II*\x00", b"MM\x00*")): return "TIFF image","tiff"
+    if h.startswith(b"\x00\x00\x01\x00"): return "Icon image","ico"
+    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"avif", b"avis"}: return "AVIF image","avif"
+    if len(data) >= 12 and data[4:8] == b"ftyp" and data[8:12] in {b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"}: return "HEIF/HEIC image","heic"
 
     txt=data[:8192].decode("utf-8","replace").lstrip("\ufeff \t\r\n")
+    if re.search(r"<svg(?:\s|>)", txt, re.I) or (txt.startswith("<?xml") and re.search(r"<svg(?:\s|>)", txt, re.I)):
+        return "SVG vector image","svg"
     if txt.startswith("WEBVTT"): return "WebVTT subtitle","vtt"
     if "[Events]" in txt and re.search(r"^\s*\[Script Info\]",txt,re.I|re.M): return "ASS/SSA subtitle","ass"
     if re.search(r"<tt(?:\s|>)",txt,re.I): return "TTML subtitle","ttml"
@@ -124,16 +141,31 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
         ".ogg":("Ogg audio","ogg"), ".oga":("Ogg audio","ogg"), ".mka":("Matroska audio","mka"),
         ".srt":("SubRip subtitle","srt"), ".ass":("ASS/SSA subtitle","ass"), ".ssa":("ASS/SSA subtitle","ssa"),
         ".vtt":("WebVTT subtitle","vtt"), ".ttml":("TTML subtitle","ttml"),
+        ".jpg":("JPEG image","jpeg"), ".jpeg":("JPEG image","jpeg"), ".jpe":("JPEG image","jpeg"),
+        ".png":("PNG image","png"), ".gif":("GIF image","gif"), ".webp":("WebP image","webp"),
+        ".bmp":("Bitmap image","bmp"), ".dib":("Bitmap image","bmp"), ".tif":("TIFF image","tiff"),
+        ".tiff":("TIFF image","tiff"), ".heic":("HEIF/HEIC image","heic"), ".heif":("HEIF/HEIC image","heic"),
+        ".avif":("AVIF image","avif"), ".ico":("Icon image","ico"), ".svg":("SVG vector image","svg"),
+        ".tgs":("Telegram animated sticker","tgs"), ".webm":("WebM media","mkv"), ".mp4":("MP4 media","mp4"),
     }
     if ext in ext_labels:return ext_labels[ext]
 
     if mime_clean:
+        image_mimes = {
+            "image/jpeg": ("JPEG image", "jpeg"), "image/jpg": ("JPEG image", "jpeg"),
+            "image/png": ("PNG image", "png"), "image/gif": ("GIF image", "gif"),
+            "image/webp": ("WebP image", "webp"), "image/bmp": ("Bitmap image", "bmp"),
+            "image/tiff": ("TIFF image", "tiff"), "image/avif": ("AVIF image", "avif"),
+            "image/heic": ("HEIF/HEIC image", "heic"), "image/svg+xml": ("SVG vector image", "svg"),
+        }
+        if mime_clean in image_mimes:
+            return image_mimes[mime_clean]
         for prefix,label in (
             ("video/","Video media"),("audio/","Audio media"),
             ("text/","Text document"),("image/","Image file"),
         ):
             if mime_clean.startswith(prefix):
-                return f"{label} ({mime_clean})","binary"
+                return f"{label} ({mime_clean})", _ext(name).lstrip(".") or "image"
         if mime_clean=="application/pdf": return "PDF document","pdf"
         if mime_clean=="application/zip": return "ZIP archive","zip"
         return mime_clean,"binary"
@@ -906,13 +938,264 @@ async def _read_range(client,media,total,offset,n):
         return out.getvalue(),None
     except Exception as e:return out.getvalue(),f"{type(e).__name__}: {e}"
 
+def _short_text(value: Any, limit: int = 180) -> str:
+    text = " ".join(str(value or "").replace("\x00", "").split())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b"") -> None:
+    """Add Telegram attachment attributes, post context, and image-header metadata."""
+    f = getattr(message, "file", None)
+    media = getattr(message, "media", None)
+    attrs = list(getattr(f, "attributes", None) or [])
+    attr_names = {type(attr).__name__.lower() for attr in attrs}
+    attr_map = {type(attr).__name__.lower(): attr for attr in attrs}
+    mime = str(getattr(f, "mime_type", None) or report.mime or "").lower()
+    name = str(getattr(f, "name", None) or report.filename or "").lower()
+    ext = _ext(name)
+    media_type = type(media).__name__ if media is not None else "No media wrapper"
+    details: dict[str, Any] = {}
+
+    def put(key: str, value: Any) -> None:
+        if value is None or value == "":
+            return
+        if isinstance(value, bool):
+            value = "Yes" if value else "No"
+        if isinstance(value, (int, float)):
+            value = str(value)
+        value = _short_text(value, 220)
+        if value:
+            details[key] = value
+
+    sticker = any("documentattributesticker" in n for n in attr_names)
+    custom_emoji = any("documentattributecustomemoji" in n for n in attr_names)
+    animated = any("documentattributeanimated" in n for n in attr_names)
+    video_attr = next((v for k, v in attr_map.items() if "documentattributevideo" in k), None)
+    audio_attr = next((v for k, v in attr_map.items() if "documentattributeaudio" in k), None)
+    photo_obj = getattr(message, "photo", None)
+    is_pdf = ext == ".pdf" or mime == "application/pdf" or report.detected.lower().startswith("pdf")
+    is_audio = audio_attr is not None or mime.startswith("audio/") or ext in AUDIO_EXT
+    is_video = video_attr is not None or mime.startswith("video/") or ext in {
+        ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpeg", ".mpg",
+        ".ts", ".m2ts", ".3gp", ".wmv", ".flv", ".ogv", ".mts",
+    }
+    is_image = photo_obj is not None or mime.startswith("image/") or ext in {
+        ".jpg", ".jpeg", ".jpe", ".png", ".gif", ".webp", ".bmp", ".dib",
+        ".tif", ".tiff", ".heic", ".heif", ".avif", ".ico", ".svg",
+    }
+    attr_voice = bool(getattr(audio_attr, "voice", False)) if audio_attr is not None else False
+    round_video = bool(getattr(video_attr, "round_message", False)) if video_attr is not None else False
+
+    # Specific Telegram document attributes take precedence over broad MIME labels.
+    if custom_emoji:
+        category = "Custom emoji"
+    elif sticker:
+        category = "Sticker"
+    elif round_video:
+        category = "Video note"
+    elif attr_voice or "voice" in mime or ext in {".oga", ".opus"} and getattr(audio_attr, "voice", False):
+        category = "Voice message"
+    elif animated or ext == ".gif" or mime == "image/gif":
+        category = "Animation"
+    elif is_pdf:
+        category = "PDF document"
+    elif is_video:
+        category = "Video"
+    elif is_audio:
+        category = "Audio"
+    elif is_image:
+        category = "Photo" if photo_obj is not None or media_type == "MessageMediaPhoto" else "Image"
+    elif "poll" in media_type.lower():
+        category = "Poll"
+    elif "contact" in media_type.lower():
+        category = "Contact card"
+    elif "venue" in media_type.lower():
+        category = "Venue"
+    elif "geo" in media_type.lower():
+        category = "Location"
+    elif "webpage" in media_type.lower():
+        category = "Web page preview"
+    elif "dice" in media_type.lower():
+        category = "Dice"
+    elif "game" in media_type.lower():
+        category = "Game"
+    elif "invoice" in media_type.lower():
+        category = "Invoice"
+    elif f is not None:
+        category = "Document"
+    elif media is not None:
+        category = media_type.replace("MessageMedia", "").replace("Media", "") or "Other Telegram media"
+    else:
+        category = report.media_kind or "File"
+
+    report.media_kind = category
+    put("category", category)
+    put("detected_format", report.detected)
+    put("telegram_media_type", media_type)
+    put("file_extension", ext.lstrip(".").upper() if ext else None)
+    put("declared_mime_type", mime or None)
+    put("file_size_bytes", report.size)
+    put("is_document", f is not None and not bool(photo_obj))
+    put("has_caption", bool(getattr(message, "message", None) or getattr(message, "raw_text", None)))
+    caption = getattr(message, "message", None) or getattr(message, "raw_text", None)
+    if caption:
+        put("caption_preview", _short_text(caption, 140))
+        put("caption_characters", len(str(caption)))
+    put("telegram_message_id", getattr(message, "id", None))
+    date_value = getattr(message, "date", None)
+    if isinstance(date_value, datetime):
+        if date_value.tzinfo is None:
+            date_value = date_value.replace(tzinfo=timezone.utc)
+        put("message_date_utc", date_value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
+    put("post_author", getattr(message, "post_author", None))
+    put("views", getattr(message, "views", None))
+    put("forwards", getattr(message, "forwards", None))
+    put("replies", getattr(getattr(message, "replies", None), "replies", None))
+    put("grouped_media_album", bool(getattr(message, "grouped_id", None)))
+
+    filename_attr = next((v for k, v in attr_map.items() if "documentattributefilename" in k), None)
+    put("telegram_filename_attribute", getattr(filename_attr, "file_name", None))
+    put("dimensions", f"{getattr(f, 'width', None)} × {getattr(f, 'height', None)}"
+        if getattr(f, "width", None) and getattr(f, "height", None) and (is_image or is_video) else None)
+
+    if sticker:
+        sticker_attr = next((v for k, v in attr_map.items() if "documentattributesticker" in k), None)
+        put("sticker_alt_text", getattr(sticker_attr, "alt", None))
+        set_value = getattr(sticker_attr, "stickerset", None)
+        put("sticker_set", getattr(set_value, "short_name", None) or getattr(set_value, "title", None))
+        put("sticker_is_mask", getattr(sticker_attr, "mask", None))
+        put("sticker_is_animated", animated or ext in {".tgs", ".webm"})
+    if custom_emoji:
+        emoji_attr = next((v for k, v in attr_map.items() if "documentattributecustomemoji" in k), None)
+        put("custom_emoji_id_present", getattr(emoji_attr, "document_id", None) is not None)
+        put("custom_emoji_free", getattr(emoji_attr, "free", None))
+
+    if video_attr is not None:
+        put("video_width", getattr(video_attr, "w", None))
+        put("video_height", getattr(video_attr, "h", None))
+        dur = getattr(video_attr, "duration", None)
+        put("video_duration_seconds", f"{float(dur):.3f}" if dur is not None else None)
+        put("supports_streaming", getattr(video_attr, "supports_streaming", None))
+        put("video_is_round_note", getattr(video_attr, "round_message", None))
+        put("video_is_silent", getattr(video_attr, " nosound", None) or getattr(video_attr, "nosound", None))
+    if audio_attr is not None:
+        put("audio_title", getattr(audio_attr, "title", None))
+        put("audio_performer", getattr(audio_attr, "performer", None))
+        dur = getattr(audio_attr, "duration", None)
+        put("audio_duration_seconds", f"{float(dur):.3f}" if dur is not None else None)
+        put("audio_is_voice", getattr(audio_attr, "voice", None))
+        put("audio_is_music", bool(getattr(audio_attr, "title", None) or getattr(audio_attr, "performer", None)))
+        put("audio_has_waveform", bool(getattr(audio_attr, "waveform", None)))
+
+    if is_pdf:
+        put("pdf_version", report.container.get("pdf_version"))
+        put("pdf_pages", report.container.get("pages"))
+        put("pdf_page_size", report.container.get("page_size_name") or report.container.get("page_size_points"))
+        put("pdf_encrypted", report.container.get("encrypted"))
+
+    webpage = getattr(media, "webpage", None)
+    if webpage is not None:
+        put("webpage_title", getattr(webpage, "title", None))
+        put("webpage_site_name", getattr(webpage, "site_name", None))
+        put("webpage_url", getattr(webpage, "url", None))
+        put("webpage_type", getattr(webpage, "type", None))
+        put("webpage_description", getattr(webpage, "description", None))
+    poll = getattr(media, "poll", None)
+    if poll is not None:
+        question = getattr(poll, "question", None)
+        if question is not None and not isinstance(question, (str, int, float)):
+            question = getattr(question, "text", question)
+        put("poll_question", question)
+        answers = getattr(poll, "answers", None) or []
+        answer_texts = [getattr(a, "text", "") for a in answers[:10]]
+        put("poll_options", " | ".join(str(x) for x in answer_texts if x))
+        put("poll_option_count", len(answers))
+        put("poll_is_quiz", getattr(poll, "quiz", None))
+        put("poll_multiple_answers", getattr(poll, "multiple_choice", None))
+        results = getattr(media, "results", None)
+        put("poll_voter_count", getattr(results, "total_voters", None))
+    geo = getattr(media, "geo", None)
+    if geo is not None:
+        put("location_coordinates_present", getattr(geo, "lat", None) is not None and getattr(geo, "long", None) is not None)
+    venue = getattr(media, "venue", None)
+    if venue is not None:
+        put("venue_title", getattr(venue, "title", None))
+        put("venue_provider", getattr(venue, "provider", None))
+        put("venue_address_present", bool(getattr(venue, "address", None)))
+    contact = getattr(media, "contact", None)
+    if contact is not None:
+        put("contact_name", " ".join(str(getattr(contact, k, "") or "") for k in ("first_name", "last_name")).strip())
+        put("contact_phone_present", bool(getattr(contact, "phone_number", None)))
+    dice = getattr(media, "value", None) if "dice" in media_type.lower() else None
+    put("dice_value", dice)
+
+    # Read image headers/EXIF safely; never expose GPS coordinates or private EXIF blocks.
+    if raw and Image is not None and (is_image or report.detected.lower().endswith("image")):
+        try:
+            with Image.open(io.BytesIO(raw)) as image:
+                put("image_format", image.format)
+                put("image_pixel_dimensions", f"{image.width} × {image.height}")
+                put("image_color_mode", image.mode)
+                n_frames = int(getattr(image, "n_frames", 1) or 1)
+                put("image_frame_count", n_frames)
+                put("image_is_animated", n_frames > 1)
+                duration_ms = image.info.get("duration")
+                put("image_frame_duration_ms", duration_ms)
+                put("image_has_transparency", "transparency" in image.info or "A" in image.mode)
+                put("image_progressive", image.info.get("progressive") or image.info.get("progression"))
+                exif = image.getexif()
+                if exif and ExifTags is not None:
+                    readable = []
+                    safe_tags = {"Make", "Model", "Software", "DateTime", "DateTimeOriginal", "Orientation"}
+                    for tag_id, value in exif.items():
+                        tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
+                        if tag_name not in safe_tags:
+                            continue
+                        if isinstance(value, bytes):
+                            value = value.decode("utf-8", "replace")
+                        readable.append(f"{tag_name}: {_short_text(value, 90)}")
+                        if len(readable) >= 6:
+                            break
+                    if readable:
+                        put("image_exif_summary", "; ".join(readable))
+        except Exception:
+            # Image headers or thumbnails may be truncated by the bounded probe.
+            pass
+
+    report.media_info.update(details)
+
+
+def _metadata_only_report(message: Any) -> Report:
+    """Build a safe metadata-only report for Telegram media without file bytes."""
+    media = getattr(message, "media", None)
+    media_type = type(media).__name__ if media is not None else "No media wrapper"
+    detected = media_type.replace("MessageMedia", "").replace("Media", "") or "Telegram message"
+    report = Report(
+        filename=str(getattr(getattr(message, "file", None), "name", None) or "Telegram message media"),
+        size=getattr(getattr(message, "file", None), "size", None),
+        mime=getattr(getattr(message, "file", None), "mime_type", None),
+        detected=detected,
+        media_kind="Telegram message",
+    )
+    report.notes.append("This Telegram message has no downloadable file bytes; metadata was collected from its message/media attributes only.")
+    _populate_telegram_media_info(message, report)
+    return report
+
+
 def _report(message:Any,pieces:list[ProbePiece])->Report:
     f=getattr(message,"file",None);name=str(getattr(f,"name",None) or "telegram_file");size=getattr(f,"size",None);mime=getattr(f,"mime_type",None)
     first=next((x for x in pieces if x.offset==0),pieces[0]);detected,kind=magic(first.data,name,mime)
     r=Report(filename=name,size=int(size) if isinstance(size,int) else None,mime=str(mime) if mime else None,ext=_ext(name),detected=detected,media_kind=("PDF" if kind=="pdf" else "Video" if (mime or "").startswith("video/") else "File"),sampled=sum(len(x.data) for x in pieces),sample_hash=hashlib.sha256(b"".join(x.data for x in pieces)).hexdigest())
     if getattr(f,"duration",None) is not None:
         r.container["runtime"]=_fmtsec(float(f.duration));r.container["runtime_source"]="Telegram media metadata"
-    if getattr(f,"width",None) and getattr(f,"height",None):
+    attrs = list(getattr(f, "attributes", None) or [])
+    attr_names = {type(attr).__name__.lower() for attr in attrs}
+    video_attr_present = any("documentattributevideo" in value for value in attr_names)
+    is_video_media = video_attr_present or str(mime or "").lower().startswith("video/") or _ext(name) in {
+        ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpeg", ".mpg",
+        ".ts", ".m2ts", ".3gp", ".wmv", ".flv", ".ogv", ".mts",
+    }
+    if is_video_media and getattr(f,"width",None) and getattr(f,"height",None):
         r.video["dimensions"]=f"{int(f.width)} × {int(f.height)}"
         if kind=="mp4" and not r.video.get("tracks"):
             r.video["tracks"]=[{
@@ -950,6 +1233,8 @@ def _report(message:Any,pieces:list[ProbePiece])->Report:
             if sec and sec>0:r.container["average_bitrate"]=f"{(r.size*8/sec)/1_000_000:.2f} Mbps"
         except ValueError:pass
     for x in pieces:r.probe_ranges.append(f"{x.label}: +{human(x.offset)} ({human(len(x.data))})")
+    first_raw = next((x.data for x in pieces if x.offset == 0), b"")
+    _populate_telegram_media_info(message, r, first_raw)
     if r.ext in SUB_EXT and not r.subtitles:r.subtitles.append({"name":SUB_EXT[r.ext],"format":SUB_EXT[r.ext],"source":"filename extension"})
     if r.ext in AUDIO_EXT and not r.audio:r.audio["format_hint"]=AUDIO_EXT[r.ext]
     if r.size is None or r.sampled < r.size:
@@ -1008,6 +1293,9 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     media=getattr(message,"media",None)
     if not media:
         raise ValueError("Message has no media")
+    if f is None:
+        await (progress("🧩 Stage 1/1 • collecting Telegram message and media attributes…") if progress else asyncio.sleep(0))
+        return _metadata_only_report(message), 0
 
     configured_budget = deep_probe_budget()
     total_int = int(total) if isinstance(total, int) and total > 0 else None
@@ -1091,8 +1379,15 @@ def format_report(r:Report)->str:
         f"📦 {_safe(r.detected)}",
         f"📏 {human(r.size)}",
         f"🧾 MIME: {_safe(r.mime or 'application/octet-stream')}",
+        f"🧩 Media category: <b>{_safe(r.media_info.get('category') or r.media_kind or 'File')}</b>",
     ]
     if r.container.get("runtime"):lines.append(f"⏱ Runtime: <b>{_safe(r.container['runtime'])}</b>")
+    for key in ("image_pixel_dimensions", "image_format", "sticker_alt_text", "sticker_set",
+                "video_duration_seconds", "audio_title", "audio_performer", "pdf_pages",
+                "webpage_title", "poll_question", "post_author", "views", "forwards"):
+        value = r.media_info.get(key)
+        if value not in (None, ""):
+            lines.append(f"• {_safe(key.replace('_',' ').title())}: {_safe(value)}")
     lines += [
         "",
         f"🎬 Video tracks: <b>{len(v) if isinstance(v,list) else 0}</b>",
@@ -1106,6 +1401,25 @@ def format_report(r:Report)->str:
 
 
 def format_section(r:Report,section:str)->str:
+    if section == "media":
+        lines = ["🧩 <b>MEDIA-SPECIFIC DETAILS</b>", ""]
+        label_overrides = {
+            "category": "Media category", "detected_format": "Detected format",
+            "telegram_media_type": "Telegram media type", "file_extension": "File extension",
+            "declared_mime_type": "MIME type", "file_size_bytes": "File size in bytes",
+            "caption_preview": "Caption preview", "caption_characters": "Caption length",
+            "telegram_message_id": "Telegram message ID", "message_date_utc": "Message date",
+            "post_author": "Post author", "views": "Views", "forwards": "Forwards",
+            "replies": "Replies", "grouped_media_album": "Part of album/grouped media",
+        }
+        if r.media_info:
+            for key, value in r.media_info.items():
+                if value not in (None, ""):
+                    label = label_overrides.get(key, key.replace("_", " ").title())
+                    lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
+        else:
+            lines.append("No media-specific attributes were found.")
+        return "\n".join(lines)
     if section=="audio":
         tracks=r.audio.get("tracks",[]);lines=["🔊 <b>AUDIO TRACKS</b>",""]
         if tracks:
