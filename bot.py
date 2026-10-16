@@ -362,7 +362,7 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
 
 INTELLIGENCE_HELP_TEXT = (
     "🧠 <b>AniToon Media Intelligence</b>\n\n"
-    "📰 <b>Web report</b>\n/intel topic — Gemini brief grounded in Google Search with source links, trends, cautious sentiment and claim checks.\n\n"
+    "📰 <b>Web report</b>\n/intel topic — Gemini report with grounded source links when the key is configured; otherwise a keyless news headline digest.\n\n"
     "🎬 <b>YouTube links</b>\n/videos topic — Search videos with title, channel, date and links.\n"
     "/shorts topic — Search short-duration videos. The official API's under-4-minute filter cannot prove a video is a YouTube Short.\n\n"
     "🗓️ <b>Scheduled reports</b>\n/watch topic — Follow a topic; reports run every 12 hours by default.\n/watches — Review your topics.\n/unwatch exact topic — Stop a topic.\n\n"
