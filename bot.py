@@ -1469,16 +1469,16 @@ async def run_scan(
             if current < 1:
                 current = 1
 
-            # Clear scan milestones after the initial phase:
-            # 34% → 56% → 79% → 96% → 100%.
-            if current < 34:
-                visual_pct = min(34, current + 3)
-            elif current < 56:
-                visual_pct = 56
-            elif current < 79:
-                visual_pct = 79
-            elif current < 96:
-                visual_pct = 96
+            # Move the animated bar through clear 20% milestones while
+            # keeping 100% reserved for a completed report.
+            if current < 20:
+                visual_pct = min(20, current + 3)
+            elif current < 40:
+                visual_pct = 40
+            elif current < 60:
+                visual_pct = 60
+            elif current < 80:
+                visual_pct = 80
             else:
                 visual_pct = min(96, current)
 
