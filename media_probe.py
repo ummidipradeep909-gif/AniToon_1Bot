@@ -660,7 +660,8 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
     if (not primary.detected or primary.detected.lower() in {"unknown", "detected media"}) and secondary.detected:
         primary.detected = secondary.detected
     if not primary.mime and secondary.mime: primary.mime = secondary.mime
-    primary.media_kind = secondary.media_kind if secondary.media_kind != "File" else primary.media_kind
+    if primary.media_kind in {"", "File", "Detected media"} and secondary.media_kind not in {"", "File", "Detected media"}:
+        primary.media_kind = secondary.media_kind
     for key, value in getattr(secondary, "media_info", {}).items():
         if value not in (None, "", []):
             primary.media_info.setdefault(key, value)
