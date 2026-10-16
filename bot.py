@@ -418,7 +418,7 @@ def _coerce_report(value: Any) -> Report:
         allowed = {
             "filename", "size", "mime", "ext", "detected", "media_kind",
             "sampled", "sample_hash", "notes", "video", "audio",
-            "subtitles", "container", "probe_ranges", "previews",
+            "subtitles", "container", "probe_ranges", "previews", "media_info",
         }
         report = Report(**{key: value.get(key) for key in allowed if key in value})
     else:
@@ -432,6 +432,8 @@ def _coerce_report(value: Any) -> Report:
         report.audio = {"tracks": report.audio} if isinstance(report.audio, list) else {}
     if not isinstance(report.container, dict):
         report.container = {}
+    if not isinstance(getattr(report, "media_info", None), dict):
+        report.media_info = {}
 
     video_tracks = report.video.get("tracks", [])
     audio_tracks = report.audio.get("tracks", [])
@@ -2906,15 +2908,34 @@ async def render_public_status(event, *, edit: bool = True) -> None:
 
 
 def is_checkable_message(event) -> bool:
-    """Return True only for Telegram video/document messages that can be scanned."""
+    """Accept downloadable files/photos and supported Telegram post attachments."""
     message = getattr(event, "message", None)
     if message is None:
         return False
-    if getattr(message, "video", None) is not None:
+
+    if any(getattr(message, key, None) is not None for key in (
+        "photo", "video", "document", "sticker", "gif", "audio",
+        "voice", "video_note", "animation",
+    )):
         return True
-    if getattr(message, "document", None) is not None:
-        return True
-    return False
+
+    media = getattr(message, "media", None)
+    if media is None:
+        return False
+
+    # These Telegram media types do not have a downloadable file payload, but
+    # can still return useful message-level metadata in a metadata-only report.
+    media_type = type(media).__name__.lower()
+    return any(token in media_type for token in (
+        "messageMediaPoll".lower(),
+        "messageMediaContact".lower(),
+        "messageMediaGeo".lower(),
+        "messageMediaVenue".lower(),
+        "messageMediaWebPage".lower(),
+        "messageMediaDice".lower(),
+        "messageMediaGame".lower(),
+        "messageMediaInvoice".lower(),
+    ))
 
 
 async def handle_new_message(
@@ -3989,6 +4010,10 @@ def pdf_web_page(
         row("Document type", "PDF document"),
         row("Runtime", runtime),
         row("Runtime source", c.get("runtime_source")),
+    ] + [
+        row(key.replace("_", " ").title(), value)
+        for key, value in (report.media_info.items() if isinstance(getattr(report, "media_info", None), dict) else [])
+        if value not in (None, "", []) and key not in {"caption_preview", "webpage_description"}
     ])
 
     expiry_ms = int(expires_at.timestamp() * 1000) if expires_at else 0
@@ -4221,6 +4246,86 @@ def web_page(
 
     def icon_for(kind: str) -> str:
         return {"Video": "🎬", "Audio": "🎧", "Subtitle": "💬"}.get(kind, "◈")
+
+    media_info = report.media_info if isinstance(getattr(report, "media_info", None), dict) else {}
+    media_label_overrides = {
+        "category": "Media category",
+        "detected_format": "Detected format",
+        "telegram_media_type": "Telegram media type",
+        "file_extension": "File extension",
+        "declared_mime_type": "MIME type",
+        "file_size_bytes": "File size (bytes)",
+        "image_pixel_dimensions": "Image pixels",
+        "image_format": "Image format",
+        "image_color_mode": "Color mode",
+        "image_frame_count": "Frame count",
+        "image_is_animated": "Animated",
+        "image_frame_duration_ms": "Frame duration (ms)",
+        "image_has_transparency": "Transparency",
+        "image_progressive": "Progressive image",
+        "image_exif_summary": "Safe EXIF summary",
+        "sticker_alt_text": "Sticker emoji / alt text",
+        "sticker_set": "Sticker set",
+        "sticker_is_mask": "Mask sticker",
+        "sticker_is_animated": "Animated sticker",
+        "video_width": "Video width",
+        "video_height": "Video height",
+        "video_duration_seconds": "Video duration (seconds)",
+        "supports_streaming": "Supports streaming",
+        "video_is_round_note": "Round video note",
+        "video_is_silent": "Silent video",
+        "audio_title": "Audio title",
+        "audio_performer": "Performer / artist",
+        "audio_duration_seconds": "Audio duration (seconds)",
+        "audio_is_voice": "Voice message",
+        "audio_is_music": "Music / track",
+        "audio_has_waveform": "Voice waveform present",
+        "pdf_version": "PDF version",
+        "pdf_pages": "Pages",
+        "pdf_page_size": "Page size",
+        "pdf_encrypted": "Encrypted",
+        "caption_preview": "Caption preview",
+        "caption_characters": "Caption characters",
+        "telegram_message_id": "Telegram message ID",
+        "message_date_utc": "Message date (UTC)",
+        "post_author": "Post author",
+        "views": "Views",
+        "forwards": "Forwards",
+        "replies": "Replies",
+        "grouped_media_album": "Part of a media album",
+        "webpage_title": "Web page title",
+        "webpage_site_name": "Web page site",
+        "webpage_url": "Web page URL",
+        "webpage_type": "Web page type",
+        "webpage_description": "Web page description",
+        "poll_question": "Poll question",
+        "poll_options": "Poll options",
+        "poll_option_count": "Poll option count",
+        "poll_is_quiz": "Quiz poll",
+        "poll_multiple_answers": "Multiple poll answers",
+        "poll_voter_count": "Voter count",
+        "location_coordinates_present": "Location attached",
+        "venue_title": "Venue title",
+        "venue_provider": "Venue provider",
+        "venue_address_present": "Venue address present",
+        "contact_name": "Contact name",
+        "contact_phone_present": "Contact phone present",
+        "dice_value": "Dice value",
+    }
+    media_detail_cards = "".join(
+        f'<div class="tech"><small>{esc(media_label_overrides.get(key, key.replace("_", " ").title()))}</small>'
+        f'<b>{esc(pretty_value(value))}</b></div>'
+        for key, value in media_info.items()
+        if value not in (None, "", [])
+    )
+    media_details_section = (
+        f'<details id="media-details" class="section" open>'
+        f'<summary class="section-head"><h2>🧩 Media-specific details</h2>'
+        f'<span class="pill">{sum(1 for v in media_info.values() if v not in (None, "", []))} fields '
+        f'<span class="chev">⌄</span></span></summary>'
+        f'<div class="section-body"><div class="tech-grid">{media_detail_cards}</div></div></details>'
+        if media_detail_cards else ""
+    )
 
     def track_cards(items: list[dict[str, Any]], kind: str) -> str:
         if not items:
@@ -4515,6 +4620,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     {''.join(f'<span class="lang-pill">🎧 {esc(x)}</span>' for x in _language_names_for_report(report, "audio")[:12])}
     {''.join(f'<span class="lang-pill">💬 {esc(x)}</span>' for x in _language_names_for_report(report, "subtitle")[:12])}
   </div>
+
+  {media_details_section}
 
   <nav class="quick" aria-label="Quick navigation">
     <a href="#overview">Overview</a>
