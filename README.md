@@ -6,7 +6,7 @@ AniToon is a lightweight Telegram media-inspection bot with web reports, optiona
 
 - Inspect supported Telegram media and documents; return technical metadata and bounded-sample reports.
 - View web reports with existing report-expiry and resource safeguards.
-- \`/intel <topic>\` — ask Gemini for a concise search-grounded report with source links, emerging trends, cautious public-reaction analysis, claim checks and uncertainty notes.
+- `/intel <topic>` — ask Gemini for a concise search-grounded report with source links, emerging trends, cautious public-reaction analysis, claim checks and uncertainty notes when GEMINI_API_KEY is configured. Without a key or during Gemini errors, it falls back to a keyless headline/source digest from public RSS feeds (not AI analysis).
 - \`/videos <topic>\` — find YouTube videos with titles, channel names, upload dates, descriptions and direct links.
 - \`/shorts <topic>\` — search short-duration YouTube videos. YouTube's public Data API filter returns videos under four minutes; it does not confirm that each result is actually a YouTube Short.
 - \`/watch <topic>\` — opt in to a scheduled Gemini report every 12 hours by default.
@@ -32,7 +32,7 @@ Keys are read from environment variables; they are not stored in source control.
 
 ## Scheduled reports and storage
 
-Scheduled watches are private-chat subscriptions; use \`/watch\` in a private chat with the bot. The first report runs after the configured interval. For persistence across restarts, the existing MongoDB connection must be configured and reachable via \`MONGODB_URI\` (or an existing supported alias). Watches are capped at two per user and twenty globally to limit background API calls. The scheduler processes only a small batch per cycle.
+Scheduled watches are private-chat subscriptions; use `/watch` in a private chat with the bot. The first report runs after the configured interval. When Gemini is configured, reports prefer Gemini; otherwise (or during a Gemini failure), they send a lightweight public RSS headline/source digest. For persistence across restarts, the existing MongoDB connection must be configured and reachable via `MONGODB_URI` (or an existing supported alias). Watches are capped at two per user and twenty globally to limit background API calls.
 
 Reports distinguish sourced facts from inferences when the provider returns grounding metadata. Search coverage and available pages may be incomplete. Sentiment summaries are directional observations from retrieved sources, not representative polling. No YouTube media is downloaded or re-hosted.
 
