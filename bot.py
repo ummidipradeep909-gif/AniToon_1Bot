@@ -3062,19 +3062,10 @@ def is_checkable_message(event) -> bool:
     if media is None:
         return False
 
-    # These Telegram media types do not have a downloadable file payload, but
-    # can still return useful message-level metadata in a metadata-only report.
+    # Any Telegram MessageMedia wrapper can yield useful message-level info,
+    # even when it has no downloadable file bytes. Ignore the empty placeholder.
     media_type = type(media).__name__.lower()
-    return any(token in media_type for token in (
-        "messageMediaPoll".lower(),
-        "messageMediaContact".lower(),
-        "messageMediaGeo".lower(),
-        "messageMediaVenue".lower(),
-        "messageMediaWebPage".lower(),
-        "messageMediaDice".lower(),
-        "messageMediaGame".lower(),
-        "messageMediaInvoice".lower(),
-    ))
+    return media_type.startswith("messagemedia") and "empty" not in media_type
 
 
 async def handle_new_message(
