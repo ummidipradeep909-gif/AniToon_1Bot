@@ -686,7 +686,6 @@ def home_buttons(
         ]
         if _owner_allowed(user_id):
             buttons[-1] = [
-                about,
                 Button.inline("👑 Owner Dashboard", b"owner:dashboard"),
             ]
             buttons.append([add_group])
