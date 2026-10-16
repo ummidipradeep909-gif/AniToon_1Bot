@@ -341,10 +341,112 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
     return names[:12]
 
 def compact_scan_result(report: Report) -> str:
-    return (
-        "✅ <b>METADATA SCAN COMPLETE</b>\n\n"
-        "🌐 Tap <b>Open File Info</b> below to view the complete file metadata."
+    info = report.media_info if isinstance(getattr(report, "media_info", None), dict) else {}
+    category = str(info.get("category") or report.media_kind or "File")
+    lines = [
+        "✅ <b>MEDIA SCAN COMPLETE</b>",
+        "",
+        f"🧩 Type: <b>{html.escape(category)}</b>",
+        f"📄 <code>{html.escape(str(report.filename or 'Telegram media'))[:140]}</code>",
+        f"📦 Format: {html.escape(str(report.detected or 'Unknown'))}",
+        f"📏 Size: {html.escape(human(report.size))}",
+    ]
+
+    category_keys = {
+        "Photo": ("image_pixel_dimensions", "image_format", "image_color_mode", "image_has_transparency"),
+        "Image": ("image_pixel_dimensions", "image_format", "image_color_mode", "image_exif_summary"),
+        "Animation": ("image_pixel_dimensions", "image_format", "image_frame_count", "image_frame_duration_ms"),
+        "Sticker": ("sticker_alt_text", "sticker_set", "sticker_is_animated", "dimensions"),
+        "Custom emoji": ("custom_emoji_free", "sticker_alt_text"),
+        "Video": ("dimensions", "video_duration_seconds", "average_bitrate", "supports_streaming"),
+        "Video note": ("video_width", "video_height", "video_duration_seconds"),
+        "Audio": ("audio_title", "audio_performer", "audio_duration_seconds", "audio_has_waveform"),
+        "Voice message": ("audio_duration_seconds", "audio_is_voice", "audio_has_waveform"),
+        "PDF document": ("pdf_pages", "pdf_version", "pdf_page_size", "pdf_encrypted"),
+        "Office document": ("document_title", "document_creator", "archive_entry_count", "file_extension"),
+        "Archive": ("archive_entry_count", "archive_uncompressed_bytes", "archive_directory_preview"),
+        "E-book": ("document_title", "archive_entry_count", "file_extension"),
+        "Font file": ("file_extension", "declared_mime_type"),
+        "Poll": ("poll_question", "poll_options", "poll_option_count", "poll_voter_count"),
+        "Web page preview": ("webpage_title", "webpage_url", "webpage_site_name", "webpage_description"),
+        "Contact card": ("contact_name", "contact_phone_present"),
+        "Venue": ("venue_title", "venue_provider", "venue_address_present"),
+        "Location": ("location_coordinates_present",),
+    }
+    default_keys = (
+        "dimensions", "image_pixel_dimensions", "image_format", "image_frame_count",
+        "video_duration_seconds", "audio_title", "audio_performer", "audio_duration_seconds",
+        "pdf_pages", "archive_entry_count", "document_title", "webpage_title",
+        "poll_question", "post_author", "views", "forwards", "replies",
     )
+    labels = {
+        "image_pixel_dimensions": "Image pixels",
+        "image_format": "Image format",
+        "image_color_mode": "Color mode",
+        "image_has_transparency": "Transparency",
+        "image_frame_count": "Frame count",
+        "image_frame_duration_ms": "Frame duration (ms)",
+        "sticker_alt_text": "Sticker emoji / text",
+        "sticker_set": "Sticker set",
+        "sticker_is_animated": "Animated sticker",
+        "dimensions": "Dimensions",
+        "video_width": "Video width",
+        "video_height": "Video height",
+        "video_duration_seconds": "Video duration (seconds)",
+        "supports_streaming": "Streaming supported",
+        "audio_title": "Audio title",
+        "audio_performer": "Artist / performer",
+        "audio_duration_seconds": "Audio duration (seconds)",
+        "audio_is_voice": "Voice message",
+        "audio_has_waveform": "Waveform present",
+        "pdf_pages": "PDF pages",
+        "pdf_version": "PDF version",
+        "pdf_page_size": "PDF page size",
+        "pdf_encrypted": "PDF encrypted",
+        "archive_entry_count": "Archive entries",
+        "archive_uncompressed_bytes": "Uncompressed bytes",
+        "archive_directory_preview": "Archive contents",
+        "document_title": "Document title",
+        "document_creator": "Document creator",
+        "file_extension": "Extension",
+        "declared_mime_type": "MIME type",
+        "poll_question": "Poll question",
+        "poll_options": "Options",
+        "poll_option_count": "Option count",
+        "poll_voter_count": "Voters",
+        "webpage_title": "Web page title",
+        "webpage_url": "Web page URL",
+        "webpage_site_name": "Website",
+        "webpage_description": "Page description",
+        "contact_name": "Contact name",
+        "contact_phone_present": "Contact phone present",
+        "venue_title": "Venue",
+        "venue_provider": "Venue provider",
+        "venue_address_present": "Venue address present",
+        "location_coordinates_present": "Location attached",
+        "post_author": "Post author",
+        "views": "Views",
+        "forwards": "Forwards",
+        "replies": "Replies",
+    }
+    selected = category_keys.get(category, default_keys)
+    shown = 0
+    for key in selected:
+        value = info.get(key)
+        if value in (None, "", []):
+            # Container and generic details live outside media_info.
+            if key == "average_bitrate":
+                value = report.container.get("average_bitrate")
+            else:
+                continue
+        label = labels.get(key, key.replace("_", " ").title())
+        lines.append(f"• <b>{html.escape(label)}:</b> {html.escape(str(value)[:200])}")
+        shown += 1
+        if shown >= 4:
+            break
+
+    lines += ["", "🌐 Tap <b>Open File Info</b> below for the full report."]
+    return "\n".join(lines)
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon Media Intelligence Bot</b> ⛩\n\n"
