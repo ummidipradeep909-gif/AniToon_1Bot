@@ -316,7 +316,7 @@ def clone_manager_buttons(records: list[dict[str, Any]]) -> list[list[Any]]:
             Button.inline("🗑 Remove", f"clone:remove:{clone_id}".encode("ascii")),
         ])
     if len(records) < 2:
-        buttons.append([Button.inline("🧬 Create Clone", b"clone:create")])
+        buttons.append([Button.inline("🧬 Create New Clone", b"clone:create")])
     buttons.append([Button.inline("⬅️ Home", b"home:back")])
     return buttons
 
@@ -376,11 +376,11 @@ CLONE_HELP_TEXT = (
     "/start — Open the bot menu\n"
     "/help — Show this command guide\n"
     "/about — Learn about AniToon\n"
-    "/scan — Show file-scanning instructions\n"
+    "/scan_files — Open the Scan Files instructions\n"
     "/stats — View your scan statistics\n"
+    "/clone — Open Clone Manager on the main bot\n"
     "/addtogroup — Get the group invite link\n"
-    "/cancel — Cancel your active scan\n"
-    "/main — Open the main bot for clone management"
+    "/cancel — Cancel all your queued and running scans"
 )
 
 HELP_TEXT = (
@@ -391,13 +391,20 @@ HELP_TEXT = (
     "/start — Open the main menu\n"
     "/help — Show this command guide\n"
     "/about — Learn about AniToon\n"
-    "/scan — Show file-scanning instructions\n"
+    "/scan_files — Open the Scan Files instructions\n"
     "/stats — View your scan statistics\n"
-    "/clone — Create or connect a clone bot\n"
-    "/myclones — View and manage your clone bots\n"
+    "/clone — View and manage your clone bots; create a new clone here\n"
     "/addtogroup — Get the group invite link\n"
-    "/cancel — Cancel your active scan\n\n"
-    "💡 The Help button and /help show this same guide."
+    "/cancel — Cancel all your queued and running scans\n\n"
+    "💡 Help and /help show this same guide. About and /about show the same AniToon information."
+)
+
+SCAN_TEXT = (
+    "🔎 <b>Scan Files</b>\n\n"
+    "1️⃣ Send a photo, video, GIF, sticker, PDF, audio file, document or supported post media.\n"
+    "2️⃣ Tap <b>🔎 Scan File Info</b> under the file message.\n"
+    "3️⃣ Tap <b>🌐 Open File Info</b> to view the complete web report.\n\n"
+    "📄 The report shows the metadata available for that file."
 )
 
 ABOUT_TEXT = (
@@ -537,7 +544,7 @@ def main_bot_start_url(payload: str | None = None) -> str:
 
 
 def clone_redirect_buttons(payload: str = "clone") -> list[list[Any]]:
-    if payload in {"clones", "myclones"}:
+    if payload == "clones":
         primary_label = "🤖 Open Clone Manager"
     else:
         primary_label = "🧬 Create Clone on Main Bot"
@@ -567,7 +574,7 @@ async def show_main_bot_redirect(event, *, edit: bool = False) -> None:
 
 
 async def show_clone_redirect(event, *, payload: str = "clone", edit: bool = False) -> None:
-    if payload in {"clones", "myclones"}:
+    if payload == "clones":
         message = (
             "🤖 <b>Clone Manager</b>\n\n"
             "Open the main AniToon bot to view, manage or remove your clone bots."
@@ -612,7 +619,7 @@ def home_buttons(
             ]
             buttons.append([add_group])
     else:
-        create_clone = Button.url("🧬 Create Your Own Bot", main_bot_start_url("clone"))
+        create_clone = Button.url("🤖 Open Clone Manager", main_bot_start_url("clones"))
         buttons = [
             [scan, stats],
             [help_btn, about],
@@ -628,6 +635,14 @@ def back_buttons() -> list[list[Any]]:
 
 def help_buttons() -> list[list[Any]]:
     return back_buttons()
+
+
+def about_buttons() -> list[list[Any]]:
+    return [
+        [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
+        [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
+        [Button.inline("⬅️ Home", b"home:back")],
+    ]
 
 
 def scan_page_buttons() -> list[list[Any]]:
@@ -2060,20 +2075,18 @@ async def analyze(
     )
 
 
-async def cancel_user_scan(user_id: int, client: Any = None) -> bool:
+async def cancel_user_scan(user_id: int) -> int:
+    """Cancel every queued and running metadata scan belonging to a user, across all bot clients."""
+    cancelled = 0
     for token, pending in list(pending_scans.items()):
-        if pending.user_id == user_id and (client is None or pending.client is client):
+        if pending.user_id == int(user_id):
             pending_scans.pop(token, None)
-            return True
-
+            cancelled += 1
     for token, task in list(active_scans.items()):
-        if active_scan_users.get(token) == user_id:
-            task_client = active_scan_clients.get(token)
-            if client is None or task_client is client:
-                task.cancel()
-                return True
-
-    return False
+        if active_scan_users.get(token) == int(user_id) and not task.done():
+            task.cancel()
+            cancelled += 1
+    return cancelled
 
 
 def _clean_bot_token(value: str) -> str:
@@ -2651,23 +2664,22 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
             types.BotCommand(command="start", description="Open the main menu"),
             types.BotCommand(command="help", description="Show the command guide"),
             types.BotCommand(command="about", description="About AniToon"),
-            types.BotCommand(command="scan", description="How to scan a file"),
-            types.BotCommand(command="stats", description="View your scan statistics"),
-            types.BotCommand(command="clone", description="Create or connect a clone bot"),
-            types.BotCommand(command="myclones", description="Manage your clone bots"),
+            types.BotCommand(command="scan_files", description="Open Scan Files instructions"),
+            types.BotCommand(command="stats", description="Open your scan statistics"),
+            types.BotCommand(command="clone", description="Open Clone Manager"),
             types.BotCommand(command="addtogroup", description="Add AniToon to a group"),
-            types.BotCommand(command="cancel", description="Cancel your active scan"),
+            types.BotCommand(command="cancel", description="Cancel all your active scans"),
         ]
     else:
         commands = [
             types.BotCommand(command="start", description="Open the clone menu"),
             types.BotCommand(command="help", description="Show the command guide"),
             types.BotCommand(command="about", description="About AniToon"),
-            types.BotCommand(command="scan", description="How to scan a file"),
-            types.BotCommand(command="stats", description="View your scan statistics"),
-            types.BotCommand(command="main", description="Open main bot and clone tools"),
+            types.BotCommand(command="scan_files", description="Open Scan Files instructions"),
+            types.BotCommand(command="stats", description="Open your scan statistics"),
+            types.BotCommand(command="clone", description="Open Clone Manager on the main bot"),
             types.BotCommand(command="addtogroup", description="Add this bot to a group"),
-            types.BotCommand(command="cancel", description="Cancel your active scan"),
+            types.BotCommand(command="cancel", description="Cancel all your active scans"),
         ]
 
     await client(functions.bots.SetBotCommandsRequest(
@@ -3106,21 +3118,44 @@ async def handle_new_message(
     home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
     help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
 
-    if command == "/main":
-        await record_user(event)
-        await show_main_bot_redirect(event)
-        return
-
     if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
-        if include_clone and start_payload in {"clone", "createclone"}:
-            await begin_clone_setup(event)
+        if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
+            if start_payload == "help":
+                await event.reply(help_text, parse_mode="html", buttons=help_buttons())
+            elif start_payload == "about":
+                await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
+            elif start_payload == "scan_files":
+                await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
+            elif start_payload == "stats":
+                await render_user_stats(event, int(sender.id), edit=False)
+            elif start_payload == "clones":
+                if include_clone:
+                    await render_clone_list(event, int(sender.id), edit=False)
+                else:
+                    await show_clone_redirect(event, payload="clones")
+            elif start_payload == "addtogroup":
+                await event.reply(
+                    "➕ <b>Add AniToon to your group</b>",
+                    parse_mode="html",
+                    buttons=[[Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))]],
+                )
+            elif start_payload == "cancel":
+                cancelled = await cancel_user_scan(int(sender.id))
+                await event.reply(
+                    f"✅ Cancelled <b>{cancelled}</b> queued/running scan job(s)." if cancelled
+                    else "ℹ️ You have no queued or running metadata scans.",
+                    parse_mode="html",
+                )
             return
-        if include_clone and start_payload in {"clones", "myclones"}:
-            await render_clone_list(event, int(sender.id), edit=False)
+        if start_payload in {"clone", "createclone"}:
+            if include_clone:
+                await begin_clone_setup(event)
+            else:
+                await show_clone_redirect(event, payload="clones")
             return
         start_buttons = home_buttons(
             bot_username,
@@ -3162,30 +3197,15 @@ async def handle_new_message(
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
-    if command == "/scan":
+    if command == "/scan_files":
         await record_user(event)
-        await event.reply(
-            "🔎 <b>How to Scan a File</b>\n\n"
-            "1. Send a photo, video, GIF, sticker, PDF, audio file or document.\n"
-            "2. Tap <b>Scan Files</b>.\n"
-            "3. Open <b>Open File Info</b> to view the full web report.",
-            parse_mode="html",
-            buttons=back_buttons(),
-        )
+        await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
         return
 
     if command == "/about":
         await record_user(event)
         sender = await event.get_sender()
-        await event.reply(
-            ABOUT_TEXT,
-            parse_mode="html",
-            buttons=[
-                [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
-                [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
-                [Button.inline("⬅️ Home", b"home:back")],
-            ],
-        )
+        await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
     if command == "/addtogroup":
@@ -3205,21 +3225,17 @@ async def handle_new_message(
 
     if command == "/clone":
         await record_user(event)
-        if include_clone:
-            await begin_clone_setup(event)
-        else:
-            await show_clone_redirect(event, payload="clone")
-        return
-
-    if command in {"/myclones", "/stats"}:
-        await record_user(event)
         sender = await event.get_sender()
-        if command == "/stats":
-            await render_user_stats(event, int(sender.id), edit=False)
-        elif include_clone:
+        if include_clone:
             await render_clone_list(event, int(sender.id), edit=False)
         else:
             await show_clone_redirect(event, payload="clones")
+        return
+
+    if command == "/stats":
+        await record_user(event)
+        sender = await event.get_sender()
+        await render_user_stats(event, int(sender.id), edit=False)
         return
 
     if command in {"/status", "/resources"}:
@@ -3236,14 +3252,6 @@ async def handle_new_message(
             await render_public_status(event, edit=False)
         return
 
-    if command == "/clones":
-        await record_user(event)
-        if include_clone:
-            await render_clone_list(event, int((await event.get_sender()).id), edit=False)
-        else:
-            await show_clone_redirect(event, payload="clones")
-        return
-
     if command == "/owner":
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
@@ -3254,11 +3262,19 @@ async def handle_new_message(
         return
 
     if command == "/cancel":
-        user_id = getattr(getattr(event, "sender", None), "id", None)
-        if user_id is not None and await cancel_user_scan(int(user_id), client):
-            await event.reply("❌ Your metadata scan has been cancelled.")
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if user_id is None:
+            await event.reply("⚠️ I could not identify your Telegram account.")
+            return
+        cancelled = await cancel_user_scan(int(user_id))
+        if cancelled:
+            await event.reply(
+                f"✅ Cancelled <b>{cancelled}</b> queued/running scan job(s) across AniToon and your clone bots.",
+                parse_mode="html",
+            )
         else:
-            await event.reply("ℹ️ You do not have a running metadata scan.")
+            await event.reply("ℹ️ You have no queued or running metadata scans.")
         return
 
     if not is_checkable_message(event):
@@ -3599,12 +3615,7 @@ async def handle_callback(
 
     if data == "home:scan":
         await event.answer()
-        await event.edit(
-            "🔎 <b>Ready to Scan</b>\n\n"
-            "📤 <b>Send me a video or document.</b>",
-            parse_mode="html",
-            buttons=scan_page_buttons(),
-        )
+        await event.edit(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
         return
 
     if data in {"clone:create", "home:clone"}:
@@ -3637,15 +3648,7 @@ async def handle_callback(
 
     if data == "home:about":
         await event.answer()
-        await event.edit(
-            ABOUT_TEXT,
-            parse_mode="html",
-            buttons=[
-                [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
-                [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
-                [Button.inline("⬅️ Home", b"home:back")],
-            ],
-        )
+        await event.edit(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
     if data == "home:back":
@@ -3821,6 +3824,24 @@ def home_page(report_token: str | None = None) -> bytes:
         for icon, name, handle, url in socials
     )
 
+    command_items = [
+        ("/help", "Help and command guide", "help", "📖"),
+        ("/about", "About AniToon", "about", "ℹ️"),
+        ("/scan_files", "How to scan files", "scan_files", "🔎"),
+        ("/stats", "Your scan statistics", "stats", "📊"),
+        ("/clone", "Open Clone Manager", "clones", "🤖"),
+        ("/addtogroup", "Add the bot to a group", "addtogroup", "➕"),
+        ("/cancel", "Cancel all your scan jobs", "cancel", "🛑"),
+    ]
+    bot_link = f"https://t.me/{html.escape(BOT_USERNAME, quote=True)}"
+    command_html = "".join(
+        f'<a class="command-card" href="{bot_link}?start={payload}" target="_blank" rel="noopener noreferrer">'
+        f'<span class="command-icon" aria-hidden="true">{icon}</span>'
+        f'<span class="command-copy"><b>{html.escape(command)}</b><small>{html.escape(description)}</small></span>'
+        f'<span class="command-arrow" aria-hidden="true">↗</span></a>'
+        for command, description, payload, icon in command_items
+    )
+
     report_embed = ""
     if report_token:
         safe_token = html.escape(report_token)
@@ -3891,6 +3912,14 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .section-head h2{{margin:2px 0 0;font-size:18px}}
 .mini-link{{color:var(--b);text-decoration:none;font-size:11px;font-weight:850}}
 .list{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px}}
+.command-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;padding:13px}}
+.command-card{{display:flex;align-items:center;gap:10px;min-height:70px;padding:12px;border:1px solid var(--line);border-radius:15px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.012));transition:.2s ease}}
+.command-card:hover{{transform:translateY(-3px);border-color:rgba(154,140,255,.34);box-shadow:0 14px 30px rgba(0,0,0,.2)}}
+.command-icon{{display:grid;place-items:center;width:36px;height:36px;flex:0 0 auto;border-radius:11px;background:rgba(154,140,255,.10);border:1px solid rgba(154,140,255,.16);font-size:18px}}
+.command-copy{{display:flex;flex-direction:column;gap:2px;min-width:0}}
+.command-copy b{{font-size:12px;overflow-wrap:anywhere}}
+.command-copy small{{font-size:10px;color:var(--muted);line-height:1.35}}
+.command-arrow{{margin-left:auto;color:var(--b);font-size:16px}}
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
@@ -3926,7 +3955,7 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 @keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
 @keyframes sheen{{0%,100%{{transform:translateX(-110%)}}50%{{transform:translateX(100%)}}}}
 @keyframes reveal{{from{{opacity:0;transform:translateY(16px);filter:blur(6px)}}to{{opacity:1;transform:none;filter:none}}}}
-@media(max-width:700px){{.list{{grid-template-columns:1fr}}.hero{{padding:24px 18px;border-radius:22px}}.footer{{flex-direction:column;align-items:flex-start}}.report-section iframe{{height:2050px}}}}
+@media(max-width:700px){{.list,.command-grid{{grid-template-columns:1fr}}.hero{{padding:24px 18px;border-radius:22px}}.footer{{flex-direction:column;align-items:flex-start}}.report-section iframe{{height:2050px}}}}
 html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.72);--line:rgba(37,45,80,.12);--text:#18203b;--muted:#5c6686;--a:#6757e8;--b:#0b7ea0;--good:#128b52}}
 html[data-theme="light"] body::before{{background:linear-gradient(180deg,rgba(247,249,255,.88),rgba(229,235,255,.84))}}
 html[data-theme="light"] body::after{{opacity:.22}}
@@ -3962,6 +3991,14 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
       <a class="cta" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">👥 Community</a>
     </div>
   </header>
+
+  <section class="section">
+    <div class="section-head">
+      <div><small>BOT SHORTCUTS</small><h2>⌨️ Commands & Tools</h2></div>
+      <a class="mini-link" href="https://t.me/{BOT_USERNAME}" target="_blank" rel="noopener noreferrer">Open Bot ↗</a>
+    </div>
+    <div class="command-grid">{command_html}</div>
+  </section>
 
   {report_embed}
 
