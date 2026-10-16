@@ -207,13 +207,21 @@ _anitoon_art_cache: str | None = None
 _anitoon_art_photo_cache: bytes | None = None
 
 def _anitoon_start_art_b64() -> str:
+    """Load the replacement horizontal banner from split base64 source parts."""
     global _anitoon_art_cache
     if _anitoon_art_cache is not None:
         return _anitoon_art_cache
-    path = os.path.join(os.path.dirname(__file__), "assets", "anitoon_start.jpg.b64")
+
+    parts_dir = os.path.join(os.path.dirname(__file__), "assets", "anitoon_start_parts")
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            _anitoon_art_cache = handle.read().strip()
+        names = sorted(
+            name for name in os.listdir(parts_dir)
+            if name.startswith("part") and name.endswith(".b64chunk")
+        )
+        _anitoon_art_cache = "".join(
+            open(os.path.join(parts_dir, name), "r", encoding="ascii").read().strip()
+            for name in names
+        )
     except OSError:
         _anitoon_art_cache = ""
     return _anitoon_art_cache
@@ -277,8 +285,7 @@ def _anitoon_start_art_bytes() -> bytes | None:
             log.exception("Failed to normalize bundled AniToon start artwork")
 
     log.error(
-        "AniToon start artwork unavailable; expected assets/anitoon_start_4k.jpg "
-        "or assets/anitoon_start_4k.png"
+        "AniToon start artwork unavailable; check the horizontal start banner asset."
     )
     return None
 
