@@ -362,18 +362,12 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
 
 INTELLIGENCE_HELP_TEXT = (
     "🧠 <b>AniToon Media Intelligence</b>\n\n"
-    "📰 /intel topic — Get a news report.\n"
-    "🎬 /videos topic or /shorts topic — Find YouTube videos.\n"
-    "🗓️ /watch topic — Get updates; /watches to view and /unwatch topic to stop.\n\n"
-    "🔐 AI and detailed video info need owner API keys. Scheduled updates need MongoDB.\n"
-    "📣 Updates &amp; support: @AniToon_0Bot"
+    "Explore news and related media with AniToon."
 )
 
 
 def intelligence_buttons() -> list[list[Any]]:
-    return [
-        [Button.inline("⬅️ Home", b"home:back"), Button.url("📣 Updates & Support", "https://t.me/AniToon_0Bot")],
-    ]
+    return [[Button.inline("⬅️ Home", b"home:back")]]
 
 
 async def intelligence_watch_loop() -> None:
@@ -433,10 +427,9 @@ def compact_scan_result(report: Report) -> str:
     )
 
 HOME_TEXT = (
-    "⛩ <b>Welcome to AniToon Media Intelligence Bot</b> ⛩\n\n"
-    "🎞️ <b>File Metadata • Gemini Web Intelligence • YouTube Videos & Shorts</b>\n"
-    "⚡ Lightweight reports with source links, trends, claim checks and scheduled topic alerts.\n\n"
-    "🆘 <b>Need help from the creator?</b> Contact @AniToon_0Bot using the button below."
+    "⛩ <b>Welcome to AniToon Media Bot</b> ⛩\n\n"
+    "🎞️ <b>File Metadata • Media Tools</b>\n"
+    "⚡ Get clear, easy-to-read information about your media files."
 )
 
 CLONE_HOME_TEXT = (
@@ -463,25 +456,16 @@ CLONE_HELP_TEXT = (
 HELP_TEXT = (
     "📚 <b>AniToon — Command Guide</b>\n\n"
     "🔎 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, audio file, document or supported post media. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the main menu\n"
     "/help — Show this command guide\n"
     "/about — Learn about AniToon\n"
-    "/scan_files — Open the Scan Files instructions\n"
+    "/scan_files — Open Scan Files instructions\n"
     "/stats — View your scan statistics\n"
-    "/clone — View and manage your clone bots; create a new clone here\n"
+    "/clone — Manage your clone bots\n"
     "/addtogroup — Get the group invite link\n"
-    "/cancel — Cancel all your queued and running scans\n\n"
-    "🧠 <b>Media intelligence</b>\n"
-    "/intel topic — Gemini web brief with grounded source links\n"
-    "/videos topic — Find YouTube videos and metadata\n"
-    "/shorts topic — Search short-duration YouTube videos (not all are Shorts)\n"
-    "/watch topic — Schedule a topic report every 12 hours\n"
-    "/watches — List your scheduled topics\n"
-    "/unwatch topic — Stop a scheduled topic\n\n"
-    "💡 Reports are evidence-led, but search coverage is not exhaustive. API keys are configured by the owner.\n"
-    "💡 Help and /help show this same guide. About and /about show the same AniToon information."
+    "/cancel — Cancel queued and running scans"
 )
 
 SCAN_TEXT = (
@@ -502,8 +486,7 @@ ABOUT_TEXT = (
     "Images • Video • Audio • Stickers • GIFs • PDFs • Subtitles • Post context • Technical metadata\n\n"
     "⚡ <b>Simple workflow</b>\n"
     "Send file → tap Scan File Info → open the web report.\n\n"
-    "🧠 Media intelligence: /intel topic • YouTube: /videos topic • Shorts: /shorts topic\n"
-    "🆘 Creator support: @AniToon_0Bot"
+    "For help or questions, use the Help & Support button below."
 )
 
 
@@ -692,7 +675,6 @@ def home_buttons(
     about = Button.inline("ℹ️ About", b"home:about")
     intel = Button.inline("🧠 Media Intelligence", b"home:intel")
     add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
-    support = Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")
 
     if include_clone:
         clone = Button.inline("🤖 Clone Manager", b"home:clones")
@@ -717,7 +699,6 @@ def home_buttons(
             [create_clone],
             [add_group],
         ]
-    buttons.append([support])
     return buttons
 
 
@@ -726,14 +707,14 @@ def back_buttons() -> list[list[Any]]:
 
 
 def help_buttons() -> list[list[Any]]:
-    return [[Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")], [Button.inline("⬅️ Back", b"home:back")]]
+    return [[Button.inline("⬅️ Back", b"home:back")]]
 
 
 def about_buttons() -> list[list[Any]]:
     return [
         [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
         [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
-        [Button.url("🆘 Help from Creator · @AniToon_0Bot", "https://t.me/AniToon_0Bot")],
+        [Button.url("❔ Help & Support", "https://t.me/AniToon_0Bot")],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
 
