@@ -6,6 +6,7 @@ import intelligence
 from intelligence import (
     IntelligenceError,
     _clean_query,
+    news_rss_intelligence,
     _safe_https_url,
     gemini_intelligence,
     intelligence_html,
@@ -96,6 +97,36 @@ class YouTubeTests(unittest.TestCase):
         self.assertIn("Web basics", output)
         self.assertIn("Example channel", output)
         fake_request.assert_called_once()
+
+
+class RssFallbackTests(unittest.TestCase):
+    def setUp(self):
+        intelligence._INTEL_CACHE.clear()
+
+    @patch("intelligence.urlopen")
+    def test_public_rss_produces_real_source_links_without_gemini_key(self, fake_urlopen):
+        rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss version="2.0"><channel><item>
+          <title>New web platform update</title>
+          <link>https://example.com/news</link>
+          <pubDate>Fri, 16 Oct 2026 10:00:00 GMT</pubDate>
+          <source>Example News</source>
+          <description>Details about &lt;b&gt;web development&lt;/b&gt; update.</description>
+        </item></channel></rss>"""
+        fake_response = unittest.mock.MagicMock()
+        fake_response.__enter__.return_value.read.return_value = rss
+        fake_urlopen.return_value = fake_response
+        with patch.dict(os.environ, {"GEMINI_API_KEY": ""}, clear=False):
+            result = news_rss_intelligence("web development")
+        self.assertEqual(result["mode"], "keyless_rss")
+        self.assertIn("no Gemini analysis", result["text"])
+        self.assertEqual(result["sources"][0]["url"], "https://example.com/news")
+        self.assertEqual(result["sources"][0]["title"], "New web platform update")
+        rendered = intelligence_html(result)
+        self.assertIn("Keyless Media News Digest", rendered)
+        self.assertIn('href="https://example.com/news"', rendered)
+        fake_urlopen.assert_called_once()
+
 
 
 if __name__ == "__main__":
