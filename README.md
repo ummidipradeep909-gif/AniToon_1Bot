@@ -22,7 +22,7 @@ The core bot still starts without these optional keys. The added search commands
 2. Create a Google Cloud API key and enable the YouTube Data API v3 for video metadata/search. If one Google key is allowed to access both APIs, you may use the same key for both variables.
 3. In Render → \`AniToons_1Bot\` → Environment, set:
    - \`GEMINI_API_KEY\` — enables \`/intel\` and scheduled reports.
-   - \`GEMINI_MODEL\` — optional model override; default \`gemini-2.5-flash\`.
+   - \`GEMINI_MODEL\` — optional model override; default \`gemini-3.5-flash-lite\`.
    - \`YOUTUBE_API_KEY\` — enables individual YouTube results; without this, \`/videos\` and \`/shorts\` provide a topic-specific YouTube search page instead.
    - \`YOUTUBE_REGION_CODE\` — optional two-letter region; defaults to \`IN\`.
    - \`INTEL_WATCH_INTERVAL_HOURS\` — optional scheduled interval from 6 to 24 hours; defaults to \`12\`.
