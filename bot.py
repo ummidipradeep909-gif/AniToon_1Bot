@@ -4029,9 +4029,6 @@ def home_page(report_token: str | None = None) -> bytes:
     )
 
     command_items = [
-        ("/intel", "Gemini web intelligence with sources", "intel", "🧠"),
-        ("/videos", "YouTube videos and links", "videos", "🎬"),
-        ("/shorts", "Short-duration video search", "shorts", "📱"),
         ("/help", "Help and command guide", "help", "📖"),
         ("/about", "About AniToon", "about", "ℹ️"),
         ("/scan_files", "How to scan files", "scan_files", "🔎"),
@@ -4070,7 +4067,7 @@ def home_page(report_token: str | None = None) -> bytes:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050611">
-<meta name="description" content="AniToon Media Info — creative media channels and file intelligence.">
+<meta name="description" content="AniToon Media Info — anime channels and Telegram file metadata tools.">
 <title>AniToon Media Info</title>
 <style>
 :root {{
@@ -4189,13 +4186,12 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
   </nav>
 
   <header class="hero start-hero">
-    <span class="eyebrow"><span class="dot"></span> Media intelligence</span>
+    <span class="eyebrow"><span class="dot"></span> Media tools</span>
     <h1>⛩ AniToon</h1>
-    <div class="lead">A lightweight media hub for file reports, Gemini-powered web intelligence, source links, trends and YouTube video/short-form discovery. Need help? The creator is available at @AniToon_0Bot.</div>
+    <div class="lead">A lightweight hub for Telegram file reports, useful media tools and anime communities.</div>
     <div class="cta-row">
       <a class="cta primary" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
       <a class="cta" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">👥 Community</a>
-      <a class="cta" href="https://t.me/AniToon_0Bot" target="_blank" rel="noopener noreferrer">🆘 Help from Creator · @AniToon_0Bot</a>
     </div>
   </header>
 
@@ -4225,7 +4221,7 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
   </section>
 
   <footer class="footer">
-    <span><b>AniToon</b> • Media intelligence</span>
+    <span><b>AniToon</b> • Media tools</span>
     <span>Official Bot & Web</span>
   </footer>
 </div>
