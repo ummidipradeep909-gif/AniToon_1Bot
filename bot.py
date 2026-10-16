@@ -1623,12 +1623,13 @@ async def run_scan(
             )
             if has_av_streams:
                 try:
-                    return await inspect_telegram_player(
+                    player_report = await inspect_telegram_player(
                         client,
                         source_message,
                         scan_token,
                         progress=progress,
                     )
+                    return player_report, int(getattr(player_report, "sampled", 0) or 0)
                 except (ProbeBudgetExceeded, ProbeCancelled, asyncio.CancelledError):
                     raise
                 except Exception as exc:
