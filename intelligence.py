@@ -10,10 +10,11 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from html import escape
+from html import escape, unescape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote, urlsplit
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 from typing import Any
 
 MAX_QUERY_CHARS = 140
@@ -107,6 +108,132 @@ def _safe_https_url(value: Any) -> str | None:
     if not (parts.hostname or "").lower():
         return None
     return url
+
+
+def news_rss_intelligence(topic: str) -> dict[str, Any]:
+    """Build a no-key headline/source digest from public news RSS feeds.
+
+    This is a link-and-headline digest, not Gemini-generated analysis. It is
+    deliberately bounded and cached to reduce network use for all bot users.
+    """
+    query = _clean_query(topic)
+    cache_key = "rss:" + query.casefold()
+    cached = _cache_get(_INTEL_CACHE, cache_key)
+    if cached is not None:
+        return cached
+
+    feeds = [
+        "https://news.google.com/rss/search?" + urlencode({
+            "q": query,
+            "hl": "en-IN",
+            "gl": "IN",
+            "ceid": "IN:en",
+        }),
+        "https://www.bing.com/news/search?" + urlencode({
+            "q": query,
+            "format": "rss",
+            "setlang": "en-US",
+            "cc": "IN",
+        }),
+    ]
+    entries: list[dict[str, str]] = []
+    feed_errors: list[str] = []
+    for feed_url in feeds:
+        request = Request(
+            feed_url,
+            headers={
+                "Accept": "application/rss+xml, application/xml, text/xml",
+                "User-Agent": "AniToon-Media-Intelligence/1.0",
+            },
+        )
+        try:
+            with urlopen(request, timeout=8) as response:
+                raw = response.read(500_000)
+            root = ElementTree.fromstring(raw)
+            nodes = root.findall("./channel/item")
+            if not nodes:
+                # Some feeds use Atom namespaces.
+                nodes = root.findall(".//{http://www.w3.org/2005/Atom}entry")
+            for node in nodes[:8]:
+                title = node.findtext("title") or node.findtext("{http://www.w3.org/2005/Atom}title") or ""
+                link = node.findtext("link") or ""
+                if not link:
+                    atom_link = node.find("{http://www.w3.org/2005/Atom}link")
+                    if atom_link is not None:
+                        link = str(atom_link.attrib.get("href") or "")
+                published = (
+                    node.findtext("pubDate")
+                    or node.findtext("{http://www.w3.org/2005/Atom}updated")
+                    or node.findtext("{http://www.w3.org/2005/Atom}published")
+                    or ""
+                )
+                source = node.findtext("source") or ""
+                description = node.findtext("description") or node.findtext("{http://www.w3.org/2005/Atom}summary") or ""
+                link = _safe_https_url(link)
+                # Remove markup/CDATA HTML from feed descriptions before sending to Telegram.
+                description = unescape(re.sub(r"<[^>]{0,500}>", " ", description))
+                description = " ".join(description.split())[:180]
+                title = " ".join(unescape(re.sub(r"<[^>]{0,500}>", " ", title)).split())[:200]
+                source = " ".join(unescape(re.sub(r"<[^>]{0,500}>", " ", source)).split())[:80]
+                published = " ".join(str(published).split())[:60]
+                if not title or not link:
+                    continue
+                if any(item["url"] == link for item in entries):
+                    continue
+                entries.append({
+                    "title": title,
+                    "url": link,
+                    "source": source,
+                    "published": published,
+                    "description": description,
+                })
+                if len(entries) >= 5:
+                    break
+            if entries:
+                break
+        except HTTPError as exc:
+            feed_errors.append(f"HTTP {exc.code}")
+        except (URLError, TimeoutError, OSError, ElementTree.ParseError):
+            feed_errors.append("feed unavailable")
+        except Exception:
+            feed_errors.append("feed error")
+        if len(entries) >= 5:
+            break
+
+    if not entries:
+        raise IntelligenceError(
+            "Live news feeds could not be reached right now. Try /videos topic or open a web search: "
+            + "https://www.google.com/search?"
+            + urlencode({"q": query})
+        )
+    digest_lines = [
+        "Automatic keyless news digest — headlines and links only; no Gemini analysis was performed.",
+        "The items below are search results, not a complete or representative view of public opinion.",
+        "",
+    ]
+    sources: list[dict[str, str]] = []
+    for index, entry in enumerate(entries, start=1):
+        metadata = " · ".join(
+            item for item in (entry.get("source"), entry.get("published")) if item
+        )
+        digest_lines.append(f"{index}. {entry['title']}")
+        if metadata:
+            digest_lines.append(metadata)
+        if entry.get("description"):
+            digest_lines.append(entry["description"])
+        digest_lines.append("")
+        sources.append({"title": entry["title"][:180], "url": entry["url"]})
+    result = {
+        "topic": query,
+        "text": "\n".join(digest_lines).strip()[:1900],
+        "sources": sources,
+        "search_queries": [query],
+        "model": "public-rss-fallback",
+        "mode": "keyless_rss",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _cache_put(_INTEL_CACHE, cache_key, result)
+    return result
 
 
 def gemini_intelligence(topic: str) -> dict[str, Any]:
@@ -278,8 +405,10 @@ def intelligence_html(report: dict[str, Any]) -> str:
     """Produce Telegram-safe HTML without cutting off tags at Telegram's message limit."""
     topic = escape(str(report.get("topic") or "Topic")[:140])
     summary = escape(str(report.get("text") or "")[:1900])
+    is_rss_digest = report.get("mode") == "keyless_rss"
+    heading = "📰 <b>Keyless Media News Digest</b>" if is_rss_digest else "🧠 <b>Media Intelligence Report</b>"
     parts = [
-        f"🧠 <b>Media Intelligence Report</b>\n<b>Topic:</b> {topic}\n\n",
+        f"{heading}\n<b>Topic:</b> {topic}\n\n",
         summary,
     ]
     sources = report.get("sources") or []
@@ -304,7 +433,10 @@ def intelligence_html(report: dict[str, Any]) -> str:
             "\n\n⚠️ <i>Gemini returned no usable source links in its grounding metadata. "
             "Treat claims as unverified and try again before relying on them.</i>"
         )
-    disclaimer = "\n\n<i>Search coverage is incomplete; sentiment and trend signals are not a representative poll.</i>"
+    if is_rss_digest:
+        disclaimer = "\n\n<i>Keyless fallback: headlines and link metadata only; not AI analysis or fact verification. Configure Gemini for deeper analysis.</i>"
+    else:
+        disclaimer = "\n\n<i>Search coverage is incomplete; sentiment and trend signals are not a representative poll.</i>"
     if len("".join(parts)) + len(disclaimer) <= 3800:
         parts.append(disclaimer)
     return "".join(parts)
