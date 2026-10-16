@@ -58,6 +58,17 @@ from mongo_store import (
     record_group_chat,
     list_group_chats,
     update_group_onboarding,
+    add_intel_watch,
+    due_intel_watches,
+    list_intel_watches,
+    remove_intel_watch,
+)
+from intelligence import (
+    IntelligenceError,
+    gemini_intelligence,
+    intelligence_html,
+    youtube_videos,
+    videos_html,
 )
 
 load_dotenv()
@@ -347,6 +358,66 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
             names.append(shown)
     return names[:12]
 
+
+INTELLIGENCE_HELP_TEXT = (
+    "🧠 <b>AniToon Media Intelligence</b>\n\n"
+    "📰 <b>Web report</b>\n/intel topic — Gemini brief grounded in Google Search with source links, trends, cautious sentiment and claim checks.\n\n"
+    "🎬 <b>YouTube links</b>\n/videos topic — Search videos with title, channel, date and links.\n"
+    "/shorts topic — Search short-duration videos. The official API's under-4-minute filter cannot prove a video is a YouTube Short.\n\n"
+    "🗓️ <b>Scheduled reports</b>\n/watch topic — Follow a topic; reports run every 12 hours by default.\n/watches — Review your topics.\n/unwatch exact topic — Stop a topic.\n\n"
+    "🔐 The owner must configure GEMINI_API_KEY and YOUTUBE_API_KEY in Render. Scheduled reports require MongoDB. Topics are capped to protect limited free-tier resources.\n"
+    "📌 Search results are not exhaustive; sentiment is not a representative poll.\n"
+    "🆘 Creator support: @AniToon_0Bot"
+)
+
+
+def intelligence_buttons() -> list[list[Any]]:
+    return [
+        [Button.inline("⬅️ Home", b"home:back"), Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")],
+    ]
+
+
+async def intelligence_watch_loop() -> None:
+    """Run a small, bounded batch of opted-in topic reports from the existing process."""
+    while True:
+        await asyncio.sleep(300)
+        if not os.getenv("GEMINI_API_KEY", "").strip() or not mongodb_is_connected():
+            continue
+        try:
+            due = await due_intel_watches(limit=2)
+            for watch in due:
+                chat_id = int(watch.get("chat_id") or 0)
+                topic = str(watch.get("topic") or "").strip()
+                if chat_id <= 0 or not topic:
+                    continue
+                try:
+                    report = await asyncio.to_thread(gemini_intelligence, topic)
+                    await bot.send_message(
+                        chat_id,
+                        intelligence_html(report),
+                        parse_mode="html",
+                        link_preview=False,
+                        buttons=intelligence_buttons(),
+                    )
+                except IntelligenceError as exc:
+                    # Do not repeatedly retry the same failed report in a hot loop.
+                    with suppress(Exception):
+                        await bot.send_message(
+                            chat_id,
+                            "⚠️ Scheduled report for <code>" + html.escape(topic[:140]) +
+                            "</code> failed: " + html.escape(str(exc)),
+                            parse_mode="html",
+                            buttons=intelligence_buttons(),
+                        )
+                except Exception:
+                    log.exception("Scheduled intelligence report failed | topic=%s", topic[:100])
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Intelligence watch scheduler failed")
+
+
 def compact_scan_result(report: Report) -> str:
     """Keep scan details on the web report instead of posting them as Telegram text."""
     return (
@@ -357,9 +428,9 @@ def compact_scan_result(report: Report) -> str:
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon Media Intelligence Bot</b> ⛩\n\n"
-    "🎞️ <b>File Metadata • Clone Bots • Smart Reports</b>\n"
-    "⚡ Fast, bounded media inspection with a clean web report.\n\n"
-    "✨ Simple, fast and easy to use."
+    "🎞️ <b>File Metadata • Gemini Web Intelligence • YouTube Videos & Shorts</b>\n"
+    "⚡ Lightweight reports with source links, trends, claim checks and scheduled topic alerts.\n\n"
+    "🆘 <b>Need help from the creator?</b> Contact @AniToon_0Bot using the button below."
 )
 
 CLONE_HOME_TEXT = (
@@ -396,6 +467,14 @@ HELP_TEXT = (
     "/clone — View and manage your clone bots; create a new clone here\n"
     "/addtogroup — Get the group invite link\n"
     "/cancel — Cancel all your queued and running scans\n\n"
+    "🧠 <b>Media intelligence</b>\n"
+    "/intel topic — Gemini web brief with grounded source links\n"
+    "/videos topic — Find YouTube videos and metadata\n"
+    "/shorts topic — Search short-duration YouTube videos (not all are Shorts)\n"
+    "/watch topic — Schedule a topic report every 12 hours\n"
+    "/watches — List your scheduled topics\n"
+    "/unwatch topic — Stop a scheduled topic\n\n"
+    "💡 Reports are evidence-led, but search coverage is not exhaustive. API keys are configured by the owner.\n"
     "💡 Help and /help show this same guide. About and /about show the same AniToon information."
 )
 
@@ -416,7 +495,9 @@ ABOUT_TEXT = (
     "📦 <b>What you get</b>\n"
     "Images • Video • Audio • Stickers • GIFs • PDFs • Subtitles • Post context • Technical metadata\n\n"
     "⚡ <b>Simple workflow</b>\n"
-    "Send file → tap Scan File Info → open the web report."
+    "Send file → tap Scan File Info → open the web report.\n\n"
+    "🧠 Media intelligence: /intel topic • YouTube: /videos topic • Shorts: /shorts topic\n"
+    "🆘 Creator support: @AniToon_0Bot"
 )
 
 
@@ -603,14 +684,17 @@ def home_buttons(
     stats = Button.inline("📊 My Stats", b"home:stats")
     help_btn = Button.inline("📖 Help", b"home:help")
     about = Button.inline("ℹ️ About", b"home:about")
+    intel = Button.inline("🧠 Media Intelligence", b"home:intel")
     add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
+    support = Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")
 
     if include_clone:
         clone = Button.inline("🤖 Clone Manager", b"home:clones")
         buttons = [
-            [scan, clone],
-            [stats, help_btn],
-            [about, add_group],
+            [scan, intel],
+            [clone, stats],
+            [help_btn, about],
+            [add_group],
         ]
         if _owner_allowed(user_id):
             buttons[-1] = [
@@ -621,11 +705,13 @@ def home_buttons(
     else:
         create_clone = Button.url("🤖 Open Clone Manager", main_bot_start_url("clones"))
         buttons = [
-            [scan, stats],
-            [help_btn, about],
+            [scan, intel],
+            [stats, help_btn],
+            [about],
             [create_clone],
             [add_group],
         ]
+    buttons.append([support])
     return buttons
 
 
@@ -634,13 +720,14 @@ def back_buttons() -> list[list[Any]]:
 
 
 def help_buttons() -> list[list[Any]]:
-    return back_buttons()
+    return [[Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")], [Button.inline("⬅️ Back", b"home:back")]]
 
 
 def about_buttons() -> list[list[Any]]:
     return [
         [Button.url("🌐 Open AniToon Web", PUBLIC_WEB_URL)],
         [Button.url("🤖 Open AniToon Bot", f"https://t.me/{BOT_USERNAME}")],
+        [Button.url("🆘 Help from Creator · @AniToon_0Bot", "https://t.me/AniToon_0Bot")],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
 
@@ -2669,6 +2756,12 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
             types.BotCommand(command="clone", description="Open Clone Manager"),
             types.BotCommand(command="addtogroup", description="Add AniToon to a group"),
             types.BotCommand(command="cancel", description="Cancel all your active scans"),
+            types.BotCommand(command="intel", description="Gemini web intelligence report"),
+            types.BotCommand(command="videos", description="Search YouTube video links"),
+            types.BotCommand(command="shorts", description="Search short-form YouTube videos"),
+            types.BotCommand(command="watch", description="Schedule topic reports"),
+            types.BotCommand(command="watches", description="List scheduled topics"),
+            types.BotCommand(command="unwatch", description="Stop a scheduled topic"),
         ]
     else:
         commands = [
@@ -3123,13 +3216,19 @@ async def handle_new_message(
         sender = await event.get_sender()
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
-        if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
+        if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel", "intel", "videos", "shorts"}:
             if start_payload == "help":
                 await event.reply(help_text, parse_mode="html", buttons=help_buttons())
             elif start_payload == "about":
                 await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
             elif start_payload == "scan_files":
                 await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
+            elif start_payload == "intel":
+                await event.reply(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
+            elif start_payload == "videos":
+                await event.reply("Use <code>/videos topic</code> to find individual YouTube videos and source metadata.", parse_mode="html", buttons=intelligence_buttons())
+            elif start_payload == "shorts":
+                await event.reply("Use <code>/shorts topic</code> to search short-duration videos. Search results are not guaranteed to be YouTube Shorts.", parse_mode="html", buttons=intelligence_buttons())
             elif start_payload == "stats":
                 await render_user_stats(event, int(sender.id), edit=False)
             elif start_payload == "clones":
@@ -3196,6 +3295,92 @@ async def handle_new_message(
         sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
+
+    if command in {"/intel", "/videos", "/shorts", "/watch", "/watches", "/unwatch"}:
+        await record_user(event)
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not include_clone:
+            await event.reply(
+                "🧠 Media intelligence is available on the main AniToon bot.",
+                buttons=[[Button.url("🤖 Open Main AniToon", main_bot_start_url("intel"))], [Button.url("🆘 Help from Creator", "https://t.me/AniToon_0Bot")]],
+            )
+            return
+        argument = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
+        if command == "/intel":
+            if not argument:
+                await event.reply(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
+                return
+            status = await event.reply("🧠 Researching with Gemini and searching for verifiable sources…")
+            try:
+                report = await asyncio.to_thread(gemini_intelligence, argument)
+                await status.edit(intelligence_html(report), parse_mode="html", link_preview=False, buttons=intelligence_buttons())
+            except IntelligenceError as exc:
+                await status.edit("⚠️ " + html.escape(str(exc)), parse_mode="html", buttons=intelligence_buttons())
+            except Exception:
+                log.exception("Gemini intelligence report failed")
+                await status.edit("⚠️ The report could not be completed. Check the provider configuration and try again.", buttons=intelligence_buttons())
+            return
+        if command in {"/videos", "/shorts"}:
+            if not argument:
+                mode = "short-form YouTube videos" if command == "/shorts" else "YouTube videos"
+                await event.reply(f"Use <code>{command} topic</code> to find {mode}.", parse_mode="html", buttons=intelligence_buttons())
+                return
+            try:
+                result = await asyncio.to_thread(youtube_videos, argument, shorts=(command == "/shorts"))
+                await event.reply(videos_html(result), parse_mode="html", link_preview=False, buttons=intelligence_buttons())
+            except IntelligenceError as exc:
+                await event.reply("⚠️ " + html.escape(str(exc)), parse_mode="html", buttons=intelligence_buttons())
+            except Exception:
+                log.exception("YouTube search failed")
+                await event.reply("⚠️ YouTube search failed. Check the API configuration or try again.", buttons=intelligence_buttons())
+            return
+        if command == "/watch":
+            if not getattr(event, "is_private", False):
+                await event.reply("For privacy and to avoid group spam, use <code>/watch topic</code> in a private chat with AniToon.", parse_mode="html")
+                return
+            if not argument:
+                await event.reply("Use <code>/watch topic</code>. By default, AniToon sends a grounded Gemini report every 12 hours. Use <code>/watches</code> and <code>/unwatch topic</code> to manage alerts.", parse_mode="html", buttons=intelligence_buttons())
+                return
+            if not os.getenv("GEMINI_API_KEY", "").strip():
+                await event.reply("Scheduled intelligence is not enabled yet. The owner must configure <code>GEMINI_API_KEY</code> in Render.", parse_mode="html", buttons=intelligence_buttons())
+                return
+            interval = max(6, min(int(os.getenv("INTEL_WATCH_INTERVAL_HOURS", "12") or "12"), 24))
+            result = await add_intel_watch(user_id=int(user_id), chat_id=int(event.chat_id), topic=argument, interval_hours=interval)
+            if result.get("ok"):
+                await event.reply(
+                    f"✅ <b>Topic scheduled</b>\n\n<code>{html.escape(str(result.get('topic') or argument)[:140])}</code>\nReports run every {int(result.get('interval_hours') or interval)} hours. The first report is scheduled after that interval.\n\nUse /watches to review or /unwatch topic to stop it.",
+                    parse_mode="html", buttons=intelligence_buttons()
+                )
+            else:
+                reason = result.get("reason")
+                messages = {
+                    "mongodb_unavailable": "Scheduled topics need MongoDB to be configured and reachable. The owner must configure MONGODB_URI.",
+                    "user_limit": "You can follow up to 2 topics at once. Remove one with /unwatch topic before adding another.",
+                    "global_limit": "The bot has reached its small global watch limit to protect free-tier usage. Try again later.",
+                }
+                await event.reply("⚠️ " + html.escape(messages.get(reason, "The topic could not be saved. Try again later.")), parse_mode="html", buttons=intelligence_buttons())
+            return
+        if command == "/watches":
+            watches = await list_intel_watches(int(user_id))
+            if not watches:
+                await event.reply("You have no scheduled topics yet. Use <code>/watch topic</code> to start one.", parse_mode="html", buttons=intelligence_buttons())
+            else:
+                lines = ["🗓️ <b>Your scheduled topics</b>"]
+                for watch in watches:
+                    topic = html.escape(str(watch.get("topic") or "Topic")[:140])
+                    next_run = watch.get("next_run")
+                    next_text = next_run.strftime("%d %b %H:%M UTC") if isinstance(next_run, datetime) else "scheduled"
+                    lines.append(f"• <code>{topic}</code> — every {int(watch.get('interval_hours') or 12)}h; next: {html.escape(next_text)}")
+                await event.reply("\n".join(lines), parse_mode="html", buttons=intelligence_buttons())
+            return
+        if command == "/unwatch":
+            if not argument:
+                await event.reply("Use <code>/unwatch exact topic</code> to stop a scheduled report.", parse_mode="html", buttons=intelligence_buttons())
+                return
+            removed = await remove_intel_watch(user_id=int(user_id), topic=argument)
+            await event.reply("✅ Scheduled topic removed." if removed else "No matching active topic was found. Use /watches to see the exact topic.", buttons=intelligence_buttons())
+            return
 
     if command == "/scan_files":
         await record_user(event)
@@ -3602,6 +3787,14 @@ async def handle_callback(
         await render_public_status(event)
         return
 
+    if data == "home:intel":
+        await event.answer()
+        if not include_clone:
+            await show_main_bot_redirect(event, edit=True)
+        else:
+            await event.edit(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
+        return
+
     if data == "home:help":
         await event.answer()
         text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
@@ -3825,6 +4018,9 @@ def home_page(report_token: str | None = None) -> bytes:
     )
 
     command_items = [
+        ("/intel", "Gemini web intelligence with sources", "intel", "🧠"),
+        ("/videos", "YouTube videos and links", "videos", "🎬"),
+        ("/shorts", "Short-duration video search", "shorts", "📱"),
         ("/help", "Help and command guide", "help", "📖"),
         ("/about", "About AniToon", "about", "ℹ️"),
         ("/scan_files", "How to scan files", "scan_files", "🔎"),
@@ -3984,10 +4180,11 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
   <header class="hero start-hero">
     <span class="eyebrow"><span class="dot"></span> Media intelligence</span>
     <h1>⛩ AniToon</h1>
-    <div class="lead">A focused media hub for discovering AniToon channels and inspecting video, audio, subtitle and technical metadata.</div>
+    <div class="lead">A lightweight media hub for file reports, Gemini-powered web intelligence, source links, trends and YouTube video/short-form discovery. Need help? The creator is available at @AniToon_0Bot.</div>
     <div class="cta-row">
       <a class="cta primary" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
       <a class="cta" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">👥 Community</a>
+      <a class="cta" href="https://t.me/AniToon_0Bot" target="_blank" rel="noopener noreferrer">🆘 Help from Creator · @AniToon_0Bot</a>
     </div>
   </header>
 
@@ -5262,6 +5459,8 @@ async def health_server():
                 payload = {
                     "status": "ok",
                     "service": "anitoons-file-intelligence",
+                    "intelligence_enabled": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+                    "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY", "").strip()),
                     "telegram_connected": bot.is_connected(),
                     "mongodb_connected": mongodb_is_connected(),
                     "checks_total": checks_total,
@@ -5470,6 +5669,7 @@ strong{color:#fff}
 async def main():
     clone_monitor_task: asyncio.Task | None = None
     group_onboarding_task: asyncio.Task | None = None
+    intelligence_watch_task: asyncio.Task | None = None
     temp_cleanup_task: asyncio.Task | None = None
     _bind_bot_handlers(bot, BOT_USERNAME, include_clone=True)
     cleanup_app_temp()
@@ -5565,6 +5765,8 @@ async def main():
 
         clone_monitor_task = asyncio.create_task(monitor_clone_bots())
         group_onboarding_task = asyncio.create_task(_group_onboarding_loop())
+        if os.getenv("GEMINI_API_KEY", "").strip() and mongodb_is_connected():
+            intelligence_watch_task = asyncio.create_task(intelligence_watch_loop())
 
         log.info(
             "Telegram bot online as @%s | private_only=%s | clones=%s | concurrency=%s | scan_timeout=%ss | web=%s",
@@ -5583,6 +5785,10 @@ async def main():
             group_onboarding_task.cancel()
             with suppress(asyncio.CancelledError):
                 await group_onboarding_task
+        if intelligence_watch_task is not None:
+            intelligence_watch_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await intelligence_watch_task
         if clone_monitor_task is not None:
             clone_monitor_task.cancel()
             with suppress(asyncio.CancelledError):
