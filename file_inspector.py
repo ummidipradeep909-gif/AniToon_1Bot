@@ -7,6 +7,7 @@ import io
 import os
 import re
 import struct
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -111,7 +112,37 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
     if h.startswith(b"ID3"): return "MP3 audio","mp3"
     if h.startswith(b"RIFF") and len(h)>=12 and h[8:12]==b"WAVE": return "WAV audio","wav"
     if h.startswith(b"%PDF-"): return "PDF document","pdf"
-    if h.startswith(b"PK\x03\x04"): return "ZIP archive","zip"
+    if h.startswith(b"PK\x03\x04"):
+        package_types = {
+            ".docx": ("Microsoft Word document", "docx"),
+            ".docm": ("Microsoft Word macro-enabled document", "docm"),
+            ".xlsx": ("Microsoft Excel workbook", "xlsx"),
+            ".xlsm": ("Microsoft Excel macro-enabled workbook", "xlsm"),
+            ".pptx": ("Microsoft PowerPoint presentation", "pptx"),
+            ".pptm": ("Microsoft PowerPoint macro-enabled presentation", "pptm"),
+            ".odt": ("OpenDocument text document", "odt"),
+            ".ods": ("OpenDocument spreadsheet", "ods"),
+            ".odp": ("OpenDocument presentation", "odp"),
+            ".epub": ("EPUB e-book", "epub"),
+            ".apk": ("Android application package", "apk"),
+            ".jar": ("Java archive", "jar"),
+            ".xpi": ("Browser extension package", "xpi"),
+        }
+        return package_types.get(ext, ("ZIP archive", "zip"))
+    if h.startswith(b"\x7fELF"): return "ELF executable/binary","elf"
+    if h.startswith(b"Rar!\x1a\x07"): return "RAR archive","rar"
+    if h.startswith(b"7z\xbc\xaf\x27\x1c"): return "7-Zip archive","7z"
+    if h.startswith(b"\x1f\x8b"): return "GZIP-compressed data","gz"
+    if h.startswith(b"BZh"): return "BZIP2-compressed data","bz2"
+    if h.startswith(b"\xfd7zXZ\x00"): return "XZ-compressed data","xz"
+    if h.startswith(b"\x28\xb5\x2f\xfd"): return "Zstandard-compressed data","zst"
+    if h.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"):
+        legacy = {".doc": "Microsoft Word legacy document", ".xls": "Microsoft Excel legacy workbook", ".ppt": "Microsoft PowerPoint legacy presentation"}
+        return legacy.get(ext, "OLE compound document"), "ole"
+    if h.startswith(b"\x00\x01\x00\x00"): return "TrueType/OpenType font","ttf"
+    if h.startswith(b"OTTO"): return "OpenType font","otf"
+    if h.startswith(b"wOFF"): return "WOFF font","woff"
+    if h.startswith(b"wOF2"): return "WOFF2 font","woff2"
     if h.startswith(b"\x89PNG\r\n\x1a\n"): return "PNG image","png"
     if h.startswith(b"\xff\xd8\xff"): return "JPEG image","jpeg"
     if h.startswith((b"GIF87a", b"GIF89a")): return "GIF image","gif"
@@ -146,7 +177,22 @@ def magic(data:bytes,name:str,mime:str|None)->tuple[str,str]:
         ".bmp":("Bitmap image","bmp"), ".dib":("Bitmap image","bmp"), ".tif":("TIFF image","tiff"),
         ".tiff":("TIFF image","tiff"), ".heic":("HEIF/HEIC image","heic"), ".heif":("HEIF/HEIC image","heic"),
         ".avif":("AVIF image","avif"), ".ico":("Icon image","ico"), ".svg":("SVG vector image","svg"),
-        ".tgs":("Telegram animated sticker","tgs"), ".webm":("WebM media","mkv"), ".mp4":("MP4 media","mp4"),
+        ".tgs":("Telegram animated sticker","tgs"),
+        ".rar":("RAR archive","rar"), ".7z":("7-Zip archive","7z"), ".tar":("TAR archive","tar"),
+        ".gz":("GZIP-compressed data","gz"), ".bz2":("BZIP2-compressed data","bz2"),
+        ".xz":("XZ-compressed data","xz"), ".zst":("Zstandard-compressed data","zst"),
+        ".zip":("ZIP archive","zip"), ".docx":("Microsoft Word document","docx"),
+        ".docm":("Microsoft Word macro-enabled document","docm"), ".xlsx":("Microsoft Excel workbook","xlsx"),
+        ".xlsm":("Microsoft Excel macro-enabled workbook","xlsm"), ".pptx":("Microsoft PowerPoint presentation","pptx"),
+        ".pptm":("Microsoft PowerPoint macro-enabled presentation","pptm"), ".doc":("Microsoft Word document","doc"),
+        ".xls":("Microsoft Excel workbook","xls"), ".ppt":("Microsoft PowerPoint presentation","ppt"),
+        ".odt":("OpenDocument text document","odt"), ".ods":("OpenDocument spreadsheet","ods"),
+        ".odp":("OpenDocument presentation","odp"), ".epub":("EPUB e-book","epub"),
+        ".apk":("Android application package","apk"), ".jar":("Java archive","jar"), ".xpi":("Browser extension package","xpi"),
+        ".ttf":("TrueType/OpenType font","ttf"), ".otf":("OpenType font","otf"),
+        ".woff":("WOFF font","woff"), ".woff2":("WOFF2 font","woff2"),
+        ".json":("JSON data","json"), ".xml":("XML document","xml"), ".csv":("CSV table","csv"),
+        ".txt":("Plain-text document","txt"), ".md":("Markdown document","md"), ".log":("Log text","log"),
     }
     if ext in ext_labels:return ext_labels[ext]
 
@@ -974,6 +1020,11 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
     audio_attr = next((v for k, v in attr_map.items() if "documentattributeaudio" in k), None)
     photo_obj = getattr(message, "photo", None)
     is_pdf = ext == ".pdf" or mime == "application/pdf" or report.detected.lower().startswith("pdf")
+    office_exts = {".doc", ".docx", ".docm", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".pptm", ".odt", ".ods", ".odp"}
+    archive_exts = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".zst"}
+    ebook_exts = {".epub", ".mobi", ".azw", ".azw3", ".fb2"}
+    font_exts = {".ttf", ".otf", ".woff", ".woff2"}
+    text_exts = {".txt", ".md", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".ini", ".conf", ".srt", ".ass", ".ssa", ".vtt", ".ttml"}
     is_audio = audio_attr is not None or mime.startswith("audio/") or ext in AUDIO_EXT
     is_video = video_attr is not None or mime.startswith("video/") or ext in {
         ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpeg", ".mpg",
@@ -1005,6 +1056,16 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
         category = "Audio"
     elif is_image:
         category = "Photo" if photo_obj is not None or media_type == "MessageMediaPhoto" else "Image"
+    elif ext in office_exts or any(marker in mime for marker in ("wordprocessingml", "spreadsheetml", "presentationml", "opendocument")):
+        category = "Office document"
+    elif ext in archive_exts or "archive" in report.detected.lower() or "compressed data" in report.detected.lower():
+        category = "Archive"
+    elif ext in ebook_exts:
+        category = "E-book"
+    elif ext in font_exts or "font" in report.detected.lower():
+        category = "Font file"
+    elif ext in text_exts or mime.startswith("text/") or "subtitle" in report.detected.lower():
+        category = "Text / subtitle file"
     elif "poll" in media_type.lower():
         category = "Poll"
     elif "contact" in media_type.lower():
@@ -1092,6 +1153,29 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
         put("pdf_pages", report.container.get("pages"))
         put("pdf_page_size", report.container.get("page_size_name") or report.container.get("page_size_points"))
         put("pdf_encrypted", report.container.get("encrypted"))
+
+    # ZIP-family office documents and archives expose useful directory metadata.
+    # Parsing is limited to the already-bounded source bytes and short member lists.
+    if raw and (raw.startswith(b"PK\\x03\\x04") or ext in {".zip", ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm", ".odt", ".ods", ".odp", ".epub", ".apk", ".jar", ".xpi"}):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                members = archive.infolist()
+                put("archive_entry_count", len(members))
+                put("archive_uncompressed_bytes", sum(item.file_size for item in members))
+                put("archive_compressed_bytes", sum(item.compress_size for item in members))
+                put("archive_directory_preview", " | ".join(item.filename for item in members[:8]))
+                put("archive_contains_encrypted_members", any(item.flag_bits & 0x1 for item in members))
+                core = next((item for item in members if item.filename.lower() in {"docprops/core.xml", "meta.xml"}), None)
+                if core is not None and core.file_size <= 65536:
+                    with archive.open(core) as handle:
+                        xml_sample = handle.read(65536).decode("utf-8", "replace")
+                    for xml_key, output_key in (("title", "document_title"), ("creator", "document_creator"), ("lastModifiedBy", "document_last_modified_by")):
+                        match = re.search(r"<(?:[a-z0-9_]+:)?" + xml_key + r"(?:\\s[^>]*)?>(.*?)</(?:[a-z0-9_]+:)?" + xml_key + r"\\s*>", xml_sample, re.I | re.S)
+                        if match:
+                            put(output_key, re.sub(r"<[^>]+>", "", match.group(1)).strip())
+        except Exception:
+            # Large/truncated archives may not include their central directory in the probe.
+            pass
 
     webpage = getattr(media, "webpage", None)
     if webpage is not None:
