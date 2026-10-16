@@ -1493,12 +1493,15 @@ def format_report(r:Report)->str:
         value = r.media_info.get(key)
         if value not in (None, ""):
             lines.append(f"• {_safe(key.replace('_',' ').title())}: {_safe(value)}")
-    lines += [
-        "",
-        f"🎬 Video tracks: <b>{len(v) if isinstance(v,list) else 0}</b>",
-        f"🔊 Audio tracks: <b>{len(a) if isinstance(a,list) else 0}</b>",
-        f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>",
-    ]
+    track_count_lines = []
+    if isinstance(v, list) and v:
+        track_count_lines.append(f"🎬 Video tracks: <b>{len(v)}</b>")
+    if isinstance(a, list) and a:
+        track_count_lines.append(f"🔊 Audio tracks: <b>{len(a)}</b>")
+    if r.subtitles:
+        track_count_lines.append(f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>")
+    if track_count_lines:
+        lines += [""] + track_count_lines
     if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
     lines += ["",f"🧪 Sampled: {human(r.sampled)} across {len(r.probe_ranges)} targeted range(s)"]
     if r.notes:lines += ["",f"ℹ️ {_safe(r.notes[0])}"]

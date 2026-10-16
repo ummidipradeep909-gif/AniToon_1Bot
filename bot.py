@@ -348,114 +348,12 @@ def _language_names_for_report(report: Report, key: str) -> list[str]:
     return names[:12]
 
 def compact_scan_result(report: Report) -> str:
-    info = report.media_info if isinstance(getattr(report, "media_info", None), dict) else {}
-    category = str(info.get("category") or report.media_kind or "File")
-    lines = [
-        "✅ <b>MEDIA SCAN COMPLETE</b>",
-        "",
-        f"🧩 Type: <b>{html.escape(category)}</b>",
-        f"📄 <code>{html.escape(str(report.filename or 'Telegram media'))[:140]}</code>",
-        f"📦 Format: {html.escape(str(report.detected or 'Unknown'))}",
-        f"📏 Size: {html.escape(human(report.size))}",
-    ]
-
-    category_keys = {
-        "Photo": ("image_pixel_dimensions", "image_format", "image_color_mode", "image_has_transparency"),
-        "Image": ("image_pixel_dimensions", "image_format", "image_color_mode", "image_exif_summary"),
-        "Animation": ("image_pixel_dimensions", "image_format", "image_frame_count", "image_frame_duration_ms"),
-        "Sticker": ("sticker_alt_text", "sticker_set", "sticker_is_animated", "dimensions"),
-        "Custom emoji": ("custom_emoji_alt_text", "custom_emoji_free"),
-        "Video": ("dimensions", "video_duration_seconds", "average_bitrate", "supports_streaming"),
-        "Video note": ("video_width", "video_height", "video_duration_seconds"),
-        "Audio": ("audio_title", "audio_performer", "audio_duration_seconds", "audio_has_waveform"),
-        "Voice message": ("audio_duration_seconds", "audio_is_voice", "audio_has_waveform"),
-        "PDF document": ("pdf_pages", "pdf_version", "pdf_page_size", "pdf_encrypted"),
-        "Office document": ("document_title", "document_creator", "archive_entry_count", "file_extension"),
-        "Archive": ("archive_entry_count", "archive_uncompressed_bytes", "archive_directory_preview"),
-        "E-book": ("document_title", "archive_entry_count", "file_extension"),
-        "Font file": ("file_extension", "declared_mime_type"),
-        "Poll": ("poll_question", "poll_options", "poll_option_count", "poll_voter_count"),
-        "Web page preview": ("webpage_title", "webpage_url", "webpage_site_name", "webpage_description"),
-        "Contact card": ("contact_name", "contact_phone_present"),
-        "Venue": ("venue_title", "venue_provider", "venue_address_present"),
-        "Location": ("location_coordinates_present",),
-    }
-    default_keys = (
-        "dimensions", "image_pixel_dimensions", "image_format", "image_frame_count",
-        "video_duration_seconds", "audio_title", "audio_performer", "audio_duration_seconds",
-        "pdf_pages", "archive_entry_count", "document_title", "webpage_title",
-        "poll_question", "post_author", "views", "forwards", "replies",
-        "is_channel_post", "forwarded_from_name", "forwarded_post_number", "forwarded_date_utc",
-        "game_title", "game_description", "invoice_title", "invoice_currency", "invoice_total_amount",
+    """Keep scan details on the web report instead of posting them as Telegram text."""
+    return (
+        "✅ <b>Scan complete</b>\n\n"
+        "Your file report is ready in the browser.\n"
+        "Tap <b>Open File Info</b> below to view the details."
     )
-    labels = {
-        "image_pixel_dimensions": "Image pixels",
-        "image_format": "Image format",
-        "image_color_mode": "Color mode",
-        "image_has_transparency": "Transparency",
-        "image_frame_count": "Frame count",
-        "image_frame_duration_ms": "Frame duration (ms)",
-        "sticker_alt_text": "Sticker emoji / text",
-        "sticker_set": "Sticker set",
-        "sticker_is_animated": "Animated sticker",
-        "dimensions": "Dimensions",
-        "video_width": "Video width",
-        "video_height": "Video height",
-        "video_duration_seconds": "Video duration (seconds)",
-        "supports_streaming": "Streaming supported",
-        "audio_title": "Audio title",
-        "audio_performer": "Artist / performer",
-        "audio_duration_seconds": "Audio duration (seconds)",
-        "audio_is_voice": "Voice message",
-        "audio_has_waveform": "Waveform present",
-        "pdf_pages": "PDF pages",
-        "pdf_version": "PDF version",
-        "pdf_page_size": "PDF page size",
-        "pdf_encrypted": "PDF encrypted",
-        "archive_entry_count": "Archive entries",
-        "archive_uncompressed_bytes": "Uncompressed bytes",
-        "archive_directory_preview": "Archive contents",
-        "document_title": "Document title",
-        "document_creator": "Document creator",
-        "file_extension": "Extension",
-        "declared_mime_type": "MIME type",
-        "poll_question": "Poll question",
-        "poll_options": "Options",
-        "poll_option_count": "Option count",
-        "poll_voter_count": "Voters",
-        "webpage_title": "Web page title",
-        "webpage_url": "Web page URL",
-        "webpage_site_name": "Website",
-        "webpage_description": "Page description",
-        "contact_name": "Contact name",
-        "contact_phone_present": "Contact phone present",
-        "venue_title": "Venue",
-        "venue_provider": "Venue provider",
-        "venue_address_present": "Venue address present",
-        "location_coordinates_present": "Location attached",
-        "post_author": "Post author",
-        "views": "Views",
-        "forwards": "Forwards",
-        "replies": "Replies",
-    }
-    selected = category_keys.get(category, default_keys)
-    shown = 0
-    for key in selected:
-        value = info.get(key)
-        if value in (None, "", []):
-            # Container and generic details live outside media_info.
-            if key == "average_bitrate":
-                value = report.container.get("average_bitrate")
-            else:
-                continue
-        label = labels.get(key, key.replace("_", " ").title())
-        lines.append(f"• <b>{html.escape(label)}:</b> {html.escape(str(value)[:200])}")
-        shown += 1
-        if shown >= 4:
-            break
-
-    lines += ["", "🌐 Tap <b>Open File Info</b> below for the full report."]
-    return "\n".join(lines)
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon Media Intelligence Bot</b> ⛩\n\n"
@@ -4596,20 +4494,30 @@ def web_page(
     bitrate = report.container.get("average_bitrate") or "—"
     title = report.container.get("title")
 
-    # Non-AV media should show the fields that matter to that type instead of
-    # an unhelpful row of zero video/audio/subtitle tracks.
+    # Only summarize streams that were actually detected. Other file types get
+    # the small, type-specific overview below instead of irrelevant zero-count tracks.
     media_category = str(media_info.get("category") or report.media_kind or "File")
-    has_stream_report = bool(video or audio or subtitles) or media_category in {
-        "Video", "Audio", "Voice message", "Video note"
-    }
+    has_stream_report = bool(video or audio or subtitles)
     if has_stream_report:
-        summary_cards = "".join([
-            f'<div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>',
-            f'<div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>',
-            f'<div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>',
-            f'<div class="stat"><b>{esc(quality)}</b><span>Primary quality / pixels</span></div>',
-            f'<div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>',
-        ])
+        stream_summary_items: list[tuple[str, Any]] = []
+        if report.size is not None:
+            stream_summary_items.append(("File size", size_text))
+        if container_name and container_name != "Detected media":
+            stream_summary_items.append(("Format", container_name))
+        if video:
+            stream_summary_items.append(("Video tracks", len(video)))
+        if audio:
+            stream_summary_items.append(("Audio tracks", len(audio)))
+        if subtitles:
+            stream_summary_items.append(("Subtitle tracks", len(subtitles)))
+        if quality not in (None, "", "—"):
+            stream_summary_items.append(("Primary quality / pixels", quality))
+        if runtime not in (None, "", "N/A", "—"):
+            stream_summary_items.append(("Runtime", runtime))
+        summary_cards = "".join(
+            f'<div class="stat"><b>{esc(value)}</b><span>{esc(label)}</span></div>'
+            for label, value in stream_summary_items
+        )
     else:
         extra_label, extra_value = (
             ("Frames", media_info.get("image_frame_count")) if media_info.get("image_frame_count") not in (None, "")
@@ -4623,12 +4531,13 @@ def web_page(
             ("Media category", media_category),
             ("Format", media_info.get("image_format") or media_info.get("detected_format") or report.detected or "—"),
             ("Dimensions / pixels", media_info.get("image_pixel_dimensions") or media_info.get("dimensions") or "—"),
-            ("File size", size_text),
-            (extra_label, extra_value or "—"),
+            ("File size", size_text if report.size is not None else None),
+            (extra_label, extra_value),
         ]
         summary_cards = "".join(
             f'<div class="stat"><b>{esc(value)}</b><span>{esc(label)}</span></div>'
             for label, value in summary_items
+            if value not in (None, "", "—")
         )
 
     # The preview is the automatic Telegram thumbnail generated from the file.
@@ -4643,6 +4552,81 @@ def web_page(
     hero_label = "🎞️ Auto thumbnail from file" if previews and previews[0].get("data") else ""
 
     report_id = esc((report_token or "local")[:14])
+
+    def stream_section(
+        items: list[dict[str, Any]],
+        kind: str,
+        section_id: str,
+        filter_key: str,
+        placeholder: str,
+    ) -> str:
+        if not items:
+            return ""
+        title_text = f"{icon_for(kind)} {kind if kind != 'Subtitle' else 'Subtitles'}"
+        count_text = f"{len(items)} track{'s' if len(items) != 1 else ''}"
+        return (
+            f'<details id="{section_id}" class="section" open>'
+            f'<summary class="section-head"><h2>{title_text}</h2>'
+            f'<span class="pill">{count_text} <span class="chev">⌄</span></span></summary>'
+            f'<div class="section-body"><div class="toolbar">'
+            f'<input class="search" data-filter="{filter_key}" placeholder="{placeholder}"></div>'
+            f'<div data-track-list="{filter_key}">{track_cards(items, kind)}</div>'
+            f'</div></details>'
+        )
+
+    video_section = stream_section(video, "Video", "video-section", "video", "Filter video tracks…")
+    audio_section = stream_section(audio, "Audio", "audio-section", "audio", "Filter audio by language, codec, name…")
+    subtitle_section = stream_section(subtitles, "Subtitle", "subs-section", "subtitle", "Filter subtitle tracks…")
+
+    nav_links = ['<a href="#overview">Overview</a>']
+    if video_section:
+        nav_links.append('<a href="#video-section">Video</a>')
+    if audio_section:
+        nav_links.append('<a href="#audio-section">Audio</a>')
+    if subtitle_section:
+        nav_links.append('<a href="#subs-section">Subtitles</a>')
+
+    technical_items = [
+        ("Container", container_name if container_name != "Detected media" else None),
+        ("MIME type", report.mime),
+        ("Runtime", runtime if runtime not in ("N/A", "—") else None),
+        ("File size", size_text if report.size is not None else None),
+        ("Average bitrate", bitrate if bitrate != "—" else None),
+        ("Runtime source", runtime_source),
+        ("Detected type", report.media_kind if report.media_kind not in ("", "File") else None),
+    ]
+    technical_cards = "".join(
+        f'<div class="tech"><small>{esc(label)}</small><b>{esc(value)}</b></div>'
+        for label, value in technical_items
+        if value not in (None, "", "—")
+    )
+    technical_section = (
+        '<details id="technical-section" class="section" open>'
+        '<summary class="section-head"><h2>⚙️ Technical</h2>'
+        '<span class="pill">File details <span class="chev">⌄</span></span></summary>'
+        f'<div class="section-body"><div class="tech-grid">{technical_cards}</div></div></details>'
+        if technical_cards else ""
+    )
+    if technical_section:
+        nav_links.append('<a href="#technical-section">Technical</a>')
+    quick_nav = '<nav class="quick" aria-label="Quick navigation">' + "".join(nav_links) + '</nav>'
+
+    language_pills = []
+    if audio:
+        language_pills.extend(
+            f'<span class="lang-pill">🎧 {esc(name)}</span>'
+            for name in _language_names_for_report(report, "audio")[:12]
+        )
+    if subtitles:
+        language_pills.extend(
+            f'<span class="lang-pill">💬 {esc(name)}</span>'
+            for name in _language_names_for_report(report, "subtitle")[:12]
+        )
+    language_ribbon = (
+        '<div class="language-ribbon"><span class="language-label">LANGUAGES</span>'
+        + "".join(language_pills) + "</div>"
+        if language_pills else ""
+    )
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -4801,60 +4785,15 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   <div class="summary" id="overview">
     {summary_cards}
   </div>
-  <div class="language-ribbon">
-    <span class="language-label">LANGUAGES</span>
-    {''.join(f'<span class="lang-pill">🎧 {esc(x)}</span>' for x in _language_names_for_report(report, "audio")[:12])}
-    {''.join(f'<span class="lang-pill">💬 {esc(x)}</span>' for x in _language_names_for_report(report, "subtitle")[:12])}
-  </div>
+  {language_ribbon}
 
   {media_details_section}
 
-  <nav class="quick" aria-label="Quick navigation">
-    <a href="#overview">Overview</a>
-    <a href="#video-section">Video</a>
-    <a href="#audio-section">Audio</a>
-    <a href="#subs-section">Subtitles</a>
-    <a href="#technical-section">Technical</a>
-  </nav>
-
-  <details id="video-section" class="section" open>
-    <summary class="section-head"><h2>🎬 Video</h2><span class="pill">{len(video)} track{'s' if len(video)!=1 else ''} <span class="chev">⌄</span></span></summary>
-    <div class="section-body">
-      <div class="toolbar"><input class="search" data-filter="video" placeholder="Filter video tracks…"></div>
-      <div data-track-list="video">{track_cards(video,"Video")}</div>
-    </div>
-  </details>
-
-  <details id="audio-section" class="section" open>
-    <summary class="section-head"><h2>🎧 Audio</h2><span class="pill">{len(audio)} track{'s' if len(audio)!=1 else ''} <span class="chev">⌄</span></span></summary>
-    <div class="section-body">
-      <div class="toolbar"><input class="search" data-filter="audio" placeholder="Filter audio by language, codec, name…"></div>
-      <div data-track-list="audio">{track_cards(audio,"Audio")}</div>
-    </div>
-  </details>
-
-  <details id="subs-section" class="section" open>
-    <summary class="section-head"><h2>💬 Subtitles</h2><span class="pill">{len(subtitles)} track{'s' if len(subtitles)!=1 else ''} <span class="chev">⌄</span></span></summary>
-    <div class="section-body">
-      <div class="toolbar"><input class="search" data-filter="subtitle" placeholder="Filter subtitle tracks…"></div>
-      <div data-track-list="subtitle">{track_cards(subtitles,"Subtitle")}</div>
-    </div>
-  </details>
-
-  <details id="technical-section" class="section" open>
-    <summary class="section-head"><h2>⚙️ Technical</h2><span class="pill">File details <span class="chev">⌄</span></span></summary>
-    <div class="section-body">
-      <div class="tech-grid">
-        <div class="tech"><small>Container</small><b>{esc(container_name)}</b></div>
-        <div class="tech"><small>MIME type</small><b>{esc(mime)}</b></div>
-        <div class="tech"><small>Runtime</small><b>{esc(runtime)}</b></div>
-        <div class="tech"><small>File size</small><b>{esc(size_text)}</b></div>
-        <div class="tech"><small>Average bitrate</small><b>{esc(bitrate)}</b></div>
-        <div class="tech"><small>Runtime source</small><b>{esc(runtime_source or "Telegram/container metadata")}</b></div>
-        <div class="tech"><small>Detected type</small><b>{esc(report.media_kind or "File")}</b></div>
-      </div>
-    </div>
-  </details>
+  {quick_nav}
+  {video_section}
+  {audio_section}
+  {subtitle_section}
+  {technical_section}
 
   <div class="bottom-actions">
     <a class="home-button bottom-home" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
@@ -4918,12 +4857,20 @@ def minimal_web_report_page(
     filename = html.escape(safe.filename or "Telegram media file")
     summary = html.escape(format_report(safe)).replace("\n", "<br>")
     sections = []
+    available_sections = {
+        "video": bool(safe.video.get("tracks")),
+        "audio": bool(safe.audio.get("tracks")),
+        "subs": bool(safe.subtitles),
+        "technical": True,
+    }
     for section, title in (
         ("video", "🎬 Video"),
         ("audio", "🎧 Audio"),
         ("subs", "💬 Subtitles"),
         ("technical", "⚙️ Technical"),
     ):
+        if not available_sections[section]:
+            continue
         with suppress(Exception):
             content = web_section(safe, section)
             sections.append(
