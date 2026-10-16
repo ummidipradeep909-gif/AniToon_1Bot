@@ -36,7 +36,7 @@ class GeminiTests(unittest.TestCase):
         with self.assertRaisesRegex(IntelligenceError, "GEMINI_API_KEY"):
             gemini_intelligence("media intelligence")
 
-    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-2.5-flash"}, clear=False)
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-3.5-flash-lite"}, clear=False)
     @patch("intelligence._json_request")
     def test_grounded_report_keeps_real_source_links(self, fake_request):
         intelligence._INTEL_CACHE.clear()
@@ -58,6 +58,11 @@ class GeminiTests(unittest.TestCase):
         self.assertIn('href="https://example.com/report"', rendered)
         self.assertIn("Grounded sources", rendered)
         fake_request.assert_called_once()
+        endpoint = fake_request.call_args.args[0]
+        self.assertTrue(endpoint.endswith(":generateContent"))
+        self.assertNotIn("test-key", endpoint)
+        self.assertEqual(fake_request.call_args.kwargs["api_key"], "test-key")
+        self.assertEqual(fake_request.call_args.kwargs["payload"]["tools"], [{"google_search": {}}])
 
 
 class YouTubeTests(unittest.TestCase):
