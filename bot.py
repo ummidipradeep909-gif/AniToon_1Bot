@@ -1500,7 +1500,44 @@ async def run_scan(
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
         async def fast_worker():
-            # Telegram I/O remains async and every source read stays inside the bounded probe budget.
+            # Use the stream-aware PyAV/FFmpeg inspector for audio/video to expose
+            # codecs, duration, dimensions, frame rate, bitrate and stream counts.
+            # Both inspectors keep source reads under the existing strict probe budget.
+            file_obj = getattr(source_message, "file", None)
+            filename = str(getattr(file_obj, "name", None) or "").lower()
+            mime = str(getattr(file_obj, "mime_type", None) or "").lower()
+            attributes = list(getattr(file_obj, "attributes", None) or [])
+            attribute_names = {type(item).__name__.lower() for item in attributes}
+            av_extensions = {
+                ".mkv", ".webm", ".mp4", ".m4v", ".mov", ".avi", ".mpeg",
+                ".mpg", ".ts", ".m2ts", ".mts", ".3gp", ".wmv", ".flv",
+                ".ogv", ".mp3", ".flac", ".wav", ".wave", ".m4a", ".aac",
+                ".opus", ".ogg", ".oga", ".wma", ".ac3", ".eac3", ".mka",
+            }
+            has_av_streams = (
+                mime.startswith(("video/", "audio/"))
+                or any("documentattributevideo" in name or "documentattributeaudio" in name for name in attribute_names)
+                or any(filename.endswith(ext) for ext in av_extensions)
+            )
+            if has_av_streams:
+                try:
+                    return await inspect_telegram_player(
+                        client,
+                        source_message,
+                        scan_token,
+                        progress=progress,
+                    )
+                except (ProbeBudgetExceeded, ProbeCancelled, asyncio.CancelledError):
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "Stream-aware metadata scan failed; trying bounded fallback | file=%s | error=%s",
+                        safe_filename(source_message),
+                        type(exc).__name__,
+                    )
+
+            # Non-AV media (photos, stickers, GIFs, PDFs and other documents)
+            # use the file-aware parser and Telegram message attributes.
             return await inspect_telegram_message(
                 client,
                 source_message,
