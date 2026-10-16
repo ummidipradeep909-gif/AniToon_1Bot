@@ -355,15 +355,15 @@ HOME_TEXT = (
 
 CLONE_HOME_TEXT = (
     "⛩ <b>AniToon Media Info Clone</b> ⛩\n\n"
-    "🔎 Scan Telegram videos and documents for detailed media information.\n"
-    "🌐 Open the complete file report in your browser."
+    "🔎 Inspect Telegram photos, videos, stickers, GIFs, PDFs, audio, documents and supported post media.\n"
+    "🌐 Open the complete type-specific report in your browser."
 )
 
 CLONE_HELP_TEXT = (
     "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
-    "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
+    "1️⃣ Send a Telegram <b>photo, video, sticker, GIF, PDF, audio or document</b> to the bot.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
-    "3️⃣ Open <b>🌐 Open File Info</b> for the complete report.\n\n"
+    "3️⃣ Open <b>🌐 Open File Info</b> for the media-specific report.\n\n"
     "📋 <b>Commands on clone bots</b>\n"
     "/start — Open Home\n"
     "/help — Open this guide\n"
@@ -376,10 +376,10 @@ CLONE_HELP_TEXT = (
 
 HELP_TEXT = (
     "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
-    "1️⃣ Send a Telegram <b>video or document</b> to the bot.\n"
+    "1️⃣ Send a Telegram <b>photo, video, sticker, GIF, PDF, audio, document or supported post media</b>.\n"
     "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
     "3️⃣ Wait for the metadata scan to finish.\n"
-    "4️⃣ Press <b>🌐 Open File Info</b> for the full web report.\n\n"
+    "4️⃣ Press <b>🌐 Open File Info</b> for type-specific technical details.\n\n"
     "🤖 <b>Clone Bots</b>\n"
     "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
     "📋 <b>Commands</b>\n"
@@ -398,11 +398,11 @@ HELP_TEXT = (
 ABOUT_TEXT = (
     "ℹ️ <b>About AniToon</b> ✨\n\n"
     "🤖 <b>AniToon Bot</b>\n"
-    "A Telegram bot that detects your video or document and scans its available metadata using bounded reads.\n\n"
+    "A Telegram media inspector that reports available metadata for photos, images, videos, stickers, animations, PDFs, audio, documents and supported post attachments. Reads stay bounded for large files.\n\n"
     "🌐 <b>AniToon Web</b>\n"
     "The web page presents the complete file information in a clean, easy-to-read report.\n\n"
     "📦 <b>What you get</b>\n"
-    "Video • Audio • Subtitles • Container • Technical metadata\n\n"
+    "Images • Video • Audio • Stickers • GIFs • PDFs • Subtitles • Post context • Technical metadata\n\n"
     "⚡ <b>Simple workflow</b>\n"
     "Send file → tap Scan File Info → open the web report."
 )
@@ -1940,9 +1940,9 @@ async def analyze(
 
     filename = html.escape(safe_filename(event.message))[:120]
     await event.reply(
-        "📦 <b>FILE DETECTED</b>\n\n"
+        "📦 <b>MEDIA DETECTED</b>\n\n"
         f"📄 <code>{filename}</code>\n"
-        "🔎 Click below to check the file information.",
+        "🔎 AniToon will identify the media type and show its available details.",
         parse_mode="html",
         buttons=metadata_button(token),
     )
