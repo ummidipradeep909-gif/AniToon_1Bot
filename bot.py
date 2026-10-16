@@ -66,6 +66,7 @@ from mongo_store import (
 from intelligence import (
     IntelligenceError,
     gemini_intelligence,
+    news_rss_intelligence,
     intelligence_html,
     youtube_videos,
     videos_html,
@@ -381,7 +382,7 @@ async def intelligence_watch_loop() -> None:
     """Run a small, bounded batch of opted-in topic reports from the existing process."""
     while True:
         await asyncio.sleep(300)
-        if not os.getenv("GEMINI_API_KEY", "").strip() or not mongodb_is_connected():
+        if not mongodb_is_connected():
             continue
         try:
             due = await due_intel_watches(limit=2)
@@ -391,7 +392,14 @@ async def intelligence_watch_loop() -> None:
                 if chat_id <= 0 or not topic:
                     continue
                 try:
-                    report = await asyncio.to_thread(gemini_intelligence, topic)
+                    if os.getenv("GEMINI_API_KEY", "").strip():
+                        try:
+                            report = await asyncio.to_thread(gemini_intelligence, topic)
+                        except IntelligenceError as exc:
+                            log.warning("Scheduled Gemini unavailable; falling back to RSS: %s", str(exc)[:160])
+                            report = await asyncio.to_thread(news_rss_intelligence, topic)
+                    else:
+                        report = await asyncio.to_thread(news_rss_intelligence, topic)
                     await bot.send_message(
                         chat_id,
                         intelligence_html(report),
@@ -3311,15 +3319,32 @@ async def handle_new_message(
             if not argument:
                 await event.reply(INTELLIGENCE_HELP_TEXT, parse_mode="html", buttons=intelligence_buttons())
                 return
-            status = await event.reply("🧠 Researching with Gemini and searching for verifiable sources…")
+            has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
+            status = await event.reply(
+                "🧠 Preparing a Gemini-grounded report…" if has_gemini
+                else "📰 Preparing a live news digest…"
+            )
             try:
-                report = await asyncio.to_thread(gemini_intelligence, argument)
-                await status.edit(intelligence_html(report), parse_mode="html", link_preview=False, buttons=intelligence_buttons())
+                if has_gemini:
+                    try:
+                        report = await asyncio.to_thread(gemini_intelligence, argument)
+                    except IntelligenceError as exc:
+                        log.warning("Gemini unavailable; falling back to public news RSS: %s", str(exc)[:160])
+                        report = await asyncio.to_thread(news_rss_intelligence, argument)
+                else:
+                    report = await asyncio.to_thread(news_rss_intelligence, argument)
+                await status.edit(
+                    intelligence_html(report), parse_mode="html", link_preview=False,
+                    buttons=intelligence_buttons()
+                )
             except IntelligenceError as exc:
                 await status.edit("⚠️ " + html.escape(str(exc)), parse_mode="html", buttons=intelligence_buttons())
             except Exception:
-                log.exception("Gemini intelligence report failed")
-                await status.edit("⚠️ The report could not be completed. Check the provider configuration and try again.", buttons=intelligence_buttons())
+                log.exception("Media intelligence report failed")
+                await status.edit(
+                    "⚠️ The report could not be completed. Try again later, or use /videos topic.",
+                    buttons=intelligence_buttons()
+                )
             return
         if command in {"/videos", "/shorts"}:
             if not argument:
@@ -3342,9 +3367,8 @@ async def handle_new_message(
             if not argument:
                 await event.reply("Use <code>/watch topic</code>. By default, AniToon sends a grounded Gemini report every 12 hours. Use <code>/watches</code> and <code>/unwatch topic</code> to manage alerts.", parse_mode="html", buttons=intelligence_buttons())
                 return
-            if not os.getenv("GEMINI_API_KEY", "").strip():
-                await event.reply("Scheduled intelligence is not enabled yet. The owner must configure <code>GEMINI_API_KEY</code> in Render.", parse_mode="html", buttons=intelligence_buttons())
-                return
+            # Public RSS digest is available without a Gemini API key. If configured,
+            # the scheduled job prefers Gemini and falls back to RSS during outages.
             try:
                 interval = int(os.getenv("INTEL_WATCH_INTERVAL_HOURS", "12") or "12")
             except (TypeError, ValueError):
@@ -5775,7 +5799,7 @@ async def main():
 
         clone_monitor_task = asyncio.create_task(monitor_clone_bots())
         group_onboarding_task = asyncio.create_task(_group_onboarding_loop())
-        if os.getenv("GEMINI_API_KEY", "").strip() and mongodb_is_connected():
+        if mongodb_is_connected():
             intelligence_watch_task = asyncio.create_task(intelligence_watch_loop())
 
         log.info(
