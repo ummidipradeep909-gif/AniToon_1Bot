@@ -19,7 +19,7 @@ try:
 except Exception:
     fitz = None
 
-from file_inspector import inspect_telegram_message
+from file_inspector import inspect_telegram_message, _populate_telegram_media_info
 
 from file_inspector import Report
 
@@ -542,6 +542,7 @@ def _build_report(message: Any, container: Any, session: RangeProbeSession) -> R
         ),
         sampled=session.fetched_bytes,
     )
+    _populate_telegram_media_info(message, report)
 
     runtime = _container_runtime(container)
     if runtime:
@@ -660,6 +661,9 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
         primary.detected = secondary.detected
     if not primary.mime and secondary.mime: primary.mime = secondary.mime
     primary.media_kind = secondary.media_kind if secondary.media_kind != "File" else primary.media_kind
+    for key, value in getattr(secondary, "media_info", {}).items():
+        if value not in (None, "", []):
+            primary.media_info.setdefault(key, value)
     primary.sampled = int(primary.sampled or 0) + int(secondary.sampled or 0)
     if not primary.previews and secondary.previews:
         primary.previews = list(secondary.previews)
