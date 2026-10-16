@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from html import escape
 from urllib.error import HTTPError, URLError
@@ -18,6 +19,31 @@ from typing import Any
 MAX_QUERY_CHARS = 140
 MAX_VIDEO_RESULTS = 5
 HTTP_TIMEOUT_SECONDS = 12
+_CACHE_TTL_SECONDS = 900
+_CACHE_MAX_ITEMS = 32
+_INTEL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_YOUTUBE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _cache_get(cache: dict[str, tuple[float, dict[str, Any]]], key: str) -> dict[str, Any] | None:
+    entry = cache.get(key)
+    if not entry:
+        return None
+    created, value = entry
+    if time.monotonic() - created > _CACHE_TTL_SECONDS:
+        cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(cache: dict[str, tuple[float, dict[str, Any]]], key: str, value: dict[str, Any]) -> None:
+    now = time.monotonic()
+    expired = [item for item, (created, _) in cache.items() if now - created > _CACHE_TTL_SECONDS]
+    for item in expired:
+        cache.pop(item, None)
+    while len(cache) >= _CACHE_MAX_ITEMS:
+        cache.pop(next(iter(cache)))
+    cache[key] = (now, value)
 
 
 class IntelligenceError(RuntimeError):
@@ -84,6 +110,10 @@ def gemini_intelligence(topic: str) -> dict[str, Any]:
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model):
         raise IntelligenceError("GEMINI_MODEL contains unsupported characters.")
+    cache_key = model + ":" + query.casefold()
+    cached = _cache_get(_INTEL_CACHE, cache_key)
+    if cached is not None:
+        return cached
     prompt = (
         "Create a concise, evidence-first media intelligence brief about this topic: "
         + query
@@ -154,7 +184,7 @@ def gemini_intelligence(topic: str) -> dict[str, Any]:
         if len(search_queries) >= 5:
             break
 
-    return {
+    result = {
         "topic": query,
         "text": summary[:8500],
         "sources": sources,
@@ -162,6 +192,8 @@ def gemini_intelligence(topic: str) -> dict[str, Any]:
         "model": model,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+    _cache_put(_INTEL_CACHE, cache_key, result)
+    return result
 
 
 def youtube_videos(topic: str, *, shorts: bool = False) -> dict[str, Any]:
@@ -169,16 +201,22 @@ def youtube_videos(topic: str, *, shorts: bool = False) -> dict[str, Any]:
     query = _clean_query(topic)
     api_key = os.getenv("YOUTUBE_API_KEY", "").strip()
     mode_query = (query + " Shorts").strip() if shorts else query
+    cache_key = ("shorts:" if shorts else "videos:") + mode_query.casefold()
+    cached = _cache_get(_YOUTUBE_CACHE, cache_key)
+    if cached is not None:
+        return cached
     if not api_key:
         encoded = urlencode({"search_query": mode_query})
         fallback = "https://www.youtube.com/results?" + encoded
-        return {
+        result = {
             "topic": query,
             "shorts": shorts,
             "videos": [],
             "fallback_url": fallback,
             "configured": False,
         }
+        _cache_put(_YOUTUBE_CACHE, cache_key, result)
+        return result
     params = {
         "part": "snippet",
         "type": "video",
@@ -216,47 +254,55 @@ def youtube_videos(topic: str, *, shorts: bool = False) -> dict[str, Any]:
             "url": url,
             "short_candidate": bool(shorts),
         })
-    return {
+    result = {
         "topic": query,
         "shorts": shorts,
         "videos": results[:MAX_VIDEO_RESULTS],
         "fallback_url": None,
         "configured": True,
     }
+    _cache_put(_YOUTUBE_CACHE, cache_key, result)
+    return result
 
 
 def intelligence_html(report: dict[str, Any]) -> str:
-    """Produce Telegram-safe HTML from provider text plus grounded source links."""
+    """Produce Telegram-safe HTML without cutting off tags at Telegram's message limit."""
     topic = escape(str(report.get("topic") or "Topic")[:140])
-    summary = escape(str(report.get("text") or "")[:8000])
-    # Keep provider-generated markup inert, preserving its paragraphs.
-    summary = summary.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\n")
+    summary = escape(str(report.get("text") or "")[:1900])
     parts = [
         f"🧠 <b>Media Intelligence Report</b>\n<b>Topic:</b> {topic}\n\n",
         summary,
     ]
     sources = report.get("sources") or []
-    if sources:
+    source_fragments: list[str] = []
+    for index, source in enumerate(sources[:4], start=1):
+        if not isinstance(source, dict):
+            continue
+        url = _safe_https_url(source.get("url"))
+        if not url or len(url) > 260:
+            continue
+        title = escape(str(source.get("title") or "Source")[:100])
+        source_fragments.append(f'\n{index}. <a href="{escape(url, quote=True)}">{title}</a>')
+    if source_fragments:
         parts.append("\n\n<b>Grounded sources</b>")
-        for index, source in enumerate(sources[:7], start=1):
-            if not isinstance(source, dict):
-                continue
-            url = _safe_https_url(source.get("url"))
-            if not url:
-                continue
-            title = escape(str(source.get("title") or "Source")[:180])
-            parts.append(f'\n{index}. <a href="{escape(url, quote=True)}">{title}</a>')
+        for fragment in source_fragments:
+            candidate = "".join(parts) + fragment
+            if len(candidate) > 3500:
+                break
+            parts.append(fragment)
     else:
         parts.append(
-            "\n\n⚠️ <i>Gemini returned no source links in its grounding metadata. "
+            "\n\n⚠️ <i>Gemini returned no usable source links in its grounding metadata. "
             "Treat claims as unverified and try again before relying on them.</i>"
         )
-    parts.append("\n\n<i>Search coverage is incomplete; sentiment and trend signals are not a representative poll.</i>")
-    rendered = "".join(parts)
-    return rendered[:3900]
+    disclaimer = "\n\n<i>Search coverage is incomplete; sentiment and trend signals are not a representative poll.</i>"
+    if len("".join(parts)) + len(disclaimer) <= 3800:
+        parts.append(disclaimer)
+    return "".join(parts)
 
 
 def videos_html(result: dict[str, Any]) -> str:
+    """Format a small list of link-first video results for Telegram."""
     topic = escape(str(result.get("topic") or "Search")[:140])
     is_shorts = bool(result.get("shorts"))
     heading = "YouTube Short-form Search" if is_shorts else "YouTube Video Search"
@@ -270,23 +316,29 @@ def videos_html(result: dict[str, Any]) -> str:
                 f'<a href="{escape(url, quote=True)}">Open YouTube results ↗</a>\n'
                 "Add <code>YOUTUBE_API_KEY</code> in Render → Environment to show individual titles, channels, upload dates and links."
             )
-        return "".join(parts)[:3900]
+        return "".join(parts)
     if not videos:
         parts.append("No videos were returned for that search. Try different keywords.")
         return "".join(parts)
     for index, video in enumerate(videos[:MAX_VIDEO_RESULTS], start=1):
+        if not isinstance(video, dict):
+            continue
         url = _safe_https_url(video.get("url"))
         if not url:
             continue
-        title = escape(str(video.get("title") or "Video")[:200])
-        channel = escape(str(video.get("channel") or "Unknown channel")[:100])
+        title = escape(str(video.get("title") or "Video")[:160])
+        channel = escape(str(video.get("channel") or "Unknown channel")[:70])
         published = escape(str(video.get("published_at") or "Date not provided")[:10])
-        desc = escape(str(video.get("description") or "")[:160])
-        parts.append(f'{index}. <a href="{escape(url, quote=True)}"><b>{title}</b></a>\n')
-        parts.append(f"   {channel} · {published}\n")
+        desc = escape(str(video.get("description") or "")[:90])
+        fragment = f'{index}. <a href="{escape(url, quote=True)}"><b>{title}</b></a>\n   {channel} · {published}\n'
         if desc:
-            parts.append(f"   {desc}\n")
+            fragment += f"   {desc}\n"
         if is_shorts:
-            parts.append("   <i>Short-duration search candidate; the API does not confirm that it is a YouTube Short.</i>\n")
-        parts.append("\n")
-    return "".join(parts)[:3900]
+            fragment += "   <i>Short-duration search candidate; not confirmed as a YouTube Short.</i>\n"
+        fragment += "\n"
+        if len("".join(parts)) + len(fragment) > 3500:
+            break
+        parts.append(fragment)
+    return "".join(parts)
+
+
