@@ -369,38 +369,25 @@ CLONE_HOME_TEXT = (
 )
 
 CLONE_HELP_TEXT = (
-    "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
-    "1️⃣ Send a photo, video, audio file, document or supported media.\n"
-    "2️⃣ Press <b>🔎 Scan Files</b>.\n"
-    "3️⃣ Open <b>🌐 Open File Info</b> to view the complete report in your browser.\n\n"
-    "📋 <b>Working commands</b>\n"
-    "/start — Open Home\n"
-    "/help — Show this guide\n"
-    "/stats — View your scan stats\n"
-    "/about — About AniToon\n"
-    "/addtogroup — Add this bot to a group\n"
-    "/cancel — Cancel your running scan\n"
-    "/main — Open the main AniToon bot and clone creation"
+    "📖 <b>AniToon Media Info Clone</b>\n\n"
+    "📤 Send a photo, video, GIF, sticker, PDF, audio file or document.\n"
+    "🔎 Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full web report.\n\n"
+    "📋 <b>Available command</b>\n"
+    "/main — Open the main AniToon bot for clone creation and management"
 )
 
 HELP_TEXT = (
-    "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
-    "1️⃣ Send a Telegram <b>photo, video, sticker, GIF, PDF, audio, document or supported post media</b>.\n"
-    "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
-    "3️⃣ Wait for the metadata scan to finish.\n"
-    "4️⃣ Press <b>🌐 Open File Info</b> for type-specific technical details.\n\n"
+    "📖 <b>How to Use AniToon</b>\n\n"
+    "1️⃣ Send a photo, video, sticker, GIF, PDF, audio file, document or supported post media.\n"
+    "2️⃣ Tap <b>🔎 Scan Files</b>.\n"
+    "3️⃣ Tap <b>🌐 Open File Info</b> for the complete web report.\n\n"
     "🤖 <b>Clone Bots</b>\n"
-    "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
-    "📋 <b>Commands</b>\n"
-    "/start — Open Home\n"
-    "/help — Show this guide\n"
-    "/stats — View your scan stats\n"
-    "/about — About AniToon\n"
-    "/addtogroup — Add AniToon to a group\n"
-    "/cancel — Cancel your running scan\n"
-    "/clone — Create/connect a clone bot\n"
-    "/clones — View and manage your clones\n"
-    "/myclones — Open your clone manager"
+    "Use <b>Clone Manager</b> on the home screen to create, view or manage your clone bots.\n\n"
+    "📋 <b>Useful commands</b>\n"
+    "/start — Open the main menu and scanning tools\n"
+    "/clone — Create or connect a clone bot\n\n"
+    "💡 <b>More tools</b>\n"
+    "Use the home buttons for My Stats, Help, About and Clone Manager."
 )
 
 ABOUT_TEXT = (
@@ -2652,13 +2639,13 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
     if include_clone:
         # Keep the main bot command menu focused on home and clone creation.
         commands = [
-            types.BotCommand(command="start", description="Open AniToon"),
-            types.BotCommand(command="clone", description="Create your own bot"),
+            types.BotCommand(command="start", description="Open menu and scan media"),
+            types.BotCommand(command="clone", description="Create or connect a clone bot"),
         ]
     else:
         # A clone exposes one visible command leading users to the main bot.
         commands = [
-            types.BotCommand(command="main", description="Open main AniToon bot"),
+            types.BotCommand(command="main", description="Open main bot and clone tools"),
         ]
 
     await client(functions.bots.SetBotCommandsRequest(
