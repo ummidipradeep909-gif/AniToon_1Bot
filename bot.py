@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from telethon import Button, TelegramClient, errors, events, functions, types
 from telethon.sessions import MemorySession
 
-from file_inspector import Report, inspect_telegram_message, format_report, format_section
+from file_inspector import Report, inspect_telegram_message, format_report, format_section, human
 from media_probe import (
     generate_video_previews,
     ProbeBudgetExceeded,
