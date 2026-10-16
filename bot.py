@@ -370,17 +370,19 @@ CLONE_HOME_TEXT = (
 
 CLONE_HELP_TEXT = (
     "📖 <b>How to Use AniToon Media Info Bot</b>\n\n"
-    "1️⃣ Send a Telegram <b>photo, video, sticker, GIF, PDF, audio or document</b> to the bot.\n"
-    "2️⃣ Press <b>🔎 Scan File Info</b>.\n"
-    "3️⃣ Open <b>🌐 Open File Info</b> for the media-specific report.\n\n"
-    "📋 <b>Commands on clone bots</b>\n"
+    "1️⃣ Send a photo, video, audio file, document or supported media.\n"
+    "2️⃣ Press <b>🔎 Scan Files</b>.\n"
+    "3️⃣ Open <b>🌐 Open File Info</b> to view the complete report in your browser.\n\n"
+    "📋 <b>Working commands</b>\n"
     "/start — Open Home\n"
-    "/help — Open this guide\n"
-    "/stats — View your 7-day stats\n"
+    "/help — Show this guide\n"
+    "/stats — View your scan stats\n"
     "/about — About AniToon\n"
-    "/addtogroup — Add the bot to a group\n"
-    "/cancel — Cancel your running scan\n\n"
-    "🤖 Clone management stays on the main AniToon bot."
+    "/addtogroup — Add this bot to a group\n"
+    "/cancel — Cancel your running scan\n"
+    "/clone — Create a clone through the main bot\n"
+    "/clones — Open the main-bot clone manager\n"
+    "/myclones — Open the main-bot clone manager"
 )
 
 HELP_TEXT = (
@@ -393,15 +395,14 @@ HELP_TEXT = (
     "Use <b>🤖 Clone Manager</b> to create and manage up to <b>2</b> clone bots.\n\n"
     "📋 <b>Commands</b>\n"
     "/start — Open Home\n"
-    "/help — Open this guide\n"
-    "/stats — View your 7-day scan stats\n"
-
+    "/help — Show this guide\n"
+    "/stats — View your scan stats\n"
     "/about — About AniToon\n"
     "/addtogroup — Add AniToon to a group\n"
+    "/cancel — Cancel your running scan\n"
     "/clone — Create/connect a clone bot\n"
     "/clones — View and manage your clones\n"
-    "/myclones — Same as /clones\n"
-    "/cancel — Cancel your running scan"
+    "/myclones — Open your clone manager"
 )
 
 ABOUT_TEXT = (
@@ -535,6 +536,45 @@ def _purge_states() -> None:
         pending_scans.pop(token, None)
 
 
+def main_bot_start_url(payload: str | None = None) -> str:
+    base = f"https://t.me/{BOT_USERNAME.lstrip('@')}"
+    return f"{base}?start={payload}" if payload else base
+
+
+def clone_redirect_buttons(payload: str = "clone") -> list[list[Any]]:
+    if payload in {"clones", "myclones"}:
+        primary_label = "🤖 Open Clone Manager"
+    else:
+        primary_label = "🧬 Create Clone on Main Bot"
+        payload = "clone"
+    return [
+        [Button.url(primary_label, main_bot_start_url(payload))],
+        [
+            Button.url("🤖 Main AniToon", main_bot_start_url()),
+            Button.inline("⬅️ Back", b"home:back"),
+        ],
+    ]
+
+
+async def show_clone_redirect(event, *, payload: str = "clone", edit: bool = False) -> None:
+    if payload in {"clones", "myclones"}:
+        message = (
+            "🤖 <b>Clone Manager</b>\n\n"
+            "Open the main AniToon bot to view, manage or remove your clone bots."
+        )
+    else:
+        message = (
+            "🧬 <b>Create Your Own Bot</b>\n\n"
+            "Clone bots cannot register other clone bots directly. "
+            "Tap below to open the main AniToon bot and start clone creation."
+        )
+    buttons = clone_redirect_buttons(payload)
+    if edit:
+        await event.edit(message, parse_mode="html", buttons=buttons)
+    else:
+        await event.reply(message, parse_mode="html", buttons=buttons)
+
+
 def home_buttons(
     bot_username: str = BOT_USERNAME,
     *,
@@ -562,9 +602,11 @@ def home_buttons(
             ]
             buttons.append([add_group])
     else:
+        create_clone = Button.url("🧬 Create Your Own Bot", main_bot_start_url("clone"))
         buttons = [
             [scan, stats],
             [help_btn, about],
+            [create_clone],
             [add_group],
         ]
     return buttons
@@ -2591,17 +2633,16 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
     ]
     if include_clone:
         commands = common + [
-            types.BotCommand(command="clones", description="View your clone bots"),
+            types.BotCommand(command="clones", description="View and manage clone bots"),
             types.BotCommand(command="myclones", description="View your clone bots"),
             types.BotCommand(command="clone", description="Create a clone bot"),
-            types.BotCommand(command="resources", description="Render resource guard (owner)"),
         ]
     else:
-        # Clone bots expose the same user commands; clone-management actions redirect to AniToon.
+        # These commands also work on clones; management opens the main bot.
         commands = common + [
-            types.BotCommand(command="clones", description="View your clone bots"),
-            types.BotCommand(command="myclones", description="View your clone bots"),
-            types.BotCommand(command="clone", description="Create a clone bot"),
+            types.BotCommand(command="clones", description="Open main-bot clone manager"),
+            types.BotCommand(command="myclones", description="Open main-bot clone manager"),
+            types.BotCommand(command="clone", description="Create a clone on the main bot"),
         ]
 
     await client(functions.bots.SetBotCommandsRequest(
@@ -2807,7 +2848,8 @@ async def begin_clone_setup(event) -> None:
 
 
 async def handle_clone_token_message(event) -> bool:
-    if not event.is_private or not (event.raw_text or "").strip():
+    raw_text = (event.raw_text or "").strip()
+    if not event.is_private or not raw_text or raw_text.startswith("/"):
         return False
 
     sender = await event.get_sender()
@@ -3008,8 +3050,6 @@ async def handle_new_message(
 
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
-        if text.startswith("/") and text.split(maxsplit=1)[0].split("@", 1)[0].lower() != "/start":
-            return
 
     if include_clone and await handle_clone_token_message(event):
         return
@@ -3044,6 +3084,14 @@ async def handle_new_message(
     if command == "/start":
         await record_user(event)
         sender = await event.get_sender()
+        start_parts = text.split(maxsplit=1)
+        start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
+        if include_clone and start_payload in {"clone", "createclone"}:
+            await begin_clone_setup(event)
+            return
+        if include_clone and start_payload in {"clones", "myclones"}:
+            await render_clone_list(event, int(sender.id), edit=False)
+            return
         start_buttons = home_buttons(
             bot_username,
             include_clone=include_clone,
@@ -3118,17 +3166,7 @@ async def handle_new_message(
         if include_clone:
             await begin_clone_setup(event)
         else:
-            await event.reply(
-                f"🧬 Clone creation is managed by @{html.escape(BOT_USERNAME)}.",
-                parse_mode="html",
-                buttons=[
-                    [Button.url(
-                        "🤖 Open AniToon",
-                        f"https://t.me/{BOT_USERNAME}",
-                    )],
-                    [Button.inline("⬅️ Back", b"home:back")],
-                ],
-            )
+            await show_clone_redirect(event, payload="clone")
         return
 
     if command in {"/myclones", "/stats"}:
@@ -3136,15 +3174,10 @@ async def handle_new_message(
         sender = await event.get_sender()
         if command == "/stats":
             await render_user_stats(event, int(sender.id), edit=False)
+        elif include_clone:
+            await render_clone_list(event, int(sender.id), edit=False)
         else:
-            if include_clone:
-                await render_clone_list(event, int(sender.id), edit=False)
-            else:
-                await event.reply(
-                    "🤖 <b>Clone management</b> is available from the main AniToon bot.",
-                    parse_mode="html",
-                    buttons=back_buttons(),
-                )
+            await show_clone_redirect(event, payload="clones")
         return
 
     if command in {"/status", "/resources"}:
@@ -3166,10 +3199,7 @@ async def handle_new_message(
         if include_clone:
             await render_clone_list(event, int((await event.get_sender()).id), edit=False)
         else:
-            await event.reply(
-                f"🤖 Manage your clones from @{html.escape(BOT_USERNAME)}.",
-                parse_mode="html",
-            )
+            await show_clone_redirect(event, payload="clones")
         return
 
     if command == "/owner":
@@ -3384,30 +3414,37 @@ async def handle_callback(
         return
 
     if data == "home:clones":
-        await event.answer()
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
-        if user_id is None or not include_clone:
-            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+        if user_id is None:
+            await event.answer("User not found.", alert=True)
+            return
+        await event.answer()
+        if not include_clone:
+            await show_clone_redirect(event, payload="clones", edit=True)
             return
         await render_clone_list(event, int(user_id))
         return
 
     if data == "clone:list":
-        await event.answer()
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
-        if user_id is None or not include_clone:
-            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+        if user_id is None:
+            await event.answer("User not found.", alert=True)
+            return
+        await event.answer()
+        if not include_clone:
+            await show_clone_redirect(event, payload="clones", edit=True)
             return
         await render_clone_list(event, int(user_id))
         return
 
     if data.startswith("clone:stats:"):
-        await event.answer()
         if not include_clone:
-            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            await event.answer()
+            await show_clone_redirect(event, payload="clones", edit=True)
             return
+        await event.answer()
         try:
             clone_id = int(data.split(":", 2)[2])
         except ValueError:
@@ -3422,10 +3459,11 @@ async def handle_callback(
         return
 
     if data.startswith("clone:remove_confirm:"):
-        await event.answer()
         if not include_clone:
-            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            await event.answer()
+            await show_clone_redirect(event, payload="clones", edit=True)
             return
+        await event.answer()
         try:
             clone_id = int(data.split(":", 2)[2])
         except ValueError:
@@ -3452,10 +3490,11 @@ async def handle_callback(
         return
 
     if data.startswith("clone:remove:"):
-        await event.answer()
         if not include_clone:
-            await event.answer("Clone management is available from the main AniToon bot.", alert=True)
+            await event.answer()
+            await show_clone_redirect(event, payload="clones", edit=True)
             return
+        await event.answer()
         try:
             clone_id = int(data.split(":", 2)[2])
         except ValueError:
@@ -3526,26 +3565,12 @@ async def handle_callback(
         )
         return
 
-    if data == "clone:create":
+    if data in {"clone:create", "home:clone"}:
+        await event.answer()
         if include_clone:
-            await event.answer()
             await begin_clone_setup(event)
         else:
-            await event.answer(
-                "Clone management is available from the main AniToon bot.",
-                alert=True,
-            )
-        return
-
-    if data == "home:clone":
-        if include_clone:
-            await event.answer()
-            await begin_clone_setup(event)
-        else:
-            await event.answer(
-                "Clone management is available from the main AniToon bot.",
-                alert=True,
-            )
+            await show_clone_redirect(event, payload="clone", edit=True)
         return
 
 
@@ -3555,8 +3580,9 @@ async def handle_callback(
         user_id = getattr(sender, "id", None)
         if user_id is not None:
             clone_setup_pending.pop(int(user_id), None)
+        home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
         await event.edit(
-            HOME_TEXT,
+            home_text,
             parse_mode="html",
             buttons=home_buttons(
                 bot_username,
