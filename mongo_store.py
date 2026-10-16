@@ -91,6 +91,8 @@ async def _get_db():
                 ("bot_users.bot_user", _db.bot_users, [("bot_id", 1), ("user_id", 1)], {"unique": True}),
                 ("groups.onboarding", _db.groups, [("onboarding_active", 1), ("joined_at", 1)], {}),
                 ("reports.expiry", _db.reports, "expires_at", {"expireAfterSeconds": 0}),
+                ("intel_watches.user_topic", _db.intel_watches, [("user_id", 1), ("topic_key", 1)], {"unique": True}),
+                ("intel_watches.due", _db.intel_watches, [("active", 1), ("next_run", 1)], {}),
             )
             for label, collection, keys, options in index_specs:
                 try:
@@ -1107,3 +1109,150 @@ async def purge_expired_web_reports() -> None:
         )
     except Exception:
         log.exception("Failed to purge expired web reports")
+
+
+async def add_intel_watch(
+    *,
+    user_id: int,
+    chat_id: int,
+    topic: str,
+    interval_hours: int = 12,
+) -> dict[str, Any]:
+    """Persist a private-user intelligence watch with strict per-user/global caps."""
+    db = await _get_db()
+    if db is None:
+        return {"ok": False, "reason": "mongodb_unavailable"}
+
+    clean_topic = " ".join(str(topic or "").split())[:140].strip()
+    if not clean_topic:
+        return {"ok": False, "reason": "empty_topic"}
+    interval = max(6, min(int(interval_hours), 24))
+    topic_key = clean_topic.casefold()
+    now = datetime.now(timezone.utc)
+
+    try:
+        def _add() -> dict[str, Any]:
+            collection = db.intel_watches
+            existing = collection.find_one(
+                {"user_id": int(user_id), "topic_key": topic_key, "active": True},
+                {"_id": 1},
+            )
+            if existing:
+                return {"ok": True, "reason": "already_exists", "topic": clean_topic}
+            if collection.count_documents({"active": True}) >= 20:
+                return {"ok": False, "reason": "global_limit"}
+            if collection.count_documents({"user_id": int(user_id), "active": True}) >= 2:
+                return {"ok": False, "reason": "user_limit"}
+            collection.update_one(
+                {"user_id": int(user_id), "topic_key": topic_key},
+                {
+                    "$set": {
+                        "user_id": int(user_id),
+                        "chat_id": int(chat_id),
+                        "topic": clean_topic,
+                        "topic_key": topic_key,
+                        "interval_hours": interval,
+                        "active": True,
+                        "next_run": now + timedelta(hours=interval),
+                        "updated_at": now,
+                    },
+                    "$setOnInsert": {"created_at": now},
+                },
+                upsert=True,
+            )
+            return {"ok": True, "reason": "created", "topic": clean_topic, "interval_hours": interval}
+
+        return await asyncio.to_thread(_add)
+    except Exception:
+        log.exception("Failed to create intelligence watch | user_id=%s", user_id)
+        return {"ok": False, "reason": "storage_error"}
+
+
+async def list_intel_watches(user_id: int) -> list[dict[str, Any]]:
+    db = await _get_db()
+    if db is None:
+        return []
+    try:
+        def _list() -> list[dict[str, Any]]:
+            return list(
+                db.intel_watches.find(
+                    {"user_id": int(user_id), "active": True},
+                    {"_id": 0, "topic": 1, "interval_hours": 1, "next_run": 1},
+                ).sort("next_run", 1).limit(2)
+            )
+        return await asyncio.to_thread(_list)
+    except Exception:
+        log.exception("Failed to list intelligence watches | user_id=%s", user_id)
+        return []
+
+
+async def remove_intel_watch(*, user_id: int, topic: str) -> bool:
+    db = await _get_db()
+    if db is None:
+        return False
+    clean_topic = " ".join(str(topic or "").split())[:140].strip()
+    if not clean_topic:
+        return False
+    try:
+        result = await asyncio.to_thread(
+            db.intel_watches.update_one,
+            {
+                "user_id": int(user_id),
+                "topic_key": clean_topic.casefold(),
+                "active": True,
+            },
+            {
+                "$set": {
+                    "active": False,
+                    "removed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return bool(result.modified_count)
+    except Exception:
+        log.exception("Failed to remove intelligence watch | user_id=%s", user_id)
+        return False
+
+
+async def due_intel_watches(limit: int = 2) -> list[dict[str, Any]]:
+    """Claim a small batch of due watches and schedule their next run atomically."""
+    db = await _get_db()
+    if db is None:
+        return []
+    now = datetime.now(timezone.utc)
+    safe_limit = max(1, min(int(limit), 3))
+    try:
+        def _claim() -> list[dict[str, Any]]:
+            collection = db.intel_watches
+            due = list(
+                collection.find(
+                    {"active": True, "next_run": {"$lte": now}},
+                    {"user_id": 1, "chat_id": 1, "topic": 1, "interval_hours": 1, "next_run": 1},
+                ).sort("next_run", 1).limit(safe_limit)
+            )
+            claimed: list[dict[str, Any]] = []
+            for item in due:
+                interval = max(6, min(int(item.get("interval_hours", 12) or 12), 24))
+                result = collection.update_one(
+                    {"_id": item["_id"], "active": True, "next_run": {"$lte": now}},
+                    {
+                        "$set": {
+                            "next_run": now + timedelta(hours=interval),
+                            "updated_at": now,
+                        }
+                    },
+                )
+                if result.modified_count:
+                    claimed.append({
+                        "user_id": int(item.get("user_id") or 0),
+                        "chat_id": int(item.get("chat_id") or 0),
+                        "topic": str(item.get("topic") or "")[:140],
+                        "interval_hours": interval,
+                    })
+            return claimed
+
+        return await asyncio.to_thread(_claim)
+    except Exception:
+        log.exception("Failed to claim due intelligence watches")
+        return []

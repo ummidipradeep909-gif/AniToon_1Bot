@@ -1,76 +1,69 @@
-# AniToons_1Bot — Telegram File Info Bot
+# AniToon_1Bot — Media Intelligence
 
-This project now does **one job only**: receive a Telegram file and send file information back.
+AniToon is a lightweight Telegram media-inspection bot with web reports, optional Gemini-powered web research, YouTube discovery, and opt-in scheduled topic reports.
 
-## What the bot checks
+## Current features
 
-Audio, video, subtitle, image, document, archive, PDF and other file types.
+- Inspect supported Telegram media and documents; return technical metadata and bounded-sample reports.
+- View web reports with existing report-expiry and resource safeguards.
+- \`/intel <topic>\` — ask Gemini for a concise search-grounded report with source links, emerging trends, cautious public-reaction analysis, claim checks and uncertainty notes.
+- \`/videos <topic>\` — find YouTube videos with titles, channel names, upload dates, descriptions and direct links.
+- \`/shorts <topic>\` — search short-duration YouTube videos. YouTube's public Data API filter returns videos under four minutes; it does not confirm that each result is actually a YouTube Short.
+- \`/watch <topic>\` — opt in to a scheduled Gemini report every 12 hours by default.
+- \`/watches\` — list your scheduled topics.
+- \`/unwatch <exact topic>\` — stop a scheduled topic.
+- Creator support is linked from the bot menu, help/about screens and website: [@AniToon_0Bot](https://t.me/AniToon_0Bot).
 
-The report can include:
+## Configure Gemini and YouTube
 
-- filename, MIME type, detected type and total size
-- Telegram audio/video metadata
-- audio header information when available
-- subtitle formats such as SRT, VTT, ASS/SSA, TTML and SAMI
-- embedded Matroska/WebM and MP4 track hints when those atoms/elements are inside the sample
-- basic image dimensions
-- common file signatures
-- a SHA-256 hash of the sampled bytes
+The core bot still starts without these optional keys. The added search commands need API access:
 
-## No full-file download
+1. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey).
+2. Create a Google Cloud API key and enable the YouTube Data API v3 for video metadata/search. If one Google key is allowed to access both APIs, you may use the same key for both variables.
+3. In Render → \`AniToons_1Bot\` → Environment, set:
+   - \`GEMINI_API_KEY\` — enables \`/intel\` and scheduled reports.
+   - \`GEMINI_MODEL\` — optional model override; default \`gemini-2.5-flash\`.
+   - \`YOUTUBE_API_KEY\` — enables individual YouTube results; without this, \`/videos\` and \`/shorts\` provide a topic-specific YouTube search page instead.
+   - \`YOUTUBE_REGION_CODE\` — optional two-letter region; defaults to \`IN\`.
+   - \`INTEL_WATCH_INTERVAL_HOURS\` — optional scheduled interval from 6 to 24 hours; defaults to \`12\`.
+4. Redeploy the Render service after setting the keys.
 
-For large files the bot samples only the beginning of the remote file.
+Keys are read from environment variables; they are not stored in source control. Google API usage limits and possible charges depend on your account, APIs and model. Grounding helps cite sources but does not guarantee correctness or exhaustive search coverage.
 
-Default maximum sample: **2 MiB**.
+## Scheduled reports and storage
 
-Maximum configurable sample: **4 MiB**.
+Scheduled watches are private-chat subscriptions; use \`/watch\` in a private chat with the bot. The first report runs after the configured interval. For persistence across restarts, the existing MongoDB connection must be configured and reachable via \`MONGODB_URI\` (or an existing supported alias). Watches are capped at two per user and twenty globally to limit background API calls. The scheduler processes only a small batch per cycle.
 
-The sample is kept in memory and is not saved as a complete downloaded file. A file that is smaller than the sample limit may necessarily be read completely.
+Reports distinguish sourced facts from inferences when the provider returns grounding metadata. Search coverage and available pages may be incomplete. Sentiment summaries are directional observations from retrieved sources, not representative polling. No YouTube media is downloaded or re-hosted.
 
-A beginning-only sample cannot guarantee metadata stored near the end of some containers.
+## Lower-memory defaults
 
-## Telegram usage
+The Render Blueprint sets conservative scan defaults:
 
-Open the bot and send a file.
+- One concurrent scan.
+- 2 MiB initial media sample and 4 MiB deep sample.
+- 128 KiB media-probe chunks.
+- 90-second scan timeout.
 
-Use:
+Existing resource and web-egress guards remain in place. These reduce workload and network transfer; they cannot guarantee that the Render monthly quota will never be reached.
 
-- \`/start\`
-- \`/help\`
+## Render free-tier limits
 
-The bot replies with the inspection report. No channel management, reactions, MongoDB, SQLite, user session or other bot features are used.
+Render documents **750 free instance hours per workspace per calendar month**. The allowance is shared by free web services in the workspace, and using all included hours suspends those free web services until the next month. An always-on Telegram bot consumes runtime hours; lowering memory or downloaded MB does not make those hours free. Check the workspace's current usage in the Render Dashboard before keeping multiple free services awake.
 
-## Render
+The service is a Render web service with a \`/health\` endpoint. Use \`https://<your-render-service-url>/health\` for an HTTP uptime monitor. A monitor sending requests frequently can keep the free web service awake, which also consumes instance hours.
 
-The service is configured as a Render **web service** because UptimeRobot needs an HTTP endpoint.
+## Run locally
 
-Required environment variables:
-
-- \`API_ID\`
-- \`API_HASH\`
-- \`BOT_TOKEN\`
-
-Optional:
-
-- \`FILE_CHECKER_PRIVATE_ONLY=1\` limits checks to private chats.
-- \`FILE_PROBE_BYTES=2097152\` sets the prefix sample size (64 KiB–4 MiB).
-- \`FILE_PROBE_CHUNK_BYTES=262144\` sets the request chunk size (64 KiB–512 KiB).
-
-Render exposes the service URL after deployment.
-
-### UptimeRobot
-
-Create an **HTTP(s) monitor** using:
-
-\`https://<your-render-service-url>/health\`
-
-The endpoint returns HTTP 200 with a small JSON response while the service is running.
-
-Do not use the Telegram \`t.me\` bot link as the UptimeRobot monitor URL.
-
-## Local run
+Required existing variables: \`API_ID\`, \`API_HASH\`, \`BOT_TOKEN\`. Optional features use the keys listed above.
 
 \`\`\`bash
 pip install -r requirements.txt
-python file_bot.py
+python bot.py
+\`\`\`
+
+Run the lightweight helper tests with:
+
+\`\`\`bash
+python -m unittest test_intelligence.py -v
 \`\`\`

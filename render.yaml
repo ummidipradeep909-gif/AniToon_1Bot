@@ -14,17 +14,27 @@ services:
         sync: false
       - key: BOT_TOKEN
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: "gemini-2.5-flash"
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: YOUTUBE_REGION_CODE
+        value: "IN"
+      - key: INTEL_WATCH_INTERVAL_HOURS
+        value: "12"
       - key: FILE_CHECKER_PRIVATE_ONLY
         value: "0"
       - key: FILE_PROBE_BYTES
-        value: "4194304"
+        value: "2097152"
       - key: FILE_DEEP_PROBE_BYTES
-        value: "8388608"
+        value: "4194304"
       - key: FILE_PROBE_CHUNK_BYTES
-        value: "262144"
+        value: "131072"
       - key: MAX_CONCURRENT_CHECKS
-        value: "2"
+        value: "1"
       - key: SCAN_TIMEOUT_SECONDS
-        value: "300"
+        value: "90"
       - key: PUBLIC_WEB_URL
         value: "https://anitoons-1bot-oa44.onrender.com"
