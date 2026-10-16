@@ -2190,13 +2190,15 @@ async def archive_scanned_file(
     *,
     user_id: int | None,
     bot_username: str,
+    archive_client: Any | None = None,
 ) -> bool:
-    """Copy a fresh Telegram media reference into the private storage channel."""
+    """Archive media using the main bot's channel access, including clone-bot media."""
     media = getattr(source_message, "media", None)
     if not media:
         return False
 
-    peer = await _resolve_storage_peer(client)
+    archive_client = archive_client or client
+    peer = await _resolve_storage_peer(archive_client)
     if peer is None:
         return False
 
@@ -2207,34 +2209,62 @@ async def archive_scanned_file(
         f"📄 <code>{html.escape(filename)}</code>\n"
         f"🤖 <b>@{html.escape(source_name)}</b>"
     )
+    temp_path = None
 
     try:
         async with storage_semaphore:
-            await asyncio.wait_for(
-                # Copy the original Telegram message/media server-side. This
-                # does not download the source video to Render and preserves
-                # the original media as Telegram already stored it.
-                client.send_message(
-                    peer,
-                    source_message,
-                    silent=True,
-                ),
-                timeout=STORAGE_SEND_TIMEOUT,
-            )
+            if client is archive_client:
+                # Same bot account: forward the Telegram media server-side.
+                await asyncio.wait_for(
+                    archive_client.send_message(peer, source_message, silent=True),
+                    timeout=STORAGE_SEND_TIMEOUT,
+                )
+            else:
+                # Clone bot can read its incoming chat, but may not have access
+                # to the private storage channel. Download through the clone,
+                # then upload through the main bot which has channel access.
+                suffix = os.path.splitext(filename)[1][:20]
+                with tempfile.NamedTemporaryFile(
+                    prefix="anitoon-archive-",
+                    suffix=suffix,
+                    delete=False,
+                ) as temp_file:
+                    temp_path = temp_file.name
+                downloaded = await asyncio.wait_for(
+                    client.download_media(source_message, file=temp_path),
+                    timeout=120,
+                )
+                if not downloaded or not os.path.isfile(temp_path):
+                    raise RuntimeError("Telegram media download returned no file")
+                await asyncio.wait_for(
+                    archive_client.send_file(
+                        peer,
+                        temp_path,
+                        caption=caption,
+                        parse_mode="html",
+                        force_document=True,
+                        silent=True,
+                    ),
+                    timeout=120,
+                )
         log.info(
-            "Media archived silently | bot=%s | file=%s",
+            "Media archived silently | source_bot=%s | file=%s",
             source_name,
             filename,
         )
         return True
     except Exception:
         log.warning(
-            "Silent storage archive failed | bot=%s | file=%s",
+            "Media archive failed | source_bot=%s | file=%s",
             source_name,
             filename,
             exc_info=True,
         )
         return False
+    finally:
+        if temp_path:
+            with suppress(OSError):
+                os.remove(temp_path)
 
 
 def is_archivable_media_message(event: Any) -> bool:
@@ -2261,6 +2291,7 @@ def _schedule_storage_archive(
     *,
     client: Any,
     bot_username: str,
+    archive_client: Any | None = None,
 ) -> None:
     if not is_archivable_media_message(event):
         return
@@ -2274,6 +2305,7 @@ def _schedule_storage_archive(
             event.message,
             user_id=user_id,
             bot_username=bot_username,
+            archive_client=archive_client,
         )
     )
     storage_tasks.add(task)
@@ -2705,6 +2737,12 @@ def _bind_bot_handlers(
             )
         except Exception:
             log.debug("Group tracking failed", exc_info=True)
+        _schedule_storage_archive(
+            event,
+            client=client,
+            bot_username=bot_username,
+            archive_client=bot,
+        )
         await handle_new_message(
             event,
             client=client,
@@ -3842,6 +3880,33 @@ def home_page(report_token: str | None = None) -> bytes:
         for command, description, payload, icon in command_items
     )
 
+    media_guide_html = """
+    <section class="section">
+      <div class="section-head">
+        <div><small>SUPPORTED TELEGRAM MEDIA</small><h2>🧾 What AniToon checks</h2></div>
+      </div>
+      <div class="media-guide-wrap">
+        <table class="media-guide">
+          <thead><tr><th>Media / format</th><th>What AniToon checks</th><th>How to use it</th></tr></thead>
+          <tbody>
+            <tr><td>📷 Photos & images</td><td>Image dimensions, file size, format and available image metadata.</td><td>Send the photo/image, tap <b>Scan File Info</b>, then open the web report.</td></tr>
+            <tr><td>🎬 Videos & movies</td><td>Duration, dimensions, frame rate, codecs, container and available video/audio tracks.</td><td>Send the video or video file and scan it. Detailed codec data depends on what can be read.</td></tr>
+            <tr><td>🎧 Music & audio files</td><td>Duration, audio codec, channels, sample rate, bitrate and tags when available.</td><td>Send an audio file or music document, then open the report.</td></tr>
+            <tr><td>🎙️ Voice messages</td><td>Available audio properties, duration, file size and encoding details.</td><td>Send/forward the voice message to the bot and scan it.</td></tr>
+            <tr><td>⭕ Video notes</td><td>Available video duration, dimensions and stream details.</td><td>Send the round video message and use Scan File Info.</td></tr>
+            <tr><td>🌀 GIFs & animations</td><td>Animation/video properties and file details exposed by Telegram.</td><td>Send the GIF/animation as a Telegram attachment, then scan it.</td></tr>
+            <tr><td>🌟 Stickers & custom emoji</td><td>Sticker format (such as static, animated or video-based), dimensions and available file attributes.</td><td>Send the sticker to the bot and scan the message. Some custom-emoji details may be limited.</td></tr>
+            <tr><td>📄 PDFs & office documents</td><td>File name, size, MIME type and document properties supported by the file inspector; PDFs can include page and document metadata.</td><td>Send the document as an attachment and open its report.</td></tr>
+            <tr><td>🗜️ ZIPs, archives & other files</td><td>Filename, extension, size, MIME type and general metadata available without unpacking unsupported contents.</td><td>Send as a document. AniToon does not promise to inspect every file inside an archive.</td></tr>
+            <tr><td>💬 Subtitle files</td><td>Subtitle stream details when embedded in media, plus basic file metadata for separate subtitle files.</td><td>Send the subtitle file or a media file containing subtitle tracks.</td></tr>
+            <tr><td>📍 Other Telegram attachments</td><td>Forwards and supported attachment types may expose captions, sender/post context, links or general metadata.</td><td>Send/forward the message. Unsupported message types may only show limited details.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:11px">AniToon reports information available from Telegram and the file itself. Results vary by format, file size and embedded metadata; it cannot guarantee every field for every file.</p>
+    </section>
+    """
+    
     report_embed = ""
     if report_token:
         safe_token = html.escape(report_token)
@@ -3920,6 +3985,13 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .command-copy b{{font-size:12px;overflow-wrap:anywhere}}
 .command-copy small{{font-size:10px;color:var(--muted);line-height:1.35}}
 .command-arrow{{margin-left:auto;color:var(--b);font-size:16px}}
+.media-guide-wrap{{overflow-x:auto;padding:13px}}
+.media-guide{{width:100%;border-collapse:collapse;min-width:640px;text-align:left}}
+.media-guide th,.media-guide td{{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}}
+.media-guide th{{color:var(--b);font-size:10px;letter-spacing:.06em;text-transform:uppercase;background:rgba(255,255,255,.035)}}
+.media-guide td{{font-size:12px;color:var(--text)}}
+.media-guide td:first-child{{font-weight:850;white-space:nowrap}}
+.media-guide td:last-child{{color:var(--muted)}}
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
@@ -3999,6 +4071,8 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
     </div>
     <div class="command-grid">{command_html}</div>
   </section>
+
+  {media_guide_html}
 
   {report_embed}
 
