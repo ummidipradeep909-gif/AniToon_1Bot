@@ -1156,7 +1156,7 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
 
     # ZIP-family office documents and archives expose useful directory metadata.
     # Parsing is limited to the already-bounded source bytes and short member lists.
-    if raw and (raw.startswith(b"PK\\x03\\x04") or ext in {".zip", ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm", ".odt", ".ods", ".odp", ".epub", ".apk", ".jar", ".xpi"}):
+    if raw and (raw.startswith(b"PK\x03\x04") or ext in {".zip", ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm", ".odt", ".ods", ".odp", ".epub", ".apk", ".jar", ".xpi"}):
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as archive:
                 members = archive.infolist()
@@ -1170,7 +1170,7 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                     with archive.open(core) as handle:
                         xml_sample = handle.read(65536).decode("utf-8", "replace")
                     for xml_key, output_key in (("title", "document_title"), ("creator", "document_creator"), ("lastModifiedBy", "document_last_modified_by")):
-                        match = re.search(r"<(?:[a-z0-9_]+:)?" + xml_key + r"(?:\\s[^>]*)?>(.*?)</(?:[a-z0-9_]+:)?" + xml_key + r"\\s*>", xml_sample, re.I | re.S)
+                        match = re.search(r"<(?:[a-z0-9_]+:)?" + xml_key + r"(?:\s[^>]*)?>(.*?)</(?:[a-z0-9_]+:)?" + xml_key + r"\s*>", xml_sample, re.I | re.S)
                         if match:
                             put(output_key, re.sub(r"<[^>]+>", "", match.group(1)).strip())
         except Exception:
