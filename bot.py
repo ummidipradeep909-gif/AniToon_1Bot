@@ -1469,10 +1469,10 @@ async def run_scan(
             if current < 1:
                 current = 1
 
-            # Move the animated bar through clear 20% milestones while
-            # keeping 100% reserved for a completed report.
+            # Animate in clear 20% milestones: 20, 40, 60, 80.
+            # Keep 100% reserved for a successfully generated report.
             if current < 20:
-                visual_pct = min(20, current + 3)
+                visual_pct = 20
             elif current < 40:
                 visual_pct = 40
             elif current < 60:
