@@ -3345,7 +3345,11 @@ async def handle_new_message(
             if not os.getenv("GEMINI_API_KEY", "").strip():
                 await event.reply("Scheduled intelligence is not enabled yet. The owner must configure <code>GEMINI_API_KEY</code> in Render.", parse_mode="html", buttons=intelligence_buttons())
                 return
-            interval = max(6, min(int(os.getenv("INTEL_WATCH_INTERVAL_HOURS", "12") or "12"), 24))
+            try:
+                interval = int(os.getenv("INTEL_WATCH_INTERVAL_HOURS", "12") or "12")
+            except (TypeError, ValueError):
+                interval = 12
+            interval = max(6, min(interval, 24))
             result = await add_intel_watch(user_id=int(user_id), chat_id=int(event.chat_id), topic=argument, interval_hours=interval)
             if result.get("ok"):
                 await event.reply(
@@ -3362,6 +3366,9 @@ async def handle_new_message(
                 await event.reply("⚠️ " + html.escape(messages.get(reason, "The topic could not be saved. Try again later.")), parse_mode="html", buttons=intelligence_buttons())
             return
         if command == "/watches":
+            if not mongodb_is_connected():
+                await event.reply("Scheduled topic storage is not connected. The owner must configure MONGODB_URI and restart the bot.", buttons=intelligence_buttons())
+                return
             watches = await list_intel_watches(int(user_id))
             if not watches:
                 await event.reply("You have no scheduled topics yet. Use <code>/watch topic</code> to start one.", parse_mode="html", buttons=intelligence_buttons())
@@ -3375,6 +3382,9 @@ async def handle_new_message(
                 await event.reply("\n".join(lines), parse_mode="html", buttons=intelligence_buttons())
             return
         if command == "/unwatch":
+            if not mongodb_is_connected():
+                await event.reply("Scheduled topic storage is not connected. The owner must configure MONGODB_URI and restart the bot.", buttons=intelligence_buttons())
+                return
             if not argument:
                 await event.reply("Use <code>/unwatch exact topic</code> to stop a scheduled report.", parse_mode="html", buttons=intelligence_buttons())
                 return
