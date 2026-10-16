@@ -73,7 +73,7 @@ FILE_CHECKER_PRIVATE_ONLY = (
 MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
-REPORT_LINK_TTL_SECONDS = 5 * 60
+REPORT_LINK_TTL_SECONDS = 24 * 60 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 MAX_REPORT_TRACKS = 100
@@ -542,7 +542,7 @@ def _purge_states() -> None:
         web_states.pop(token, None)
     pending_expired = [
         token for token, pending in pending_scans.items()
-        if now - pending.created_at > PENDING_SCAN_TTL_SECONDS
+        if now_mono - pending.created_at > PENDING_SCAN_TTL_SECONDS
     ]
     for token in pending_expired:
         pending_scans.pop(token, None)
@@ -1479,21 +1479,51 @@ class ResourceGuardPause(RuntimeError):
     """Raised when the free-instance protection gate temporarily blocks a new scan."""
 
 
-status_edit_cache: dict[int, tuple[float, str]] = {}
-STATUS_EDIT_MIN_INTERVAL = 0.9
+status_edit_cache: dict[tuple[int, int], tuple[float, str]] = {}
+STATUS_EDIT_MIN_INTERVAL = 0.8
 
 async def edit_status(message, text: str, *, buttons=None) -> None:
+    """Apply non-critical progress updates without blocking or breaking a scan."""
     message_id = getattr(message, "id", None)
+    chat_id = getattr(message, "chat_id", None)
+    try:
+        key = (
+            int(chat_id) if chat_id is not None else 0,
+            int(message_id) if message_id is not None else id(message),
+        )
+    except (TypeError, ValueError):
+        key = (0, id(message))
+
     now = time.monotonic()
-    key = int(message_id) if message_id is not None else id(message)
     previous = status_edit_cache.get(key)
     if previous and previous[1] == text:
         return
-    if previous and now - previous[0] < STATUS_EDIT_MIN_INTERVAL:
+
+    lowered = text.casefold()
+    terminal_update = any(marker in lowered for marker in (
+        "metadata scan cancelled",
+        "free resource guard paused",
+        "safe scan limit reached",
+        "metadata scan reached the",
+        "temporarily rate-limited this scan",
+        "metadata scan failed",
+    ))
+    if previous and not terminal_update and now - previous[0] < STATUS_EDIT_MIN_INTERVAL:
         return
-    status_edit_cache[key] = (now, text)
-    with suppress(errors.MessageNotModifiedError, errors.FloodWaitError):
+
+    try:
         await message.edit(text, parse_mode="html", buttons=buttons)
+    except errors.MessageNotModifiedError:
+        status_edit_cache[key] = (time.monotonic(), text)
+    except errors.FloodWaitError as exc:
+        # A skipped animation frame must never interrupt the file scan. The
+        # next heartbeat/progress event will refresh the message when allowed.
+        log.debug("Progress edit rate-limited for %s seconds", getattr(exc, "seconds", "?"))
+    except Exception:
+        # Telegram UI edits are secondary to the actual scan/report operation.
+        log.debug("Progress message edit failed", exc_info=True)
+    else:
+        status_edit_cache[key] = (time.monotonic(), text)
 
 
 def progress_details(line: str) -> tuple[int, str]:
@@ -2753,20 +2783,44 @@ def _bind_bot_handlers(
             )
         except Exception:
             log.debug("Group tracking failed", exc_info=True)
-        await handle_new_message(
-            event,
-            client=client,
-            bot_username=bot_username,
-            include_clone=include_clone,
-        )
+        try:
+            await handle_new_message(
+                event,
+                client=client,
+                bot_username=bot_username,
+                include_clone=include_clone,
+            )
+        except Exception:
+            log.exception(
+                "Incoming message handler failed | bot=%s | chat=%s | message=%s",
+                bot_username,
+                getattr(event, "chat_id", None),
+                getattr(event, "id", None),
+            )
+            with suppress(Exception):
+                await event.reply(
+                    "⚠️ AniToon couldn’t process this message right now. Please try again."
+                )
 
     async def on_callback(event):
-        await handle_callback(
-            event,
-            client=client,
-            bot_username=bot_username,
-            include_clone=include_clone,
-        )
+        try:
+            await handle_callback(
+                event,
+                client=client,
+                bot_username=bot_username,
+                include_clone=include_clone,
+            )
+        except Exception:
+            log.exception(
+                "Callback action failed | bot=%s | data=%s",
+                bot_username,
+                (getattr(event, "data", b"") or b"")[:80],
+            )
+            with suppress(Exception):
+                await event.answer(
+                    "That action hit a temporary error. Please tap again.",
+                    alert=True,
+                )
 
     async def on_chat_action(event):
         try:
