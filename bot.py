@@ -528,16 +528,22 @@ def purge_pending_scans() -> None:
 def _purge_states() -> None:
     now_mono = time.monotonic()
     now_utc = datetime.now(timezone.utc)
-    expired = [
-        token for token, state in web_states.items()
-        if (
-            state.expires_at is not None
-            and now_utc >= state.expires_at
-        ) or (
-            state.expires_at is None
-            and now_mono - state.created_at > REPORT_LINK_TTL_SECONDS
-        )
-    ]
+    expired: list[str] = []
+    for token, state in list(web_states.items()):
+        expiry = state.expires_at
+        if expiry is not None:
+            # PyMongo may return BSON datetimes as naive UTC values.
+            # Normalize them before comparing with our aware UTC clock.
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            else:
+                expiry = expiry.astimezone(timezone.utc)
+            state.expires_at = expiry
+            if now_utc >= expiry:
+                expired.append(token)
+        elif now_mono - state.created_at > REPORT_LINK_TTL_SECONDS:
+            expired.append(token)
+
     for token in expired:
         web_states.pop(token, None)
     pending_expired = [
@@ -5536,6 +5542,11 @@ async def health_server():
                             stored_expiry = stored_payload.get("expires_at")
                             if isinstance(stored_expiry, str):
                                 stored_expiry = datetime.fromisoformat(stored_expiry.replace("Z", "+00:00"))
+                            if isinstance(stored_expiry, datetime):
+                                if stored_expiry.tzinfo is None:
+                                    stored_expiry = stored_expiry.replace(tzinfo=timezone.utc)
+                                else:
+                                    stored_expiry = stored_expiry.astimezone(timezone.utc)
                             if stored_expiry is None:
                                 stored_expiry = datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS)
                             state = ScanState(
