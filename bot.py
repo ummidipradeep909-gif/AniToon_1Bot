@@ -4154,6 +4154,15 @@ html[data-theme="light"] .file{{color:#4e5878}}
 @keyframes spin{{to{{transform:rotate(360deg)}}}}
 @keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
 @media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.nav{{align-items:flex-start}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
+@media print{{
+  @page{{margin:12mm}}
+  html,body{{background:#fff!important;color:#111!important}}
+  .anime,.topline,.nav,.footer{{display:none!important}}
+  .wrap{{max-width:none!important;margin:0!important;padding:0!important}}
+  .hero,.section,.stat,.pdf-spec{{background:#fff!important;color:#111!important;box-shadow:none!important;backdrop-filter:none!important;animation:none!important;border-color:#ccc!important;break-inside:avoid;page-break-inside:avoid}}
+  .pdf-spec span{{color:#444!important}} .pdf-spec strong{{color:#111!important}}
+  .hero-media{{animation:none!important}}
+}}
 </style>
 </head>
 <body>
@@ -4163,6 +4172,8 @@ html[data-theme="light"] .file{{color:#4e5878}}
     <div class="brand">AniToon • PDF Intelligence</div>
     <div class="nav-tools">
       <a class="home" href="/" aria-label="Go to AniToon home">⌂ Home ↗</a>
+      <button class="home" type="button" id="copy-report-link" title="Copy this temporary report link">🔗 Copy Link</button>
+      <button class="home" type="button" id="print-report" title="Print or save this report as PDF">🖨️ Save PDF</button>
       <div class="controls">
         <button type="button" id="theme-toggle">☀️ Light</button>
         <button type="button" id="zoom-out" title="Zoom out">−</button>
@@ -4267,6 +4278,36 @@ html[data-theme="light"] .file{{color:#4e5878}}
   zoomOut?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))-.10));
   zoomIn?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))+.10));
   zoomLabel?.addEventListener("click",()=>applyZoom(1));
+}})();
+
+
+(() => {{
+  const copyBtn = document.getElementById("copy-report-link");
+  const printBtn = document.getElementById("print-report");
+  copyBtn?.addEventListener("click", async () => {{
+    const original = copyBtn.textContent;
+    try {{
+      if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(window.location.href);
+      }} else {{
+        const field = document.createElement("textarea");
+        field.value = window.location.href;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        field.select();
+        const ok = document.execCommand("copy");
+        field.remove();
+        if (!ok) throw new Error("Clipboard unavailable");
+      }}
+      copyBtn.textContent = "✓ Link copied";
+      setTimeout(() => {{ copyBtn.textContent = original; }}, 1800);
+    }} catch (_) {{
+      window.prompt("Copy this temporary report link:", window.location.href);
+    }}
+  }});
+  printBtn?.addEventListener("click", () => window.print());
 }})();
 </script>
 </body>
@@ -4841,6 +4882,18 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
+@media print{{
+  @page{{margin:12mm}}
+  html,body{{background:#fff!important;color:#111!important}}
+  .anime-wallpaper,.bg-grid,.topline,.nav,.quick,.footer{{display:none!important}}
+  .wrap{{max-width:none!important;margin:0!important;padding:0!important}}
+  .hero,.section,.stat,.tech,.track-card,.spec{{background:#fff!important;color:#111!important;box-shadow:none!important;backdrop-filter:none!important;animation:none!important;border-color:#ccc!important;break-inside:avoid;page-break-inside:avoid}}
+  .section:not([open])>.section-body{{display:block!important}}
+  .section-head{{background:#fff!important;border-color:#ccc!important}}
+  .file,.pill,.stat span,.tech small,.spec span,.track-heading p,.empty{{color:#333!important}}
+  .track-heading h3,.track-heading p,.spec strong,.tech b,.stat b{{color:#111!important}}
+  .hero-media{{animation:none!important}}
+}}
 </style>
 </head>
 <body>
@@ -4850,6 +4903,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     <div class="brand">AniToon • Media Intelligence</div>
     <div class="nav-tools">
       <a class="home-button" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
+      <button class="home-button" type="button" id="copy-report-link" title="Copy this temporary report link"><span>🔗 Copy Link</span></button>
+      <button class="home-button" type="button" id="print-report" title="Print or save this report as PDF"><span>🖨️ Save PDF</span></button>
       <div class="controls">
         <button type="button" id="theme-toggle">☀️ Light</button>
         <button type="button" id="zoom-out" title="Zoom out">−</button>
@@ -4933,6 +4988,36 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   }});
 }})();
 
+
+
+(() => {{
+  const copyBtn = document.getElementById("copy-report-link");
+  const printBtn = document.getElementById("print-report");
+  copyBtn?.addEventListener("click", async () => {{
+    const original = copyBtn.textContent;
+    try {{
+      if (navigator.clipboard && window.isSecureContext) {{
+        await navigator.clipboard.writeText(window.location.href);
+      }} else {{
+        const field = document.createElement("textarea");
+        field.value = window.location.href;
+        field.setAttribute("readonly", "");
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        field.select();
+        const ok = document.execCommand("copy");
+        field.remove();
+        if (!ok) throw new Error("Clipboard unavailable");
+      }}
+      copyBtn.textContent = "✓ Link copied";
+      setTimeout(() => {{ copyBtn.textContent = original; }}, 1800);
+    }} catch (_) {{
+      window.prompt("Copy this temporary report link:", window.location.href);
+    }}
+  }});
+  printBtn?.addEventListener("click", () => window.print());
+}})();
 </script>
 </body>
 </html>"""
