@@ -372,7 +372,9 @@ CLONE_HELP_TEXT = (
     "📖 <b>AniToon Media Info Clone</b>\n\n"
     "📤 Send a photo, video, GIF, sticker, PDF, audio file or document.\n"
     "🔎 Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full web report.\n\n"
-    "📋 <b>Available command</b>\n"
+    "📋 <b>Useful commands</b>\n"
+    "/start — Open this clone bot\n"
+    "/help — Show scanning instructions\n"
     "/main — Open the main AniToon bot for clone creation and management"
 )
 
@@ -385,9 +387,11 @@ HELP_TEXT = (
     "Use <b>Clone Manager</b> on the home screen to create, view or manage your clone bots.\n\n"
     "📋 <b>Useful commands</b>\n"
     "/start — Open the main menu and scanning tools\n"
+    "/help — Show usage and supported file types\n"
+    "/stats — View your scan statistics\n"
+    "/about — About AniToon\n"
     "/clone — Create or connect a clone bot\n\n"
-    "💡 <b>More tools</b>\n"
-    "Use the home buttons for My Stats, Help, About and Clone Manager."
+    "💡 Use the home buttons for Scan Files and Clone Manager."
 )
 
 ABOUT_TEXT = (
@@ -2640,11 +2644,16 @@ async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> N
         # Keep the main bot command menu focused on home and clone creation.
         commands = [
             types.BotCommand(command="start", description="Open menu and scan media"),
+            types.BotCommand(command="help", description="Show usage and supported files"),
+            types.BotCommand(command="stats", description="View your scan statistics"),
+            types.BotCommand(command="about", description="About AniToon"),
             types.BotCommand(command="clone", description="Create or connect a clone bot"),
         ]
     else:
         # A clone exposes one visible command leading users to the main bot.
         commands = [
+            types.BotCommand(command="start", description="Open clone bot menu"),
+            types.BotCommand(command="help", description="How to scan files"),
             types.BotCommand(command="main", description="Open main bot and clone tools"),
         ]
 
@@ -4172,7 +4181,6 @@ html[data-theme="light"] .file{{color:#4e5878}}
     <div class="brand">AniToon • PDF Intelligence</div>
     <div class="nav-tools">
       <a class="home" href="/" aria-label="Go to AniToon home">⌂ Home ↗</a>
-      <button class="home" type="button" id="copy-report-link" title="Copy this temporary report link">🔗 Copy Link</button>
       <button class="home" type="button" id="print-report" title="Print or save this report as PDF">🖨️ Save PDF</button>
       <div class="controls">
         <button type="button" id="theme-toggle">☀️ Light</button>
@@ -4282,31 +4290,7 @@ html[data-theme="light"] .file{{color:#4e5878}}
 
 
 (() => {{
-  const copyBtn = document.getElementById("copy-report-link");
   const printBtn = document.getElementById("print-report");
-  copyBtn?.addEventListener("click", async () => {{
-    const original = copyBtn.textContent;
-    try {{
-      if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(window.location.href);
-      }} else {{
-        const field = document.createElement("textarea");
-        field.value = window.location.href;
-        field.setAttribute("readonly", "");
-        field.style.position = "fixed";
-        field.style.opacity = "0";
-        document.body.appendChild(field);
-        field.select();
-        const ok = document.execCommand("copy");
-        field.remove();
-        if (!ok) throw new Error("Clipboard unavailable");
-      }}
-      copyBtn.textContent = "✓ Link copied";
-      setTimeout(() => {{ copyBtn.textContent = original; }}, 1800);
-    }} catch (_) {{
-      window.prompt("Copy this temporary report link:", window.location.href);
-    }}
-  }});
   printBtn?.addEventListener("click", () => window.print());
 }})();
 </script>
@@ -4903,7 +4887,6 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     <div class="brand">AniToon • Media Intelligence</div>
     <div class="nav-tools">
       <a class="home-button" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
-      <button class="home-button" type="button" id="copy-report-link" title="Copy this temporary report link"><span>🔗 Copy Link</span></button>
       <button class="home-button" type="button" id="print-report" title="Print or save this report as PDF"><span>🖨️ Save PDF</span></button>
       <div class="controls">
         <button type="button" id="theme-toggle">☀️ Light</button>
@@ -4991,31 +4974,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 
 
 (() => {{
-  const copyBtn = document.getElementById("copy-report-link");
   const printBtn = document.getElementById("print-report");
-  copyBtn?.addEventListener("click", async () => {{
-    const original = copyBtn.textContent;
-    try {{
-      if (navigator.clipboard && window.isSecureContext) {{
-        await navigator.clipboard.writeText(window.location.href);
-      }} else {{
-        const field = document.createElement("textarea");
-        field.value = window.location.href;
-        field.setAttribute("readonly", "");
-        field.style.position = "fixed";
-        field.style.opacity = "0";
-        document.body.appendChild(field);
-        field.select();
-        const ok = document.execCommand("copy");
-        field.remove();
-        if (!ok) throw new Error("Clipboard unavailable");
-      }}
-      copyBtn.textContent = "✓ Link copied";
-      setTimeout(() => {{ copyBtn.textContent = original; }}, 1800);
-    }} catch (_) {{
-      window.prompt("Copy this temporary report link:", window.location.href);
-    }}
-  }});
   printBtn?.addEventListener("click", () => window.print());
 }})();
 </script>
