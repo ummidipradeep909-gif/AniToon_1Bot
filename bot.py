@@ -70,8 +70,8 @@ FILE_CHECKER_PRIVATE_ONLY = (
     os.getenv("FILE_CHECKER_PRIVATE_ONLY", "0").strip().lower()
     not in {"0", "false", "no", "off"}
 )
-# Free-instance safe default: keep compute concurrency deliberately conservative.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "4")), 4))
+# Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
 REPORT_LINK_TTL_SECONDS = 5 * 60
@@ -98,7 +98,7 @@ SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")),
 # This app deliberately stops heavy work at 80% of that as a safety buffer.
 WEB_EGRESS_GUARD_BYTES = 4 * 1024 * 1024 * 1024
 WEB_EGRESS_PAUSE_BYTES = int(WEB_EGRESS_GUARD_BYTES * 0.80)
-RAM_PAUSE_PCT = 80.0
+RAM_PAUSE_PCT = 75.0
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
 # Telegram still lets the group owner change any permission before confirming.
@@ -380,9 +380,7 @@ CLONE_HELP_TEXT = (
     "/about — About AniToon\n"
     "/addtogroup — Add this bot to a group\n"
     "/cancel — Cancel your running scan\n"
-    "/clone — Create a clone through the main bot\n"
-    "/clones — Open the main-bot clone manager\n"
-    "/myclones — Open the main-bot clone manager"
+    "/main — Open the main AniToon bot and clone creation"
 )
 
 HELP_TEXT = (
@@ -554,6 +552,21 @@ def clone_redirect_buttons(payload: str = "clone") -> list[list[Any]]:
             Button.inline("⬅️ Back", b"home:back"),
         ],
     ]
+
+
+async def show_main_bot_redirect(event, *, edit: bool = False) -> None:
+    message = (
+        "🤖 <b>Main AniToon Bot</b>\n\n"
+        "Open the main bot for its home menu and clone creation."
+    )
+    buttons = [
+        [Button.url("🤖 Open Main AniToon", main_bot_start_url())],
+        [Button.url("🧬 Create Your Own Bot", main_bot_start_url("clone"))],
+    ]
+    if edit:
+        await event.edit(message, parse_mode="html", buttons=buttons)
+    else:
+        await event.reply(message, parse_mode="html", buttons=buttons)
 
 
 async def show_clone_redirect(event, *, payload: str = "clone", edit: bool = False) -> None:
@@ -992,8 +1005,21 @@ def runtime_resource_stats() -> dict[str, Any]:
     except (OSError, ValueError):
         pass
 
+    # Prefer the actual container memory limit when Render exposes cgroup v2/v1;
+    # keep a conservative fallback for environments without a readable limit.
     ram_limit_mb = 512.0
-    ram_pct = (rss_mb / ram_limit_mb * 100.0) if ram_limit_mb else 0.0
+    for limit_path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(limit_path, "r", encoding="utf-8") as handle:
+                raw_limit = handle.read().strip()
+            if raw_limit and raw_limit != "max":
+                limit_bytes = int(raw_limit)
+                if 64 * 1024 * 1024 <= limit_bytes < 2**60:
+                    ram_limit_mb = limit_bytes / (1024**2)
+                    break
+        except (OSError, ValueError):
+            continue
+    ram_pct = min(100.0, (rss_mb / ram_limit_mb * 100.0)) if ram_limit_mb else 0.0
     tmp_bytes = app_temp_usage_bytes()
     tmp_mb = tmp_bytes / (1024**2)
     tmp_pct = min(100.0, tmp_bytes / APP_TMP_LIMIT_BYTES * 100.0)
@@ -2115,7 +2141,7 @@ async def _resolve_storage_peer(client: Any) -> Any | None:
     if key in storage_peers:
         return storage_peers[key]
 
-    configured_id = os.getenv("STORAGE_CHANNEL_ID", "").strip()
+    configured_id = os.getenv("STORAGE_CHANNEL_ID", STORAGE_CHANNEL_ID_DEFAULT).strip()
     targets: list[Any] = []
     if configured_id:
         try:
@@ -2623,26 +2649,16 @@ def _owner_broadcast_pending(user_id: int) -> bool:
     return True
 
 async def _set_bot_commands(client: TelegramClient, *, include_clone: bool) -> None:
-    common = [
-        types.BotCommand(command="start", description="Open Home"),
-        types.BotCommand(command="help", description="How to use AniToon"),
-        types.BotCommand(command="stats", description="View your 7-day stats"),
-        types.BotCommand(command="about", description="About AniToon"),
-        types.BotCommand(command="addtogroup", description="Add the bot to a group"),
-        types.BotCommand(command="cancel", description="Cancel your scan"),
-    ]
     if include_clone:
-        commands = common + [
-            types.BotCommand(command="clones", description="View and manage clone bots"),
-            types.BotCommand(command="myclones", description="View your clone bots"),
-            types.BotCommand(command="clone", description="Create a clone bot"),
+        # Keep the main bot command menu focused on home and clone creation.
+        commands = [
+            types.BotCommand(command="start", description="Open AniToon"),
+            types.BotCommand(command="clone", description="Create your own bot"),
         ]
     else:
-        # These commands also work on clones; management opens the main bot.
-        commands = common + [
-            types.BotCommand(command="clones", description="Open main-bot clone manager"),
-            types.BotCommand(command="myclones", description="Open main-bot clone manager"),
-            types.BotCommand(command="clone", description="Create a clone on the main bot"),
+        # A clone exposes one visible command leading users to the main bot.
+        commands = [
+            types.BotCommand(command="main", description="Open main AniToon bot"),
         ]
 
     await client(functions.bots.SetBotCommandsRequest(
@@ -3080,6 +3096,11 @@ async def handle_new_message(
 
     home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
     help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
+
+    if command == "/main":
+        await record_user(event)
+        await show_main_bot_redirect(event)
+        return
 
     if command == "/start":
         await record_user(event)
@@ -4386,20 +4407,78 @@ def web_page(
         "contact_phone_present": "Contact phone present",
         "dice_value": "Dice value",
     }
-    media_detail_cards = "".join(
-        f'<div class="tech"><small>{esc(media_label_overrides.get(key, key.replace("_", " ").title()))}</small>'
-        f'<b>{esc(pretty_value(value))}</b></div>'
-        for key, value in media_info.items()
-        if value not in (None, "", [])
-    )
-    media_details_section = (
-        f'<details id="media-details" class="section" open>'
-        f'<summary class="section-head"><h2>🧩 Media-specific details</h2>'
-        f'<span class="pill">{sum(1 for v in media_info.values() if v not in (None, "", []))} fields '
-        f'<span class="chev">⌄</span></span></summary>'
-        f'<div class="section-body"><div class="tech-grid">{media_detail_cards}</div></div></details>'
-        if media_detail_cards else ""
-    )
+    def media_group_for(key: str, value: Any) -> str:
+        low_key = key.lower()
+        category = str(media_info.get("category") or report.media_kind or "").lower()
+        filename_low = str(report.filename or "").lower()
+        is_gif_animation = (
+            "gif" in category or "animation" in category or filename_low.endswith(".gif")
+            or str(media_info.get("image_format") or "").lower() == "gif"
+            or str(media_info.get("image_is_animated") or "").lower() in {"yes", "true", "1"}
+        )
+        if low_key.startswith("sticker_"):
+            return "Sticker"
+        if low_key.startswith("pdf_"):
+            return "PDF document"
+        if low_key.startswith("audio_"):
+            return "Audio & music"
+        if low_key.startswith("video_"):
+            return "Video & animation"
+        if low_key.startswith("image_"):
+            if is_gif_animation and any(part in low_key for part in ("frame", "animated", "format")):
+                return "GIF & animation"
+            return "Image details"
+        if low_key.startswith("webpage_"):
+            return "Web page preview"
+        if low_key.startswith("poll_"):
+            return "Poll & quiz"
+        if low_key.startswith(("location_", "venue_")):
+            return "Location & venue"
+        if low_key.startswith("contact_"):
+            return "Contact card"
+        if low_key.startswith("game_"):
+            return "Game details"
+        if low_key.startswith("invoice_"):
+            return "Invoice details"
+        if low_key.startswith("custom_emoji"):
+            return "Emoji details"
+        if low_key.startswith(("caption_", "telegram_", "message_", "post_", "forwarded_", "views", "forwards", "replies", "grouped_media", "is_channel_")):
+            return "Telegram message & post"
+        return "File & container metadata"
+
+    media_groups: dict[str, list[tuple[str, Any]]] = {}
+    for key, value in media_info.items():
+        if value in (None, "", []):
+            continue
+        group_name = media_group_for(str(key), value)
+        media_groups.setdefault(group_name, []).append(
+            (media_label_overrides.get(key, str(key).replace("_", " ").title()), value)
+        )
+
+    group_icons = {
+        "GIF & animation": "🎞️", "Image details": "🖼️", "Sticker": "🌟",
+        "PDF document": "📄", "Audio & music": "🎧", "Video & animation": "🎬",
+        "Web page preview": "🌐", "Poll & quiz": "📊", "Location & venue": "📍",
+        "Contact card": "👤", "Game details": "🎮", "Invoice details": "🧾",
+        "Emoji details": "✨", "Telegram message & post": "📨",
+        "File & container metadata": "🧩",
+    }
+    media_detail_sections_list: list[str] = []
+    media_detail_nav: list[str] = []
+    for group_name, fields in media_groups.items():
+        section_id = "media-" + re.sub(r"[^a-z0-9]+", "-", group_name.lower()).strip("-")
+        cards = "".join(
+            f'<div class="tech"><small>{esc(label)}</small><b>{esc(pretty_value(value))}</b></div>'
+            for label, value in fields
+        )
+        media_detail_sections_list.append(
+            f'<details id="{section_id}" class="section media-type-section" open>'
+            f'<summary class="section-head"><h2>{group_icons.get(group_name, "🧩")} {esc(group_name)}</h2>'
+            f'<span class="pill">{len(fields)} details <span class="chev">⌄</span></span></summary>'
+            f'<div class="section-body"><div class="tech-grid">{cards}</div></div></details>'
+        )
+        media_detail_nav.append(f'<a href="#{section_id}">{esc(group_name)}</a>')
+    media_details_sections = "".join(media_detail_sections_list)
 
     def track_cards(items: list[dict[str, Any]], kind: str) -> str:
         if not items:
@@ -4604,7 +4683,7 @@ def web_page(
     audio_section = stream_section(audio, "Audio", "audio-section", "audio", "Filter audio by language, codec, name…")
     subtitle_section = stream_section(subtitles, "Subtitle", "subs-section", "subtitle", "Filter subtitle tracks…")
 
-    nav_links = ['<a href="#overview">Overview</a>']
+    nav_links = ['<a href="#overview">Overview</a>'] + media_detail_nav
     if video_section:
         nav_links.append('<a href="#video-section">Video</a>')
     if audio_section:
@@ -4705,7 +4784,7 @@ h1{{margin:13px 0 7px;font-size:clamp(28px,4.8vw,48px);line-height:1.02;letter-s
 .language-label{{font-size:9px;font-weight:950;letter-spacing:.12em;color:var(--muted);margin-right:2px}}
 .lang-pill{{display:inline-flex;align-items:center;gap:5px;padding:5px 7px;border-radius:999px;border:1px solid rgba(155,140,255,.18);background:linear-gradient(135deg,rgba(155,140,255,.10),rgba(94,231,255,.05));font-size:9px;font-weight:850;animation:badgeFloat 4s ease-in-out infinite alternate}}
 
-.stat{{position:relative;overflow:hidden;padding:12px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.018));transition:.25s ease;animation:cardIn .65s cubic-bezier(.2,1,.2,1) both}}
+.stat{{position:relative;overflow:hidden;padding:12px;border:1px solid var(--line);border-radius:15px;background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.018));transition:.25s ease;animation:cardIn .65s cubic-bezier(.2,1,.2,1) both}}\n.media-type-section{{animation:cardIn .55s cubic-bezier(.2,1,.2,1) both}}\n@media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}}}
 .stat::before{{content:"";position:absolute;inset:-40%;background:conic-gradient(from 180deg,transparent,rgba(155,140,255,.14),rgba(94,231,255,.12),transparent 55%);animation:statSpin 7s linear infinite;pointer-events:none}}
 .stat b,.stat span{{position:relative;z-index:1}}
 .stat:nth-child(1){{animation-delay:.05s}}.stat:nth-child(2){{animation-delay:.10s}}.stat:nth-child(3){{animation-delay:.15s}}.stat:nth-child(4){{animation-delay:.20s}}.stat:nth-child(5){{animation-delay:.25s}}
@@ -4813,7 +4892,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </div>
   {language_ribbon}
 
-  {media_details_section}
+  {media_details_sections}
 
   {quick_nav}
   {video_section}
