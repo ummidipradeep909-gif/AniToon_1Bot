@@ -1894,17 +1894,6 @@ async def analyze_source(
             include_clone=include_clone,
         )
 
-        # Storage is performed after the scan/report is complete.
-        with suppress(Exception):
-            stored = await archive_scanned_file(
-                client,
-                source_message,
-                user_id=user_id,
-                bot_username=bot_username,
-            )
-            if not stored:
-                log.warning("Post-scan private storage copy was not confirmed | token=%s", scan_token)
-
         try:
             await status_message.reply(
                 final_result_text,
@@ -1919,6 +1908,22 @@ async def analyze_source(
         except Exception:
             log.exception("Failed to send final scan result message | token=%s", scan_token)
             raise
+
+        # Archive only after the scan is complete and its report was delivered.
+        # Clone-bot media is downloaded by the clone and uploaded by the main bot.
+        with suppress(Exception):
+            stored = await archive_scanned_file(
+                client,
+                source_message,
+                user_id=user_id,
+                bot_username=bot_username,
+                archive_client=bot,
+            )
+            if not stored:
+                log.warning(
+                    "Post-scan storage copy was not confirmed | token=%s",
+                    scan_token,
+                )
 
         with suppress(Exception):
             await status_message.delete()
@@ -2737,12 +2742,6 @@ def _bind_bot_handlers(
             )
         except Exception:
             log.debug("Group tracking failed", exc_info=True)
-        _schedule_storage_archive(
-            event,
-            client=client,
-            bot_username=bot_username,
-            archive_client=bot,
-        )
         await handle_new_message(
             event,
             client=client,
@@ -5124,57 +5123,110 @@ def minimal_web_report_page(
     report_token: str | None = None,
     expires_at: datetime | None = None,
 ) -> bytes:
-    """Last-resort report renderer independent of the advanced HTML template."""
+    """Readable, resilient HTML fallback used if the advanced report renderer fails."""
     safe = _coerce_report(report)
     filename = html.escape(safe.filename or "Telegram media file")
-    summary = html.escape(format_report(safe)).replace("\n", "<br>")
+    kind = html.escape(str(safe.media_kind or safe.detected or "Media file"))
+    detected = html.escape(str(safe.detected or safe.ext or "Unknown format"))
+    size_text = html.escape(human(safe.size))
+    runtime_text = html.escape(str(safe.container.get("runtime") or "Not available"))
+    video_count = len(safe.video.get("tracks", []))
+    audio_count = len(safe.audio.get("tracks", []))
+    subtitle_count = len(safe.subtitles)
+
+    # format_report/format_section use an allowlisted, internally generated
+    # Telegram HTML format. Dynamic metadata values are escaped by file_inspector._safe.
+    # Do not html.escape the complete strings or tags such as <b> become visible text.
+    summary = format_report(safe).replace("\n", "<br>")
+
     sections = []
-    available_sections = {
-        "video": bool(safe.video.get("tracks")),
-        "audio": bool(safe.audio.get("tracks")),
-        "subs": bool(safe.subtitles),
-        "technical": True,
-    }
-    for section, title in (
-        ("video", "🎬 Video"),
-        ("audio", "🎧 Audio"),
-        ("subs", "💬 Subtitles"),
-        ("technical", "⚙️ Technical"),
-    ):
-        if not available_sections[section]:
+    if safe.media_info:
+        section_items = [("media", "🧩 Media-specific details")]
+    else:
+        section_items = []
+    section_items.extend([
+        ("video", "🎬 Video tracks"),
+        ("audio", "🎧 Audio tracks"),
+        ("subs", "💬 Subtitle tracks"),
+        ("technical", "⚙️ Technical details"),
+    ])
+    for section, title in section_items:
+        has_content = (
+            section == "media" and bool(safe.media_info)
+            or section == "video" and bool(safe.video.get("tracks"))
+            or section == "audio" and bool(safe.audio.get("tracks") or safe.audio.get("sample_codecs"))
+            or section == "subs" and bool(safe.subtitles)
+            or section == "technical"
+        )
+        if not has_content:
             continue
-        with suppress(Exception):
+        try:
             content = web_section(safe, section)
             sections.append(
-                f"<section><h2>{html.escape(title)}</h2><div>{content}</div></section>"
+                f'<section class="panel"><h2>{html.escape(title)}</h2>'
+                f'<div class="section-content">{content}</div></section>'
             )
+        except Exception:
+            log.debug("Fallback report section render failed | section=%s", section, exc_info=True)
+
     expiry_text = (
-        expires_at.strftime("%d %b %Y %H:%M UTC")
+        expires_at.strftime("%d %b %Y • %H:%M UTC")
         if isinstance(expires_at, datetime)
-        else "—"
+        else "Link expiry unavailable"
     )
+    report_id = html.escape((report_token or "local")[:16])
+    stat_cards = "".join([
+        f'<div class="stat"><span>File size</span><strong>{size_text}</strong></div>',
+        f'<div class="stat"><span>Video tracks</span><strong>{video_count}</strong></div>',
+        f'<div class="stat"><span>Audio tracks</span><strong>{audio_count}</strong></div>',
+        f'<div class="stat"><span>Subtitles</span><strong>{subtitle_count}</strong></div>',
+    ])
     document = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080918">
 <title>AniToon • {filename}</title>
 <style>
-body{{margin:0;padding:24px;background:#080918;color:#f7f7fb;font:14px/1.55 system-ui,sans-serif}}
-main{{max-width:980px;margin:auto}}
-section{{margin-top:14px;padding:16px;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(255,255,255,.04);overflow:auto}}
-h1{{overflow-wrap:anywhere}} h2{{font-size:17px}} .summary{{color:#b9bfd8}}
+:root{{color-scheme:dark;--bg:#070918;--panel:rgba(16,20,43,.82);--line:rgba(255,255,255,.11);--text:#f7f8ff;--muted:#aab2d0;--accent:#b5a4ff;--cyan:#83eafa}}
+*{{box-sizing:border-box}}
+body{{margin:0;min-height:100vh;padding:22px 14px 42px;background:radial-gradient(circle at 10% 0,rgba(151,119,255,.19),transparent 32%),radial-gradient(circle at 95% 18%,rgba(83,216,245,.12),transparent 28%),var(--bg);color:var(--text);font:14px/1.65 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
+main{{width:min(980px,100%);margin:0 auto}}
+.brand{{font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan)}}
+.hero{{padding:24px;border:1px solid var(--line);border-radius:22px;background:linear-gradient(135deg,rgba(23,27,58,.93),rgba(9,12,29,.88));box-shadow:0 22px 70px rgba(0,0,0,.27)}}
+h1{{font-size:clamp(27px,5vw,42px);line-height:1.08;letter-spacing:-.04em;margin:10px 0}}
+.file{{color:var(--muted);overflow-wrap:anywhere;margin-top:8px}}
+.pills{{display:flex;flex-wrap:wrap;gap:7px;margin-top:15px}}
+.pill{{padding:6px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);font-size:11px;color:var(--muted)}}
+.stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:17px}}
+.stat{{min-width:0;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.035)}}
+.stat span{{display:block;font-size:10px;color:var(--muted);margin-bottom:4px}}
+.stat strong{{display:block;font-size:15px;overflow-wrap:anywhere}}
+.panel{{margin-top:13px;padding:19px;border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 15px 40px rgba(0,0,0,.14);overflow-wrap:anywhere}}
+h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
+.summary{{color:#d7dcf2;line-height:1.9}}
+.summary b,.section-content b{{color:#fff;font-weight:800}}
+.section-content{{color:#d7dcf2;line-height:1.85}}
+.section-content br+br,.summary br+br{{content:"";display:block;margin-top:5px}}
+.footer{{margin:17px 3px 0;color:#818aa9;font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}}
+@media(max-width:620px){{body{{padding:12px 10px 28px}}.hero,.panel{{padding:16px;border-radius:17px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.stat strong{{font-size:14px}}}}
+@media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;animation:none!important;transition:none!important}}}}
 </style>
 </head>
 <body><main>
-<h1>⛩ AniToon File Report</h1>
-<p><strong>{filename}</strong></p>
-<p class="summary">{summary}</p>
+<header class="hero">
+  <div class="brand">⛩ AniToon • Media report</div>
+  <h1>File information</h1>
+  <div class="file"><strong>{filename}</strong></div>
+  <div class="pills"><span class="pill">{kind}</span><span class="pill">{detected}</span><span class="pill">HTML report</span></div>
+  <div class="stats">{stat_cards}</div>
+</header>
+<section class="panel"><h2>🔎 Overview</h2><div class="summary">{summary}</div></section>
 {''.join(sections)}
-<p class="summary">Report expires: {html.escape(expiry_text)} · ID: {html.escape((report_token or "local")[:16])}</p>
+<footer class="footer"><span>Report expires: {html.escape(expiry_text)}</span><span>Report ID: {report_id}</span><span>Runtime: {runtime_text}</span></footer>
 </main></body></html>"""
     return document.encode("utf-8")
-
 
 async def health_server():
     port = int(os.getenv("PORT", "10000"))
