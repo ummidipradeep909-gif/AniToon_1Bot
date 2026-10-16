@@ -4473,10 +4473,50 @@ def web_page(
     sampled_text = human_size(report.sampled)
 
     first_video = video[0] if video else {}
-    quality = first_video.get("dimensions") or "—"
+    quality = (
+        first_video.get("dimensions")
+        or media_info.get("image_pixel_dimensions")
+        or media_info.get("dimensions")
+        or "—"
+    )
     primary_codec = first_video.get("codec_name") or first_video.get("codec") or "—"
     bitrate = report.container.get("average_bitrate") or "—"
     title = report.container.get("title")
+
+    # Non-AV media should show the fields that matter to that type instead of
+    # an unhelpful row of zero video/audio/subtitle tracks.
+    media_category = str(media_info.get("category") or report.media_kind or "File")
+    has_stream_report = bool(video or audio or subtitles) or media_category in {
+        "Video", "Audio", "Voice message", "Video note"
+    }
+    if has_stream_report:
+        summary_cards = "".join([
+            f'<div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>',
+            f'<div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>',
+            f'<div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>',
+            f'<div class="stat"><b>{esc(quality)}</b><span>Primary quality / pixels</span></div>',
+            f'<div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>',
+        ])
+    else:
+        extra_label, extra_value = (
+            ("Frames", media_info.get("image_frame_count")) if media_info.get("image_frame_count") not in (None, "")
+            else ("Archive entries", media_info.get("archive_entry_count")) if media_info.get("archive_entry_count") not in (None, "")
+            else ("PDF pages", media_info.get("pdf_pages")) if media_info.get("pdf_pages") not in (None, "")
+            else ("Poll options", media_info.get("poll_option_count")) if media_info.get("poll_option_count") not in (None, "")
+            else ("Post views", media_info.get("views")) if media_info.get("views") not in (None, "")
+            else ("Extension", media_info.get("file_extension") or "—")
+        )
+        summary_items = [
+            ("Media category", media_category),
+            ("Format", media_info.get("image_format") or media_info.get("detected_format") or report.detected or "—"),
+            ("Dimensions / pixels", media_info.get("image_pixel_dimensions") or media_info.get("dimensions") or "—"),
+            ("File size", size_text),
+            (extra_label, extra_value or "—"),
+        ]
+        summary_cards = "".join(
+            f'<div class="stat"><b>{esc(value)}</b><span>{esc(label)}</span></div>'
+            for label, value in summary_items
+        )
 
     # The preview is the automatic Telegram thumbnail generated from the file.
     # Keep exactly one thumbnail in the web report.
@@ -4646,11 +4686,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   </header>
 
   <div class="summary" id="overview">
-    <div class="stat"><b>{len(video)}</b><span>Video tracks</span></div>
-    <div class="stat"><b>{len(audio)}</b><span>Audio tracks</span></div>
-    <div class="stat"><b>{len(subtitles)}</b><span>Subtitle tracks</span></div>
-    <div class="stat"><b>{esc(quality)}</b><span>Primary quality / pixels</span></div>
-    <div class="stat"><b>{esc(runtime)}</b><span>Runtime</span></div>
+    {summary_cards}
   </div>
   <div class="language-ribbon">
     <span class="language-label">LANGUAGES</span>
