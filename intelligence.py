@@ -59,9 +59,19 @@ def _clean_query(value: str) -> str:
     return query
 
 
-def _json_request(url: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _json_request(
+    url: str,
+    *,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
     data = None
     headers = {"Accept": "application/json", "User-Agent": "AniToon-Media-Intelligence/1.0"}
+    if api_key:
+        # Current Gemini auth keys are sent in the x-goog-api-key header.
+        # Avoid putting Gemini credentials in request URLs.
+        headers["x-goog-api-key"] = api_key
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -107,7 +117,7 @@ def gemini_intelligence(topic: str) -> dict[str, Any]:
         raise IntelligenceError(
             "Gemini is not configured yet. Add GEMINI_API_KEY in Render → Environment, then redeploy."
         )
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model):
         raise IntelligenceError("GEMINI_MODEL contains unsupported characters.")
     cache_key = model + ":" + query.casefold()
@@ -129,15 +139,14 @@ def gemini_intelligence(topic: str) -> dict[str, Any]:
     endpoint = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         + quote(model, safe="")
-        + ":generateContent?"
-        + urlencode({"key": api_key})
+        + ":generateContent"
     )
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search_retrieval": {}}],
+        "tools": [{"google_search": {}}],
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 700},
     }
-    response = _json_request(endpoint, method="POST", payload=payload)
+    response = _json_request(endpoint, method="POST", payload=payload, api_key=api_key)
     candidates = response.get("candidates") or []
     candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
     content = candidate.get("content") if isinstance(candidate, dict) else {}
