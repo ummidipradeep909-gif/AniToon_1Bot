@@ -71,7 +71,7 @@ FILE_CHECKER_PRIVATE_ONLY = (
     not in {"0", "false", "no", "off"}
 )
 # Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "1")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
 REPORT_LINK_TTL_SECONDS = 10 * 60
