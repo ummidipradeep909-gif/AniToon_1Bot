@@ -91,7 +91,7 @@ def test_video_report_uses_advanced_renderer_and_preserves_track_details():
     assert "H.264/AVC" in page
     assert "Japanese" in page
     assert "English subtitles" in page
-    assert "File &amp; container metadata" in page
+    assert "Detected format" not in page
 
 
 
