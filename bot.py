@@ -404,7 +404,7 @@ CLONE_HELP_TEXT = (
 HELP_TEXT = (
     "📚 <b>AniToon — Command Guide</b>\n\n"
     "🔎 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the main menu\n"
     "/help — Show this command guide\n"
@@ -4520,6 +4520,7 @@ def web_page(
     omit_from_report = {
         # Already shown in the hero or overview.
         "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
+        "archive_directory_preview",  # Replaced by the detailed ZIP contents table.
         # Telegram wrapper/post details are not file metadata and clutter the report.
         # Keep useful Telegram source/post context visible in the web report.
         # Caption, author, view/forward/reply counts and forwarding details are
