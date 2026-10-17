@@ -1,6 +1,9 @@
 """Regression tests for the advanced HTML media report renderer."""
 
+import io
 import os
+import zipfile
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 # bot.py requires these at import time; no Telegram connection is started by importing it.
@@ -9,6 +12,7 @@ os.environ.setdefault("API_HASH", "0123456789abcdef0123456789abcdef")
 os.environ.setdefault("BOT_TOKEN", "123456:TEST_TOKEN")
 
 import bot
+import file_inspector
 from file_inspector import Report, format_report, format_section
 
 
@@ -284,3 +288,56 @@ def test_owner_home_uses_admin_studio_label():
     assert "🛠️ Admin Studio" in source
     assert "ANITOON • ADMIN STUDIO" in source
     assert "Performance & RAM" in source
+
+
+def test_zip_report_lists_member_details_without_extracting_contents():
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("Episodes/", b"")
+        archive.writestr("Episodes/episode-01.mkv", b"sample video data " * 20)
+        archive.writestr("README.txt", b"Archive description")
+
+    raw_zip = archive_buffer.getvalue()
+    source_file = SimpleNamespace(
+        name="anime-pack.zip",
+        size=len(raw_zip),
+        mime_type="application/zip",
+        attributes=[],
+    )
+    message = SimpleNamespace(file=source_file, media=SimpleNamespace())
+    report = Report(
+        filename="anime-pack.zip",
+        size=len(raw_zip),
+        mime="application/zip",
+        ext=".zip",
+        detected="ZIP archive",
+        media_kind="Archive",
+    )
+
+    # This parser reads only ZIP directory metadata; it never extracts file bodies.
+    file_inspector._populate_telegram_media_info(message, report, raw_zip)
+
+    assert report.media_info["archive_entry_count"] == "3"
+    assert len(report.archive_entries) == 3
+    assert report.archive_entries[0]["name"] == "Episodes/"
+    assert report.archive_entries[0]["is_dir"] is True
+    episode = next(item for item in report.archive_entries if item["name"].endswith(".mkv"))
+    assert episode["size"] > 0
+    assert episode["compression"] == "Deflate"
+    assert episode["crc32"]
+
+    page = bot.web_page(
+        report,
+        "zip-regression-token",
+        datetime.now(timezone.utc) + timedelta(hours=1),
+    ).decode("utf-8")
+
+    assert "ZIP contents" in page
+    assert "Episodes/episode-01.mkv" in page
+    assert "README.txt" in page
+    assert "Uncompressed size" in page
+    assert "Compressed" in page
+    assert "Modified" in page
+    assert "CRC-32" in page
+    assert "AniToon does not extract archive contents" in page
+
