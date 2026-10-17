@@ -261,3 +261,26 @@ def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
     assert "Ranges:" not in technical
     assert "Probe map" not in technical
     assert "initial metadata" not in technical
+
+
+
+def test_adaptive_scan_limit_scales_down_with_ram_pressure(monkeypatch):
+    original_limit = bot.MAX_CONCURRENT_CHECKS
+    monkeypatch.setattr(bot, "MAX_CONCURRENT_CHECKS", 3)
+
+    for ram_pct, expected in ((20.0, 3), (50.0, 2), (65.0, 1), (80.0, 0)):
+        monkeypatch.setattr(
+            bot,
+            "runtime_resource_stats",
+            lambda ram_pct=ram_pct: {"ram_pct": ram_pct},
+        )
+        assert bot.adaptive_scan_limit() == expected
+
+    monkeypatch.setattr(bot, "MAX_CONCURRENT_CHECKS", original_limit)
+
+
+def test_owner_home_uses_admin_studio_label():
+    source = open(bot.__file__, "r", encoding="utf-8").read()
+    assert "🛠️ Admin Studio" in source
+    assert "ANITOON • ADMIN STUDIO" in source
+    assert "Performance & RAM" in source
