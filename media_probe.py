@@ -673,7 +673,6 @@ def _merge_reports(primary: Report, secondary: Report) -> Report:
     primary.probe_ranges += [x for x in secondary.probe_ranges if x not in seen]
     seen_notes=set(primary.notes)
     primary.notes += [x for x in secondary.notes if x not in seen_notes]
-    primary.notes.insert(0, "Combined metadata sources: custom container parser + PyAV/FFmpeg.")
     return primary
 
 
