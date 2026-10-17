@@ -186,6 +186,7 @@ owner_broadcast_pending: dict[int, float] = {}
 group_onboarding_bootstrap: dict[tuple[int, int], float] = {}
 bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 preview_tasks: set[asyncio.Task] = set()
+queue_refresh_tasks: set[asyncio.Task] = set()
 storage_tasks: set[asyncio.Task] = set()
 storage_semaphore = asyncio.Semaphore(2)
 storage_peers: dict[int, Any] = {}
@@ -1871,7 +1872,11 @@ async def release_scan_slot(scan_token: str) -> None:
         queued_processes = _waiting_scan_count_locked()
         scan_queue_changed.set()
     check_semaphore.release()
-    await _refresh_queue_positions()
+    # Do not leave the active worker held up by Telegram edits to other
+    # queue messages. Keep the task referenced until all positions are refreshed.
+    refresh_task = asyncio.create_task(_refresh_queue_positions())
+    queue_refresh_tasks.add(refresh_task)
+    refresh_task.add_done_callback(queue_refresh_tasks.discard)
 
 
 async def _generate_previews_background(
