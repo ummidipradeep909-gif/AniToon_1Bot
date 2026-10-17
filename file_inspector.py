@@ -8,6 +8,7 @@ import os
 import re
 import struct
 import zipfile
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -26,6 +27,9 @@ MAX_DEEP_PROBE = MAX_SAFE_SOURCE_BYTES
 DEFAULT_CHUNK = 512 * 1024
 MAX_TRACKS_PER_KIND = 100
 MAX_ARCHIVE_ENTRIES = 100
+MAX_ARCHIVE_MEMBER_PROBE_BYTES = 512 * 1024
+MAX_ARCHIVE_NESTED_PROBE_BYTES = 1024 * 1024
+MAX_ARCHIVE_NESTED_MEDIA = 3
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -1179,7 +1183,7 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                 put("archive_contains_encrypted_members", any(item.flag_bits & 0x1 for item in members))
                 # Only actual ZIP archives get a dedicated member listing; office
                 # formats are ZIP containers internally, but keep their own report.
-                # Never extract archive member contents.
+                # Inspect media headers/track metadata only, never extracting files.
                 if ext == ".zip" or "zip archive" in report.detected.lower():
                     compression_names = {
                         zipfile.ZIP_STORED: "Stored",
@@ -1188,13 +1192,97 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                         getattr(zipfile, "ZIP_LZMA", 14): "LZMA",
                     }
                     entries = []
+                    remaining_nested_budget = MAX_ARCHIVE_NESTED_PROBE_BYTES
+                    nested_media_scanned = 0
+                    video_container_exts = {
+                        ".mkv", ".webm", ".mp4", ".m4v", ".mov", ".mka",
+                    }
                     for item in members[:MAX_ARCHIVE_ENTRIES]:
                         try:
                             modified_at = datetime(*item.date_time).strftime("%Y-%m-%d %H:%M")
                         except (TypeError, ValueError, OverflowError):
                             modified_at = "Not available"
                         guessed_type = mimetypes.guess_type(item.filename)[0]
-                        suffix = os.path.splitext(item.filename)[1].lstrip(".").upper()
+                        member_ext = _ext(item.filename.lower())
+                        suffix = member_ext.lstrip(".").upper()
+                        audio_names: list[str] = []
+                        subtitle_names: list[str] = []
+                        # Loose audio/subtitle files are useful by their actual archive
+                        # path even if they do not contain embedded track-title metadata.
+                        if not item.is_dir() and member_ext in AUDIO_EXT:
+                            audio_names.append(str(item.filename)[:512])
+                        if not item.is_dir() and member_ext in SUB_EXT:
+                            subtitle_names.append(str(item.filename)[:512])
+
+                        # Matroska and MP4 containers can expose language and track names.
+                        # Read only a small prefix of at most three media members, with a
+                        # separate aggregate decompressed-byte ceiling to mitigate zip bombs.
+                        if (
+                            not item.is_dir()
+                            and member_ext in video_container_exts
+                            and nested_media_scanned < MAX_ARCHIVE_NESTED_MEDIA
+                            and remaining_nested_budget > 0
+                            and not (item.flag_bits & 0x1)
+                        ):
+                            nested_read_limit = min(
+                                MAX_ARCHIVE_MEMBER_PROBE_BYTES,
+                                remaining_nested_budget,
+                            )
+                            try:
+                                with archive.open(item, "r") as nested_handle:
+                                    nested_raw = nested_handle.read(nested_read_limit)
+                                remaining_nested_budget -= len(nested_raw)
+                                nested_media_scanned += 1
+                                if nested_raw:
+                                    nested_file = SimpleNamespace(
+                                        name=str(item.filename),
+                                        size=int(item.file_size),
+                                        mime_type=guessed_type,
+                                        attributes=[],
+                                    )
+                                    nested_message = SimpleNamespace(
+                                        file=nested_file,
+                                        media=None,
+                                    )
+                                    nested_report = _report(
+                                        nested_message,
+                                        [ProbePiece(0, nested_raw, "ZIP member metadata prefix")],
+                                    )
+                                    for track in nested_report.audio.get("tracks", []):
+                                        track_name = str(
+                                            track.get("name")
+                                            or track.get("display_name")
+                                            or "Audio track"
+                                        ).strip()
+                                        language = str(track.get("language_name") or "").strip()
+                                        codec = str(track.get("codec_name") or track.get("codec") or "").strip()
+                                        extra = " · ".join(part for part in (language, codec) if part)
+                                        shown = f"{track_name} ({extra})" if extra else track_name
+                                        if shown and shown not in audio_names:
+                                            audio_names.append(shown[:220])
+                                    for track in nested_report.subtitles:
+                                        track_name = str(
+                                            track.get("name")
+                                            or track.get("display_name")
+                                            or "Subtitle track"
+                                        ).strip()
+                                        language = str(track.get("language_name") or "").strip()
+                                        subtitle_format = str(
+                                            track.get("subtitle_format")
+                                            or track.get("format")
+                                            or ""
+                                        ).strip()
+                                        extra = " · ".join(
+                                            part for part in (language, subtitle_format) if part
+                                        )
+                                        shown = f"{track_name} ({extra})" if extra else track_name
+                                        if shown and shown not in subtitle_names:
+                                            subtitle_names.append(shown[:220])
+                            except Exception:
+                                # Broken/unsupported or encrypted members remain visible
+                                # in the archive listing without aborting the full report.
+                                pass
+
                         entries.append({
                             "name": str(item.filename)[:512],
                             "file_type": (
@@ -1210,6 +1298,8 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                             "modified_at": modified_at,
                             "encrypted": bool(item.flag_bits & 0x1),
                             "crc32": f"{int(item.CRC) & 0xFFFFFFFF:08X}",
+                            "audio_names": audio_names,
+                            "subtitle_names": subtitle_names,
                         })
                     report.archive_entries = entries
                 core = next((item for item in members if item.filename.lower() in {"docprops/core.xml", "meta.xml"}), None)
