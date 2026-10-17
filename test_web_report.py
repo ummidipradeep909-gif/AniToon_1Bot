@@ -146,10 +146,12 @@ def test_pdf_report_uses_the_shared_file_report_layout_and_clean_pdf_fields():
     assert "PDF security" in page
     assert "Tagged document" in page
 
-    # Repeated generic values and Telegram post counters are noise for a file report.
+    # Keep useful Telegram source/post context while presenting friendly labels.
     assert "telegram_message_id" not in page
-    assert "98765" not in page
-    assert "12345" not in page
+    assert "Telegram message ID" in page
+    assert "98765" in page
+    assert "Views" in page
+    assert "12345" in page
     assert "Runtime source" not in page
 
 
