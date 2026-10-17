@@ -9,7 +9,7 @@ os.environ.setdefault("API_HASH", "0123456789abcdef0123456789abcdef")
 os.environ.setdefault("BOT_TOKEN", "123456:TEST_TOKEN")
 
 import bot
-from file_inspector import Report
+from file_inspector import Report, format_report, format_section
 
 
 def test_video_report_uses_advanced_renderer_and_preserves_track_details():
@@ -91,4 +91,141 @@ def test_video_report_uses_advanced_renderer_and_preserves_track_details():
     assert "H.264/AVC" in page
     assert "Japanese" in page
     assert "English subtitles" in page
-    assert "File &amp; container metadata" in page
+    assert "Detected format" not in page
+
+
+
+def test_pdf_report_uses_the_shared_file_report_layout_and_clean_pdf_fields():
+    report = Report(
+        filename="course-notes.pdf",
+        size=42 * 1024,
+        mime="application/pdf",
+        ext=".pdf",
+        detected="PDF document",
+        media_kind="PDF",
+        container={
+            "pdf_version": "1.7",
+            "pages": "12",
+            "page_size_name": "A4",
+            "title": "Course Notes",
+            "author": "Polytechnic Department",
+            "subject": "Chemistry",
+            "encrypted": "no",
+            "tagged": "yes",
+            "linearized": "no",
+            "forms": "no",
+            "javascript": "no",
+            "embedded_files": "no",
+            "fonts": "4",
+        },
+        media_info={
+            "category": "PDF",
+            "detected_format": "PDF document",
+            "file_extension": ".pdf",
+            "declared_mime_type": "application/pdf",
+            "file_size_bytes": 43008,
+            "pdf_pages": "12",
+            "telegram_message_id": "98765",
+            "views": "12345",
+        },
+    )
+
+    page = bot.web_page(
+        report,
+        "pdf-regression-token",
+        datetime.now(timezone.utc) + timedelta(hours=1),
+    ).decode("utf-8")
+
+    # PDF pages now share the same nav, hero, summary grid and theme controls.
+    assert '<div class="brand">AniToon • File Reports</div>' in page
+    assert '<div class="hero-copy">' in page
+    assert 'id="overview"' in page
+    assert 'id="theme-toggle"' in page
+    assert "Course Notes" in page
+    assert "Polytechnic Department" in page
+    assert "PDF security" in page
+    assert "Tagged document" in page
+
+    # Repeated generic values and Telegram post counters are noise for a file report.
+    assert "telegram_message_id" not in page
+    assert "98765" not in page
+    assert "12345" not in page
+    assert "Runtime source" not in page
+
+
+def test_queue_positions_shift_down_when_the_head_starts(monkeypatch):
+    import asyncio
+
+    old_order = list(bot.scan_queue_order)
+    old_statuses = dict(bot.queued_scan_statuses)
+    old_count = bot.queued_processes
+    calls = []
+    status_one, status_two, status_three = object(), object(), object()
+
+    async def fake_edit_status(message, text, buttons=None):
+        calls.append((message, text, buttons))
+
+    monkeypatch.setattr(bot, "edit_status", fake_edit_status)
+    monkeypatch.setattr(bot, "cancel_button", lambda token: f"cancel:{token}")
+
+    try:
+        bot.scan_queue_order[:] = ["token-1", "token-2", "token-3"]
+        bot.queued_scan_statuses.clear()
+        bot.queued_scan_statuses.update({
+            "token-1": (status_one, "first.mkv"),
+            "token-2": (status_two, "second.pdf"),
+            "token-3": (status_three, "third.zip"),
+        })
+        bot.queued_processes = 3
+
+        async def exercise_positions():
+            await bot._refresh_queue_positions()
+            assert ["QUEUE 1" in calls[0][1], "QUEUE 2" in calls[1][1], "QUEUE 3" in calls[2][1]] == [True, True, True]
+
+            # Queue 1 starts: remove it, then re-render the waiting positions.
+            bot.scan_queue_order.pop(0)
+            bot.queued_scan_statuses.pop("token-1")
+            await bot._refresh_queue_positions()
+
+        asyncio.run(exercise_positions())
+
+        shifted = calls[-2:]
+        assert shifted[0][0] is status_two and "QUEUE 1" in shifted[0][1]
+        assert shifted[1][0] is status_three and "QUEUE 2" in shifted[1][1]
+        assert bot.queued_processes == 2
+    finally:
+        bot.scan_queue_order[:] = old_order
+        bot.queued_scan_statuses.clear()
+        bot.queued_scan_statuses.update(old_statuses)
+        bot.queued_processes = old_count
+        bot.scan_queue_changed.clear()
+
+
+
+def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
+    report = Report(
+        filename="large-video.mkv",
+        size=20 * 1024 * 1024,
+        mime="video/x-matroska",
+        ext=".mkv",
+        detected="Matroska/WebM container",
+        media_kind="Video",
+        sampled=4 * 1024 * 1024,
+        probe_ranges=["initial metadata: +0 B (4.00 MiB)"],
+        notes=[
+            "Combined metadata sources: custom container parser + PyAV/FFmpeg.",
+            "Partial scan: source processing was bounded below 5 MB.",
+        ],
+    )
+
+    summary = format_report(report)
+    technical = format_section(report, "technical")
+
+    assert "Sampled:" not in summary
+    assert "targeted range" not in summary
+    assert "Combined metadata sources" not in summary
+    assert "Partial scan" in summary
+    assert "Sampled:" not in technical
+    assert "Ranges:" not in technical
+    assert "Probe map" not in technical
+    assert "initial metadata" not in technical

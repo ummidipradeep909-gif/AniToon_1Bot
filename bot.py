@@ -132,6 +132,10 @@ bot = TelegramClient(
 bot.flood_sleep_threshold = 15 * 60
 check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
 scan_queue_lock = asyncio.Lock()
+scan_queue_refresh_lock = asyncio.Lock()
+scan_queue_changed = asyncio.Event()
+scan_queue_order: list[str] = []
+queued_scan_statuses: dict[str, tuple[Any, str]] = {}
 active_processes = 0
 queued_processes = 0
 web_bytes_sent = 0
@@ -1566,7 +1570,7 @@ def status_text(filename: str, line: str, pct: int | None = None) -> str:
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
     return (
-        "🔎 <b>SCANNING METADATA</b>\n"
+        "🔎 <b>QUEUE 1 — PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct}%</b>\n"
         f"⚙️ {html.escape(clean)}"
@@ -1599,7 +1603,7 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(0.9)
+            await asyncio.sleep(2.0)
             if heartbeat_stop.is_set():
                 break
 
@@ -1703,16 +1707,59 @@ async def run_scan(
             await heartbeat_task
 
 
+def queue_status_text(filename: str, position: int) -> str:
+    """Build the short, one-based queue label shown to each waiting user."""
+    return (
+        f"⏳ <b>QUEUE {position}</b>\n"
+        f"📄 <b>{html.escape(filename)}</b>\n"
+        "Waiting for the next available scan worker."
+    )
+
+
+async def _refresh_queue_positions() -> None:
+    """Re-number remaining queued messages whenever FIFO order changes."""
+    global queued_processes
+    async with scan_queue_refresh_lock:
+        async with scan_queue_lock:
+            queued_processes = len(scan_queue_order)
+            entries = [
+                (position, token, *queued_scan_statuses[token])
+                for position, token in enumerate(scan_queue_order, 1)
+                if token in queued_scan_statuses
+            ]
+
+        for position, token, status_message, filename in entries:
+            with suppress(Exception):
+                await edit_status(
+                    status_message,
+                    queue_status_text(filename, position),
+                    buttons=cancel_button(token),
+                )
+
+
+async def _remove_queued_scan(scan_token: str) -> None:
+    """Remove cancelled/failed waiters and immediately shift later positions."""
+    global queued_processes
+    removed = False
+    async with scan_queue_lock:
+        if scan_token in scan_queue_order:
+            scan_queue_order.remove(scan_token)
+            removed = True
+        queued_scan_statuses.pop(scan_token, None)
+        queued_processes = len(scan_queue_order)
+        scan_queue_changed.set()
+    if removed:
+        await _refresh_queue_positions()
+
+
 async def acquire_scan_slot(
     status_message: Any,
     scan_token: str,
     filename: str,
 ) -> None:
+    """Acquire a bounded worker slot fairly, in FIFO order."""
     global active_processes, queued_processes
-
     queued = False
-    queue_position = 0
-    last_notice = None
 
     try:
         while True:
@@ -1726,75 +1773,75 @@ async def acquire_scan_slot(
                     "New heavy scans are paused by the resource guard."
                 )
 
+            start_now = False
+            refresh_queue = False
             async with scan_queue_lock:
-                full = active_processes >= MAX_CONCURRENT_CHECKS
+                # Reset under the same lock used by release/enqueue to avoid
+                # losing a wake-up between checking capacity and sleeping.
+                scan_queue_changed.clear()
 
-                if not queued and (ram_high or full):
-                    queued = True
-                    queued_processes += 1
-                    queue_position = queued_processes
-
-                can_start = not ram_high and not full
-
-            if can_start:
-                await check_semaphore.acquire()
-
-                # Re-check after acquiring the semaphore. This prevents a
-                # memory spike or another scan from starting during handoff.
-                stats = runtime_resource_stats()
-                if (
-                    stats["ram_pct"] >= RAM_PAUSE_PCT
-                    or web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES
-                ):
-                    check_semaphore.release()
-                    await asyncio.sleep(1.0)
-                    continue
-
-                async with scan_queue_lock:
-                    if active_processes >= MAX_CONCURRENT_CHECKS:
-                        check_semaphore.release()
-                        await asyncio.sleep(0.5)
-                        continue
-
-                    active_processes += 1
-                    if queued:
-                        queued_processes = max(0, queued_processes - 1)
-                        queued = False
-                    return
-
-            ram_text = (
-                f"RAM is {stats['ram_pct']:.1f}%"
-                if ram_high
-                else "all scan workers are busy"
-            )
-            notice = (
-                f"⏳ <b>Please wait — your scan is queued at #{queue_position}</b>\n\n"
-                f"🔎 {ram_text}. The bot is scanning other files.\n"
-                "Your scan will start automatically when resources are available."
-            )
-
-            if notice != last_notice:
-                await edit_status(
-                    status_message,
-                    notice,
-                    buttons=cancel_button(scan_token),
+                must_wait = (
+                    ram_high
+                    or active_processes >= MAX_CONCURRENT_CHECKS
+                    or bool(scan_queue_order)
                 )
-                last_notice = notice
+                if scan_token not in scan_queue_order and must_wait:
+                    scan_queue_order.append(scan_token)
+                    queued_scan_statuses[scan_token] = (status_message, filename)
+                    queued = True
+                    refresh_queue = True
+                    scan_queue_changed.set()
 
-            await asyncio.sleep(2.0)
+                is_queue_head = not scan_queue_order or scan_queue_order[0] == scan_token
+                can_start = (
+                    not ram_high
+                    and active_processes < MAX_CONCURRENT_CHECKS
+                    and is_queue_head
+                )
+
+                if can_start:
+                    # Acquire the semaphore before removing Queue 1, so a
+                    # cancellation can never leave the following positions stale.
+                    await check_semaphore.acquire()
+                    if scan_token in scan_queue_order:
+                        scan_queue_order.pop(0)
+                        queued_scan_statuses.pop(scan_token, None)
+                        queued = False
+                        refresh_queue = True
+                    active_processes += 1
+                    queued_processes = len(scan_queue_order)
+                    start_now = True
+                    scan_queue_changed.set()
+                else:
+                    queued_processes = len(scan_queue_order)
+
+            if refresh_queue:
+                await _refresh_queue_positions()
+            if start_now:
+                return
+
+            # Wake as soon as capacity changes; periodically recheck resource
+            # guards because RAM/egress can change independently of queue events.
+            try:
+                await asyncio.wait_for(scan_queue_changed.wait(), timeout=0.75)
+            except asyncio.TimeoutError:
+                pass
 
     except asyncio.CancelledError:
         if queued:
-            async with scan_queue_lock:
-                queued_processes = max(0, queued_processes - 1)
+            await _remove_queued_scan(scan_token)
         raise
-
+    except Exception:
+        if queued:
+            await _remove_queued_scan(scan_token)
+        raise
 
 
 async def release_scan_slot() -> None:
     global active_processes
     async with scan_queue_lock:
         active_processes = max(0, active_processes - 1)
+        scan_queue_changed.set()
     check_semaphore.release()
 
 
@@ -1871,9 +1918,7 @@ async def analyze_source(
 
         await edit_status(
             status_message,
-            "🔎 <b>SCANNING METADATA</b>\n\n"
-            "<code>▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱</code> <b>1%</b>\n"
-            "⚡ Starting fast worker…",
+            status_text(filename, "Starting scan…", 1),
             buttons=cancel_button(scan_token),
         )
 
@@ -1883,6 +1928,11 @@ async def analyze_source(
             scan_token=scan_token,
             client=client,
         )
+
+        # Worker slots cover metadata parsing only. Follow-up tasks must not block
+        # the next queued file after its scan is complete.
+        await release_scan_slot()
+        slot_acquired = False
 
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS)
         state = cache_state(
@@ -1915,25 +1965,17 @@ async def analyze_source(
             source_bot=bot_username,
         )
 
-        # Keep the Telegram result text-only. The single thumbnail is
-        # stored only in the web report and is never sent back as a file/image.
-        previews: list[dict[str, Any]] = []
-        with suppress(Exception):
-            if getattr(source_message, "media", None):
-                previews = await generate_video_previews(
-                    client,
-                    source_message,
-                    scan_token,
-                )
-
-        if previews:
-            state.report.previews = previews[:1]
-            with suppress(Exception):
-                await save_web_report(
-                    scan_token,
-                    asdict(state.report),
-                    expires_at,
-                )
+        # Thumbnails are optional web decoration. Generate them in the
+        # background so scanning can return promptly and the next queued file
+        # can use the released worker immediately.
+        if getattr(source_message, "media", None):
+            _schedule_preview_generation(
+                client,
+                source_message,
+                scan_token,
+                state,
+                expires_at,
+            )
 
         final_result_text = compact_scan_result(report)
         result_buttons = web_report_button(
@@ -3797,11 +3839,10 @@ async def handle_callback(
             return
 
         async with scan_queue_lock:
-            queue_full = active_processes >= MAX_CONCURRENT_CHECKS
-            queue_position = queued_processes + 1 if queue_full else 0
+            queue_full = active_processes >= MAX_CONCURRENT_CHECKS or bool(scan_queue_order)
 
         if queue_full:
-            await event.answer(f"Bot is full with {MAX_CONCURRENT_CHECKS} active scans. Your scan is queued at #{queue_position}.", alert=True)
+            await event.answer("Your scan is queued. Its QUEUE number updates automatically.")
         else:
             await event.answer("Metadata scan starting…")
 
@@ -4201,322 +4242,18 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
     return document.encode("utf-8")
 
 
-def pdf_web_page(
-    report: Report,
-    report_token: str | None = None,
-    expires_at: datetime | None = None,
-) -> bytes:
-    report = _coerce_report(report)
-    c = report.container if isinstance(report.container, dict) else {}
-
-    def esc(value: Any) -> str:
-        return html.escape(str(value))
-
-    def human_size(value: Any) -> str:
-        try:
-            size = float(value)
-        except Exception:
-            return "—"
-        units = ("B", "KB", "MB", "GB", "TB")
-        i = 0
-        while size >= 1024 and i < len(units) - 1:
-            size /= 1024
-            i += 1
-        return f"{size:.1f} {units[i]}" if i else f"{int(size)} {units[i]}"
-
-    def row(label: str, value: Any) -> str:
-        if value is None or str(value).strip() == "":
-            return ""
-        return (
-            f'<div class="pdf-spec"><span>{esc(label)}</span>'
-            f'<strong>{esc(value)}</strong></div>'
-        )
-
-    def yes_no(value: Any) -> str:
-        if isinstance(value, bool):
-            return "Yes" if value else "No"
-        text = str(value or "").strip().lower()
-        if text == "yes":
-            return "Yes"
-        if text == "no":
-            return "No"
-        return str(value) if value is not None else ""
-
-    filename = esc(report.filename or "PDF document")
-    size_text = human_size(report.size)
-    pages = c.get("pages")
-    page_count = int(pages) if str(pages or "").isdigit() else 0
-    version = c.get("pdf_version") or "PDF"
-    title = c.get("title")
-    subtitle = c.get("subject")
-    author = c.get("author")
-    keywords = c.get("keywords")
-    creator = c.get("creator")
-    producer = c.get("producer")
-    creation_date = c.get("creation_date")
-    modified_date = c.get("modified_date")
-    page_size_name = c.get("page_size_name")
-    page_size_points = c.get("page_size_points")
-    page_size_inches = c.get("page_size_inches")
-    runtime = c.get("runtime")
-
-    previews = list(getattr(report, "previews", []) or [])[:1]
-    hero_src = (
-        "data:image/jpeg;base64," + str(previews[0].get("data") or "")
-        if previews and previews[0].get("data")
-        else ""
-    )
-    hero_label = "📄 Automatic PDF thumbnail" if previews and previews[0].get("data") else ""
-
-    info_rows = "".join([
-        row("PDF version", version),
-        row("Pages", pages),
-        row("Page size", " • ".join(x for x in (page_size_name, page_size_points, page_size_inches) if x)),
-        row("Title", title),
-        row("Author", author),
-        row("Subject", subtitle),
-        row("Keywords", keywords),
-        row("Creator", creator),
-        row("Producer", producer),
-        row("Creation date", creation_date),
-        row("Modified date", modified_date),
-    ])
-
-    security_rows = "".join([
-        row("Encrypted", yes_no(c.get("encrypted"))),
-        row("Tagged document", yes_no(c.get("tagged"))),
-        row("Linearized", yes_no(c.get("linearized"))),
-        row("Forms", yes_no(c.get("forms"))),
-        row("JavaScript", yes_no(c.get("javascript"))),
-        row("Embedded files", yes_no(c.get("embedded_files"))),
-        row("Fonts detected", c.get("fonts")),
-    ])
-
-    technical_rows = "".join([
-        row("MIME type", report.mime or "application/pdf"),
-        row("File size", size_text),
-        row("Document type", "PDF document"),
-        row("Runtime", runtime),
-        row("Runtime source", c.get("runtime_source")),
-    ] + [
-        row(key.replace("_", " ").title(), value)
-        for key, value in (report.media_info.items() if isinstance(getattr(report, "media_info", None), dict) else [])
-        if value not in (None, "", []) and key not in {"caption_preview", "webpage_description"}
-    ])
-
-    expiry_ms = int(expires_at.timestamp() * 1000) if expires_at else 0
-    report_id = esc((report_token or "local")[:14])
-
-    document = f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#070816">
-<title>AniToon • PDF Intelligence</title>
-<style>
-:root {{
-  color-scheme:dark;
-  --bg:#050611;--panel:rgba(12,15,34,.78);--line:rgba(255,255,255,.10);
-  --text:#f7f7fb;--muted:#9fa6c1;--a:#a78bfa;--b:#67e8f9;--good:#7cf4b0;
-}}
-*{{box-sizing:border-box}}
-html{{scroll-behavior:smooth}}
-body{{margin:0;min-height:100vh;background:
-radial-gradient(circle at 10% 5%,rgba(139,92,246,.17),transparent 28%),
-radial-gradient(circle at 90% 15%,rgba(103,232,249,.12),transparent 25%),
-#050611;color:var(--text);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
-.anime{{position:fixed;inset:0;z-index:-2;background:url("{ANIME_WALLPAPER_DATA_URI}") center/cover no-repeat;opacity:.22;filter:saturate(1.05);animation:wallpaperZoom 18s ease-in-out infinite alternate}}
-body::after{{content:"";position:fixed;inset:-35%;z-index:-1;background:conic-gradient(from 0deg,transparent 0 20%,rgba(167,139,250,.11) 28%,transparent 38% 56%,rgba(103,232,249,.09) 64%,transparent 78%);filter:blur(40px);animation:spin 26s linear infinite;pointer-events:none}}
-.topline{{height:3px;background:linear-gradient(90deg,transparent,var(--a),var(--b),transparent);background-size:200% 100%;animation:flow 5s linear infinite}}
-.wrap{{max-width:1080px;margin:auto;padding:18px 16px 52px}}
-.nav{{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;margin-bottom:14px;border:1px solid var(--line);border-radius:18px;background:rgba(7,9,22,.74);backdrop-filter:blur(18px)}}
-.brand{{font-size:11px;font-weight:950;letter-spacing:.10em;text-transform:uppercase}}
-.nav-actions{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}}
-.tool,.home{{color:var(--text);text-decoration:none;padding:8px 10px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px;cursor:pointer}}
-.tool:hover,.home:hover{{transform:translateY(-1px);background:rgba(167,139,250,.16)}}
-.display-controls{{display:flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px}}
-.display-controls button{{border:0;border-radius:7px;padding:6px 8px;background:transparent;color:var(--text);font:800 11px system-ui;cursor:pointer}}
-.nav-actions{{display:flex;align-items:center;gap:6px;flex-wrap:wrap}} .tool,.home{{color:var(--text);text-decoration:none;padding:8px 10px;border-radius:10px;border:1px solid rgba(167,139,250,.25);background:rgba(167,139,250,.10);font-weight:900;font-size:11px;cursor:pointer}} .tool:hover,.home:hover{{transform:translateY(-1px);background:rgba(167,139,250,.16)}}
-.hero{{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(260px,380px);gap:18px;padding:20px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(145deg,rgba(17,20,46,.88),rgba(7,9,22,.68));box-shadow:0 28px 80px rgba(0,0,0,.34)}}
-.eyebrow{{display:inline-flex;padding:6px 9px;border:1px solid rgba(124,244,176,.16);border-radius:999px;background:rgba(124,244,176,.06);color:var(--good);font-size:9px;font-weight:950;letter-spacing:.12em;text-transform:uppercase}}
-h1{{margin:14px 0 7px;font-size:clamp(30px,5vw,50px);line-height:1.02;letter-spacing:-.045em}}
-.file{{color:#cbd0e4;overflow-wrap:anywhere}}
-.pills{{display:flex;gap:7px;flex-wrap:wrap;margin-top:14px}}
-.pill{{display:inline-flex;align-items:center;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);font-size:10px;color:var(--muted)}}
-.countdown{{color:var(--b);font-weight:950}}
-.hero-media{{height:235px;overflow:hidden;border-radius:18px;border:1px solid rgba(167,139,250,.30);background:rgba(255,255,255,.03);position:relative;animation:thumbFloat 6.5s ease-in-out infinite}}
-.hero-media::after{{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 18%,rgba(255,255,255,.08) 43%,transparent 59%);background-size:220% 100%;background-position:-120% 0;background-repeat:no-repeat;animation:thumbSheen 6s ease-in-out infinite;pointer-events:none}}
-.hero-media img{{display:block;width:100%;height:100%;object-fit:contain;background:rgba(0,0,0,.15)}}
-.media-label{{position:absolute;left:10px;bottom:10px;padding:6px 8px;border-radius:8px;background:rgba(5,6,17,.72);font-size:10px;font-weight:900;z-index:2}}
-@keyframes thumbSheen{{0%,18%{{background-position:-120% 0}}62%,100%{{background-position:120% 0}}}}
-@keyframes thumbFloat{{0%,100%{{transform:translateY(0)}}50%{{transform:translateY(-3px)}}}}
-.stats{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}}
-.stat{{padding:13px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.03)}}
-.stat b{{display:block;font-size:19px}} .stat span{{font-size:10px;color:var(--muted)}}
-.section{{margin-top:12px;padding:15px;border:1px solid var(--line);border-radius:19px;background:var(--panel);backdrop-filter:blur(17px)}}
-.section h2{{margin:0 0 11px;font-size:16px}}
-.pdf-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}}
-.pdf-spec{{display:flex;justify-content:space-between;gap:12px;padding:10px;border-radius:10px;background:rgba(255,255,255,.028)}}
-.pdf-spec span{{color:var(--muted);font-size:10px}} .pdf-spec strong{{font-size:10px;text-align:right;overflow-wrap:anywhere}}
-.footer{{margin-top:14px;color:#7b819b;font-size:9px;display:flex;justify-content:space-between}}
-@media(max-width:820px){{.hero{{grid-template-columns:1fr}}.hero-media{{height:220px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-html[data-theme="light"]{{color-scheme:light;--bg:#eef2ff;--panel:rgba(255,255,255,.80);--line:rgba(37,45,80,.12);--text:#18203b;--muted:#5d6788;--a:#6757e8;--b:#0b7ea0;--good:#128b52}}
-html[data-theme="light"] body{{background:linear-gradient(180deg,#f7f9ff,#e6ebff);color:var(--text)}}
-html[data-theme="light"] .anime{{opacity:.08}}
-html[data-theme="light"] .nav,html[data-theme="light"] .hero,html[data-theme="light"] .section{{background:rgba(255,255,255,.80)}}
-html[data-theme="light"] .file{{color:#4e5878}}
-@keyframes wallpaperZoom{{from{{transform:scale(1.03)}}to{{transform:scale(1.08)}}}}
-@keyframes spin{{to{{transform:rotate(360deg)}}}}
-@keyframes flow{{0%{{background-position:0% 50%}}100%{{background-position:200% 50%}}}}
-@media(max-width:600px){{.wrap{{padding:10px 9px 30px}}.nav{{align-items:flex-start}}.hero{{padding:15px;border-radius:20px}}.hero-media{{height:200px}}.pdf-grid{{grid-template-columns:1fr}}.footer{{flex-direction:column;gap:5px}}}}
-@media print{{
-  @page{{margin:12mm}}
-  html,body{{background:#fff!important;color:#111!important}}
-  .anime,.topline,.nav,.footer{{display:none!important}}
-  .wrap{{max-width:none!important;margin:0!important;padding:0!important}}
-  .hero,.section,.stat,.pdf-spec{{background:#fff!important;color:#111!important;box-shadow:none!important;backdrop-filter:none!important;animation:none!important;border-color:#ccc!important;break-inside:avoid;page-break-inside:avoid}}
-  .pdf-spec span{{color:#444!important}} .pdf-spec strong{{color:#111!important}}
-  .hero-media{{animation:none!important}}
-}}
-</style>
-</head>
-<body>
-<div class="anime"></div>
-<div class="wrap">
-  <nav class="nav">
-    <div class="brand">AniToon • PDF Intelligence</div>
-    <div class="nav-tools">
-      <a class="home" href="/" aria-label="Go to AniToon home">⌂ Home ↗</a>
-      <button class="home" type="button" id="print-report" title="Print or save this report as PDF">🖨️ Save PDF</button>
-      <div class="controls">
-        <button type="button" id="theme-toggle">☀️ Light</button>
-        <button type="button" id="zoom-out" title="Zoom out">−</button>
-        <button type="button" id="zoom-label" title="Reset zoom">100%</button>
-        <button type="button" id="zoom-in" title="Zoom in">+</button>
-      </div>
-    </div>
-  </nav>
-
-  <header class="hero">
-    <div>
-      <span class="eyebrow">DOCUMENT INTELLIGENCE</span>
-      <h1>PDF Document</h1>
-      <div class="file">{filename}</div>
-      <div class="pills">
-        <span class="pill">📚 {esc(pages or "PDF") } pages</span>
-        <span class="pill">📦 PDF {esc(version)}</span>
-        <span class="pill">📏 {esc(size_text)}</span>
-        <span class="pill">⏱️ <span id="countdown" class="countdown">--:--</span></span>
-      </div>
-    </div>
-    {f'<div class="hero-media"><img src="{hero_src}" alt="{hero_label}" loading="eager"><span class="media-label">{hero_label}</span></div>' if hero_src else ''}
-  </header>
-
-  <div class="stats">
-    <div class="stat"><b>{esc(pages or "0")}</b><span>Pages</span></div>
-    <div class="stat"><b>{esc(version)}</b><span>PDF version</span></div>
-    <div class="stat"><b>{esc(size_text)}</b><span>File size</span></div>
-    <div class="stat"><b>{esc("Yes" if str(c.get("encrypted","")).lower()=="yes" else "No")}</b><span>Encrypted</span></div>
-  </div>
-
-  <section class="section">
-    <h2>📄 Document information</h2>
-    <div class="pdf-grid">{info_rows}</div>
-  </section>
-
-  <section class="section">
-    <h2>🔐 PDF features & security</h2>
-    <div class="pdf-grid">{security_rows}</div>
-  </section>
-
-  <section class="section">
-    <h2>⚙️ File details</h2>
-    <div class="pdf-grid">{technical_rows}</div>
-  </section>
-
-  <div class="footer">
-    <span><strong>AniToon</strong> • PDF File Report</span>
-    <span>Report ID {report_id}</span>
-  </div>
-  <div style="margin-top:18px">
-    <a class="home" href="/" style="display:flex;justify-content:center;padding:14px 18px;border-radius:14px">⌂ Home <span>↗</span></a>
-  </div>
-</div>
-
-<script>
-(() => {{
-  const root = document.documentElement;
-  let scale = 1;
-  window.zoom = (delta) => {{
-    scale = delta === 0 ? 1 : Math.max(.8, Math.min(1.25, scale + delta));
-    document.body.style.zoom = scale;
-  }};
-  window.toggleTheme = () => {{
-    const light = root.dataset.theme === "light";
-    root.dataset.theme = light ? "dark" : "light";
-    if (!light) {{
-      root.style.setProperty("--bg","#f5f7fb");
-      root.style.setProperty("--panel","rgba(255,255,255,.88)");
-      root.style.setProperty("--text","#111827");
-      root.style.setProperty("--muted","#667085");
-    }} else {{
-      root.style.setProperty("--bg","#050611");
-      root.style.setProperty("--panel","rgba(12,15,34,.78)");
-      root.style.setProperty("--text","#f7f7fb");
-      root.style.setProperty("--muted","#9fa6c1");
-    }}
-  }};
-  const expiresAt = {expiry_ms};
-  const el = document.getElementById("countdown");
-  const tick = () => {{
-    if (!el) return;
-    if (!expiresAt) {{ el.textContent = "ACTIVE"; return; }}
-    const left = Math.max(0, Math.floor((expiresAt-Date.now())/1000));
-    el.textContent = String(Math.floor(left/60)).padStart(2,"0")+":"+String(left%60).padStart(2,"0");
-    if (left > 0) setTimeout(tick,1000); else el.textContent = "EXPIRED";
-  }};
-  tick();
-}})();
-
-(() => {{
-  const root=document.documentElement, wrap=document.querySelector(".wrap");
-  const themeBtn=document.getElementById("theme-toggle");
-  const zoomOut=document.getElementById("zoom-out"), zoomIn=document.getElementById("zoom-in"), zoomLabel=document.getElementById("zoom-label");
-  const read=(k,f)=>{{try{{return localStorage.getItem(k)??f}}catch(_){{return f}}}};
-  const write=(k,v)=>{{try{{localStorage.setItem(k,v)}}catch(_){{}}}};
-  const applyTheme=t=>{{root.dataset.theme=t;if(themeBtn)themeBtn.textContent=t==="light"?"🌙 Dark":"☀️ Light";write("anitoon-theme",t)}};
-  const applyZoom=v=>{{const z=Math.max(.80,Math.min(1.20,Number(v)||1));if(wrap)wrap.style.zoom=z;if(zoomLabel)zoomLabel.textContent=Math.round(z*100)+"%";write("anitoon-zoom",String(z))}};
-  applyTheme(read("anitoon-theme","dark")==="light"?"light":"dark");
-  applyZoom(Number(read("anitoon-zoom","1")));
-  themeBtn?.addEventListener("click",()=>applyTheme(root.dataset.theme==="light"?"dark":"light"));
-  zoomOut?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))-.10));
-  zoomIn?.addEventListener("click",()=>applyZoom(Number(read("anitoon-zoom","1"))+.10));
-  zoomLabel?.addEventListener("click",()=>applyZoom(1));
-}})();
-
-
-(() => {{
-  const printBtn = document.getElementById("print-report");
-  printBtn?.addEventListener("click", () => window.print());
-}})();
-</script>
-</body>
-</html>"""
-    return document.encode("utf-8")
-
-
 def web_page(
     report: Report,
     report_token: str | None = None,
     expires_at: datetime | None = None,
 ) -> bytes:
     report = _coerce_report(report)
-    if report.ext == ".pdf" or str(report.detected or "").lower().startswith("pdf") or report.media_kind == "PDF":
-        return pdf_web_page(report, report_token, expires_at)
+    is_pdf = (
+        str(report.ext or "").lower() == ".pdf"
+        or str(report.detected or "").lower().startswith("pdf")
+        or str(report.media_kind or "").lower() == "pdf"
+    )
     filename = html.escape(report.filename or "Telegram media file")
-    generated = datetime.now(timezone.utc)
-    generated_text = generated.strftime("%d %b %Y • %H:%M UTC")
 
     audio = list(report.audio.get("tracks", []) or [])[:MAX_REPORT_TRACKS]
     video = list(report.video.get("tracks", []) or [])[:MAX_REPORT_TRACKS]
@@ -4551,7 +4288,33 @@ def web_page(
     def icon_for(kind: str) -> str:
         return {"Video": "🎬", "Audio": "🎧", "Subtitle": "💬"}.get(kind, "◈")
 
-    media_info = report.media_info if isinstance(getattr(report, "media_info", None), dict) else {}
+    media_info = dict(report.media_info) if isinstance(getattr(report, "media_info", None), dict) else {}
+    if is_pdf:
+        pdf_container = report.container if isinstance(report.container, dict) else {}
+        pdf_fields = {
+            "pdf_version": pdf_container.get("pdf_version"),
+            "pdf_pages": pdf_container.get("pages"),
+            "pdf_page_size": pdf_container.get("page_size_name") or pdf_container.get("page_size_points"),
+            "pdf_title": pdf_container.get("title"),
+            "pdf_author": pdf_container.get("author"),
+            "pdf_subject": pdf_container.get("subject"),
+            "pdf_keywords": pdf_container.get("keywords"),
+            "pdf_creator": pdf_container.get("creator"),
+            "pdf_producer": pdf_container.get("producer"),
+            "pdf_creation_date": pdf_container.get("creation_date"),
+            "pdf_modified_date": pdf_container.get("modified_date"),
+            "pdf_encrypted": pdf_container.get("encrypted"),
+            "pdf_tagged": pdf_container.get("tagged"),
+            "pdf_linearized": pdf_container.get("linearized"),
+            "pdf_forms": pdf_container.get("forms"),
+            "pdf_javascript": pdf_container.get("javascript"),
+            "pdf_embedded_files": pdf_container.get("embedded_files"),
+            "pdf_fonts": pdf_container.get("fonts"),
+        }
+        for key, value in pdf_fields.items():
+            if value not in (None, "", []):
+                media_info.setdefault(key, value)
+
     media_label_overrides = {
         "category": "Media category",
         "detected_format": "Detected format",
@@ -4588,6 +4351,20 @@ def web_page(
         "pdf_pages": "Pages",
         "pdf_page_size": "Page size",
         "pdf_encrypted": "Encrypted",
+        "pdf_tagged": "Tagged document",
+        "pdf_linearized": "Linearized",
+        "pdf_forms": "Forms",
+        "pdf_javascript": "JavaScript",
+        "pdf_embedded_files": "Embedded files",
+        "pdf_fonts": "Fonts detected",
+        "pdf_title": "Title",
+        "pdf_author": "Author",
+        "pdf_subject": "Subject",
+        "pdf_keywords": "Keywords",
+        "pdf_creator": "Creator",
+        "pdf_producer": "Producer",
+        "pdf_creation_date": "Creation date",
+        "pdf_modified_date": "Modified date",
         "caption_preview": "Caption preview",
         "caption_characters": "Caption characters",
         "telegram_message_id": "Telegram message ID",
@@ -4638,6 +4415,8 @@ def web_page(
         if low_key.startswith("sticker_"):
             return "Sticker"
         if low_key.startswith("pdf_"):
+            if low_key in {"pdf_encrypted", "pdf_tagged", "pdf_linearized", "pdf_forms", "pdf_javascript", "pdf_embedded_files"}:
+                return "PDF security"
             return "PDF document"
         if low_key.startswith("audio_"):
             return "Audio & music"
@@ -4666,8 +4445,19 @@ def web_page(
         return "File & container metadata"
 
     media_groups: dict[str, list[tuple[str, Any]]] = {}
+    omit_from_report = {
+        # Already shown in the hero or overview.
+        "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
+        # Telegram wrapper/post details are not file metadata and clutter the report.
+        "caption_preview", "caption_characters", "telegram_message_id", "message_date_utc",
+        "post_author", "views", "forwards", "replies", "grouped_media_album", "is_channel_post",
+        "forwarded_from_name", "forwarded_post_number", "forwarded_date_utc",
+    }
+    if is_pdf:
+        # Page count already appears in the PDF overview card.
+        omit_from_report.add("pdf_pages")
     for key, value in media_info.items():
-        if value in (None, "", []):
+        if key in omit_from_report or value in (None, "", []):
             continue
         group_name = media_group_for(str(key), value)
         media_groups.setdefault(group_name, []).append(
@@ -4676,7 +4466,7 @@ def web_page(
 
     group_icons = {
         "GIF & animation": "🎞️", "Image details": "🖼️", "Sticker": "🌟",
-        "PDF document": "📄", "Audio & music": "🎧", "Video & animation": "🎬",
+        "PDF document": "📄", "PDF security": "🔐", "Audio & music": "🎧", "Video & animation": "🎬",
         "Web page preview": "🌐", "Poll & quiz": "📊", "Location & venue": "📍",
         "Contact card": "👤", "Game details": "🎮", "Invoice details": "🧾",
         "Emoji details": "✨", "Telegram message & post": "📨",
@@ -4801,7 +4591,6 @@ def web_page(
         return "".join(cards)
 
     runtime = report.container.get("runtime") or "N/A"
-    runtime_source = report.container.get("runtime_source")
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
     size_text = human_size(report.size)
@@ -4914,10 +4703,7 @@ def web_page(
         ("Container", container_name if container_name != "Detected media" else None),
         ("MIME type", report.mime),
         ("Runtime", runtime if runtime not in ("N/A", "—") else None),
-        ("File size", size_text if report.size is not None else None),
         ("Average bitrate", bitrate if bitrate != "—" else None),
-        ("Runtime source", runtime_source),
-        ("Detected type", report.media_kind if report.media_kind not in ("", "File") else None),
     ]
     technical_cards = "".join(
         f'<div class="tech"><small>{esc(label)}</small><b>{esc(value)}</b></div>'
