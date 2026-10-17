@@ -71,10 +71,10 @@ FILE_CHECKER_PRIVATE_ONLY = (
     not in {"0", "false", "no", "off"}
 )
 # Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 3))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
-REPORT_LINK_TTL_SECONDS = 24 * 60 * 60
+REPORT_LINK_TTL_SECONDS = 10 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 MAX_REPORT_TRACKS = 100
@@ -1573,7 +1573,9 @@ def status_text(
 ) -> str:
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
-    pct = max(0, min(100, current_pct))
+    # Avoid a frozen-looking 0% bar while the initial metadata request is in flight.
+    # Reserve 100% for successful completion.
+    pct = max(20, min(96, current_pct)) if current_pct < 100 else 100
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
     position = max(1, int(queue_position or 1))
@@ -4484,12 +4486,10 @@ def web_page(
 
     media_groups: dict[str, list[tuple[str, Any]]] = {}
     omit_from_report = {
-        # Already shown in the hero or overview.
+        # Keep only values already represented in the report header/overview out
+        # of the detailed sections. Telegram post context is useful information,
+        # so retain captions, author, views, forwards, replies and forwarding details.
         "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
-        # Telegram wrapper/post details are not file metadata and clutter the report.
-        "caption_preview", "caption_characters", "telegram_message_id", "message_date_utc",
-        "post_author", "views", "forwards", "replies", "grouped_media_album", "is_channel_post",
-        "forwarded_from_name", "forwarded_post_number", "forwarded_date_utc",
     }
     if is_pdf:
         # Page count already appears in the PDF overview card.
