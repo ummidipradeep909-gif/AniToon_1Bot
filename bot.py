@@ -3869,7 +3869,10 @@ async def handle_callback(
             return
 
         async with scan_queue_lock:
-            queue_full = active_processes >= MAX_CONCURRENT_CHECKS or bool(scan_queue_order)
+            queue_full = (
+                active_processes >= MAX_CONCURRENT_CHECKS
+                or any(token not in processing_scan_tokens for token in scan_queue_order)
+            )
 
         if queue_full:
             await event.answer("Your scan is queued. Its QUEUE number updates automatically.")
