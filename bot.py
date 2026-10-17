@@ -4486,10 +4486,10 @@ def web_page(
 
     media_groups: dict[str, list[tuple[str, Any]]] = {}
     omit_from_report = {
-        # Keep only values already represented in the report header/overview out
-        # of the detailed sections. Telegram post context is useful information,
-        # so retain captions, author, views, forwards, replies and forwarding details.
+        # Avoid repeating header fields and exposing noisy Telegram message IDs
+        # or raw post counters, while retaining useful caption/author/forward context.
         "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
+        "telegram_message_id", "views",
     }
     if is_pdf:
         # Page count already appears in the PDF overview card.
