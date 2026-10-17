@@ -1503,8 +1503,15 @@ def format_report(r:Report)->str:
     if track_count_lines:
         lines += [""] + track_count_lines
     if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
-    lines += ["",f"🧪 Sampled: {human(r.sampled)} across {len(r.probe_ranges)} targeted range(s)"]
-    if r.notes:lines += ["",f"ℹ️ {_safe(r.notes[0])}"]
+    # Keep only user-relevant caveats; probe byte counts/range counts are
+    # internal implementation details rather than file information.
+    if r.notes:
+        user_note = next(
+            (note for note in r.notes if note and "combined metadata sources" not in note.lower()),
+            None,
+        )
+        if user_note:
+            lines += ["", f"ℹ️ {_safe(user_note)}"]
     return "\n".join(lines)
 
 
@@ -1549,12 +1556,11 @@ def format_section(r:Report,section:str)->str:
         else:lines.append("No confirmed video track was exposed by the inspected metadata.")
         return "\n".join(lines).strip()
     if section=="technical":
-        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}",f"Sampled: {human(r.sampled)}",f"Ranges: {len(r.probe_ranges)}"]
+        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}"]
         if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
         if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
         if r.container.get("muxing_app"):lines.append(f"Muxing app: {_safe(r.container['muxing_app'])}")
         if r.container.get("writing_app"):lines.append(f"Writing app: {_safe(r.container['writing_app'])}")
         if r.container.get("date_utc"):lines.append(f"Encoded date: {_safe(r.container['date_utc'])}")
-        if r.probe_ranges:lines += ["","Probe map:"]+[f"• {_safe(x)}" for x in r.probe_ranges]
         return "\n".join(lines)
     return format_report(r)
