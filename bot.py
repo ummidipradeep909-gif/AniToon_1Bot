@@ -136,6 +136,7 @@ scan_queue_refresh_lock = asyncio.Lock()
 scan_queue_changed = asyncio.Event()
 scan_queue_order: list[str] = []
 queued_scan_statuses: dict[str, tuple[Any, str]] = {}
+processing_scan_tokens: set[str] = set()
 active_processes = 0
 queued_processes = 0
 web_bytes_sent = 0
@@ -1563,14 +1564,20 @@ def progress_details(line: str) -> tuple[int, str]:
     return pct, clean
 
 
-def status_text(filename: str, line: str, pct: int | None = None) -> str:
+def status_text(
+    filename: str,
+    line: str,
+    pct: int | None = None,
+    queue_position: int = 1,
+) -> str:
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
     pct = max(0, min(100, current_pct))
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
+    position = max(1, int(queue_position or 1))
     return (
-        "🔎 <b>QUEUE 1 — PROCESSING</b>\n"
+        f"🔎 <b>QUEUE {position} — PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct}%</b>\n"
         f"⚙️ {html.escape(clean)}"
@@ -1592,9 +1599,10 @@ async def run_scan(
         parsed_pct, label = progress_details(line)
         progress_state["pct"] = max(int(progress_state["pct"]), parsed_pct)
         progress_state["label"] = label
+        queue_position = await _scan_queue_position(scan_token)
         await edit_status(
             status_message,
-            status_text(filename, label, progress_state["pct"]),
+            status_text(filename, label, progress_state["pct"], queue_position),
             buttons=cancel_button(scan_token),
         )
 
@@ -1628,12 +1636,14 @@ async def run_scan(
 
             progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
+            queue_position = await _scan_queue_position(scan_token)
             await edit_status(
                 status_message,
                 status_text(
                     filename,
                     f"⚡ {label} {pulse[index % len(pulse)]}",
                     progress_state["pct"],
+                    queue_position,
                 ),
                 buttons=cancel_button(scan_token),
             )
@@ -1694,9 +1704,10 @@ async def run_scan(
         )
         progress_state["pct"] = 100
         progress_state["label"] = "✅ Scan complete — report ready."
+        queue_position = await _scan_queue_position(scan_token)
         await edit_status(
             status_message,
-            status_text(filename, progress_state["label"], 100),
+            status_text(filename, progress_state["label"], 100, queue_position),
             buttons=cancel_button(scan_token),
         )
         return report
@@ -1708,7 +1719,7 @@ async def run_scan(
 
 
 def queue_status_text(filename: str, position: int) -> str:
-    """Build the short, one-based queue label shown to each waiting user."""
+    """Build the short, one-based FIFO position shown to a waiting user."""
     return (
         f"⏳ <b>QUEUE {position}</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n"
@@ -1716,16 +1727,29 @@ def queue_status_text(filename: str, position: int) -> str:
     )
 
 
+def _waiting_scan_count_locked() -> int:
+    return sum(token not in processing_scan_tokens for token in scan_queue_order)
+
+
+async def _scan_queue_position(scan_token: str) -> int:
+    """Return the current position including scans that are processing."""
+    async with scan_queue_lock:
+        try:
+            return scan_queue_order.index(scan_token) + 1
+        except ValueError:
+            return 1
+
+
 async def _refresh_queue_positions() -> None:
-    """Re-number remaining queued messages whenever FIFO order changes."""
+    """Update waiting messages using positions that include active scans."""
     global queued_processes
     async with scan_queue_refresh_lock:
         async with scan_queue_lock:
-            queued_processes = len(scan_queue_order)
+            queued_processes = _waiting_scan_count_locked()
             entries = [
                 (position, token, *queued_scan_statuses[token])
                 for position, token in enumerate(scan_queue_order, 1)
-                if token in queued_scan_statuses
+                if token in queued_scan_statuses and token not in processing_scan_tokens
             ]
 
         for position, token, status_message, filename in entries:
@@ -1738,7 +1762,7 @@ async def _refresh_queue_positions() -> None:
 
 
 async def _remove_queued_scan(scan_token: str) -> None:
-    """Remove cancelled/failed waiters and immediately shift later positions."""
+    """Remove a cancelled waiter and shift all remaining queue numbers."""
     global queued_processes
     removed = False
     async with scan_queue_lock:
@@ -1746,7 +1770,8 @@ async def _remove_queued_scan(scan_token: str) -> None:
             scan_queue_order.remove(scan_token)
             removed = True
         queued_scan_statuses.pop(scan_token, None)
-        queued_processes = len(scan_queue_order)
+        processing_scan_tokens.discard(scan_token)
+        queued_processes = _waiting_scan_count_locked()
         scan_queue_changed.set()
     if removed:
         await _refresh_queue_positions()
@@ -1757,7 +1782,7 @@ async def acquire_scan_slot(
     scan_token: str,
     filename: str,
 ) -> None:
-    """Acquire a bounded worker slot fairly, in FIFO order."""
+    """Acquire a worker slot in FIFO order while keeping active jobs numbered."""
     global active_processes, queued_processes
     queued = False
 
@@ -1776,52 +1801,49 @@ async def acquire_scan_slot(
             start_now = False
             refresh_queue = False
             async with scan_queue_lock:
-                # Reset under the same lock used by release/enqueue to avoid
-                # losing a wake-up between checking capacity and sleeping.
+                # Clearing under the queue lock prevents lost release/enqueue wake-ups.
                 scan_queue_changed.clear()
 
-                must_wait = (
-                    ram_high
-                    or active_processes >= MAX_CONCURRENT_CHECKS
-                    or bool(scan_queue_order)
-                )
-                if scan_token not in scan_queue_order and must_wait:
+                if scan_token not in scan_queue_order:
                     scan_queue_order.append(scan_token)
                     queued_scan_statuses[scan_token] = (status_message, filename)
                     queued = True
                     refresh_queue = True
                     scan_queue_changed.set()
 
-                is_queue_head = not scan_queue_order or scan_queue_order[0] == scan_token
+                # Active scans keep their position at the front of the FIFO list.
+                # The next unstarted entry may use a free worker slot.
+                first_waiting = next(
+                    (
+                        token for token in scan_queue_order
+                        if token not in processing_scan_tokens
+                    ),
+                    None,
+                )
                 can_start = (
                     not ram_high
                     and active_processes < MAX_CONCURRENT_CHECKS
-                    and is_queue_head
+                    and first_waiting == scan_token
                 )
 
                 if can_start:
-                    # Acquire the semaphore before removing Queue 1, so a
-                    # cancellation can never leave the following positions stale.
+                    # No await occurs after acquiring the semaphore and marking
+                    # the job active, preventing a cancellation from leaking a slot.
                     await check_semaphore.acquire()
-                    if scan_token in scan_queue_order:
-                        scan_queue_order.pop(0)
-                        queued_scan_statuses.pop(scan_token, None)
-                        queued = False
-                        refresh_queue = True
+                    processing_scan_tokens.add(scan_token)
+                    queued = False
                     active_processes += 1
-                    queued_processes = len(scan_queue_order)
+                    queued_processes = _waiting_scan_count_locked()
                     start_now = True
                     scan_queue_changed.set()
                 else:
-                    queued_processes = len(scan_queue_order)
+                    queued_processes = _waiting_scan_count_locked()
 
-            if refresh_queue:
+            if refresh_queue and not start_now:
                 await _refresh_queue_positions()
             if start_now:
                 return
 
-            # Wake as soon as capacity changes; periodically recheck resource
-            # guards because RAM/egress can change independently of queue events.
             try:
                 await asyncio.wait_for(scan_queue_changed.wait(), timeout=0.75)
             except asyncio.TimeoutError:
@@ -1837,12 +1859,19 @@ async def acquire_scan_slot(
         raise
 
 
-async def release_scan_slot() -> None:
-    global active_processes
+async def release_scan_slot(scan_token: str) -> None:
+    """Release a worker and only then promote the next waiting job to Queue 1."""
+    global active_processes, queued_processes
     async with scan_queue_lock:
+        if scan_token in scan_queue_order:
+            scan_queue_order.remove(scan_token)
+        queued_scan_statuses.pop(scan_token, None)
+        processing_scan_tokens.discard(scan_token)
         active_processes = max(0, active_processes - 1)
+        queued_processes = _waiting_scan_count_locked()
         scan_queue_changed.set()
     check_semaphore.release()
+    await _refresh_queue_positions()
 
 
 async def _generate_previews_background(
@@ -1916,9 +1945,10 @@ async def analyze_source(
         if client is not bot:
             await bump_clone_stat(client, "scans_started")
 
+        queue_position = await _scan_queue_position(scan_token)
         await edit_status(
             status_message,
-            status_text(filename, "Starting scan…", 1),
+            status_text(filename, "Starting scan…", 1, queue_position),
             buttons=cancel_button(scan_token),
         )
 
@@ -1931,7 +1961,7 @@ async def analyze_source(
 
         # Worker slots cover metadata parsing only. Follow-up tasks must not block
         # the next queued file after its scan is complete.
-        await release_scan_slot()
+        await release_scan_slot(scan_token)
         slot_acquired = False
 
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=REPORT_LINK_TTL_SECONDS)
@@ -2122,7 +2152,7 @@ async def analyze_source(
 
     finally:
         if slot_acquired:
-            await release_scan_slot()
+            await release_scan_slot(scan_token)
 
         if scan_token in active_scans:
             await cancel_probe(scan_token)
