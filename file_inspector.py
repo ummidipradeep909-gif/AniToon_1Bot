@@ -1911,24 +1911,52 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
 def _safe(v:Any)->str:return html.escape(str(v))
 def _rows(track:dict[str,Any],i:int):
     out=[f"{i}. {_safe(track.get('name') or track.get('display_name') or 'Unnamed')}"]
-    if track.get("name_source"):out.append(f"   Name source: {_safe(track['name_source'])}")
-    for k in ("track_uid","language_name","language","codec_name","codec","dimensions","display_dimensions","crop","frame_rate","scan_type","stereo_mode","alpha_mode","channels","sample_rate","output_sample_rate","bit_depth","codec_delay","seek_preroll","default","forced","enabled","original","commentary","hearing_impaired","visual_impaired"):
-        if track.get(k):out.append(f"   {_safe(k.replace('_',' ').title())}: {_safe(track[k])}")
+    fields = (
+        ("Language", track.get("language_name") or track.get("language")),
+        ("Codec", track.get("codec_name") or track.get("codec")),
+        ("Resolution", track.get("dimensions")),
+        ("Display size", track.get("display_dimensions")),
+        ("Crop", track.get("crop")),
+        ("Frame rate", track.get("frame_rate")),
+        ("Scan type", track.get("scan_type")),
+        ("Stereo mode", track.get("stereo_mode")),
+        ("Alpha mode", track.get("alpha_mode")),
+        ("Channels", track.get("channels")),
+        ("Sample rate", track.get("sample_rate")),
+        ("Output sample rate", track.get("output_sample_rate")),
+        ("Bit depth", track.get("bit_depth")),
+    )
+    for label, value in fields:
+        if value not in (None, ""):
+            out.append(f"   {_safe(label)}: {_safe(value)}")
+    # Status flags add value when enabled; listing every negative flag and internal
+    # track UID/name-source details is repetitive and not useful to most readers.
+    for key,label in (
+        ("default","Default"),("forced","Forced"),("original","Original"),
+        ("commentary","Commentary"),("hearing_impaired","Hearing impaired"),
+        ("visual_impaired","Visual impaired"),
+    ):
+        if str(track.get(key) or "").lower() in {"yes","true","1"}:
+            out.append(f"   {_safe(label)}: Yes")
     return out
 
 def format_report(r:Report)->str:
     a=r.audio.get("tracks",[]);v=r.video.get("tracks",[])
+    category = str(r.media_info.get("category") or r.media_kind or "").strip()
+    detected = str(r.detected or "").strip()
     lines=[
         "🔬 <b>FILE INTELLIGENCE</b>","",
         f"📄 <b>{_safe(r.filename)}</b>",
-        f"📦 {_safe(r.detected)}",
+        f"📦 {_safe(detected or category or 'Media file')}",
         f"📏 {human(r.size)}",
-        f"🧾 MIME: {_safe(r.mime or 'application/octet-stream')}",
-        f"🧩 Media category: <b>{_safe(r.media_info.get('category') or r.media_kind or 'File')}</b>",
     ]
-    if r.container.get("runtime"):lines.append(f"⏱ Runtime: <b>{_safe(r.container['runtime'])}</b>")
-    for key in ("image_pixel_dimensions", "image_format", "sticker_alt_text", "sticker_set",
-                "video_duration_seconds", "audio_title", "audio_performer", "pdf_pages",
+    if category and category.lower() not in detected.lower():
+        lines.append(f"🧩 Type: <b>{_safe(category)}</b>")
+    runtime = r.container.get("runtime")
+    if runtime:
+        lines.append(f"⏱ Runtime: <b>{_safe(runtime)}</b>")
+    for key in ("image_pixel_dimensions", "sticker_alt_text", "sticker_set",
+                "audio_title", "audio_performer", "pdf_pages",
                 "webpage_title", "poll_question", "post_author", "views", "forwards"):
         value = r.media_info.get(key)
         if value not in (None, ""):
@@ -1942,9 +1970,8 @@ def format_report(r:Report)->str:
         track_count_lines.append(f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>")
     if track_count_lines:
         lines += [""] + track_count_lines
-    if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
-    # Keep only user-relevant caveats; probe byte counts/range counts are
-    # internal implementation details rather than file information.
+    if r.container.get("average_bitrate"):
+        lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
     if r.notes:
         user_note = next(
             (note for note in r.notes if note and "combined metadata sources" not in note.lower()),
@@ -1959,19 +1986,52 @@ def format_section(r:Report,section:str)->str:
     if section == "media":
         lines = ["🧩 <b>MEDIA-SPECIFIC DETAILS</b>", ""]
         label_overrides = {
-            "category": "Media category", "detected_format": "Detected format",
-            "telegram_media_type": "Telegram media type", "file_extension": "File extension",
-            "declared_mime_type": "MIME type", "file_size_bytes": "File size in bytes",
-            "caption_preview": "Caption preview", "caption_characters": "Caption length",
-            "telegram_message_id": "Telegram message ID", "message_date_utc": "Message date",
-            "post_author": "Post author", "views": "Views", "forwards": "Forwards",
-            "replies": "Replies", "grouped_media_album": "Part of album/grouped media",
+            "caption_preview": "Caption",
+            "message_date_utc": "Message date",
+            "post_author": "Post author",
+            "views": "Views",
+            "forwards": "Forwards",
+            "replies": "Replies",
+            "image_exif_summary": "Camera / image details",
+            "image_pixel_dimensions": "Image dimensions",
+            "image_frame_count": "Frames",
+            "pdf_title": "Title",
+            "pdf_author": "Author",
+            "pdf_subject": "Subject",
+            "pdf_keywords": "Keywords",
+            "pdf_creation_date": "Created",
+            "pdf_modified_date": "Modified",
+            "audio_title": "Track title",
+            "audio_performer": "Artist",
+            "sticker_alt_text": "Sticker emoji",
+            "sticker_set": "Sticker set",
+        }
+        omit_keys = {
+            "category", "detected_format", "file_extension", "declared_mime_type",
+            "file_size_bytes", "archive_directory_preview", "image_format",
+            "video_width", "video_height", "dimensions", "image_color_mode",
+            "image_progressive", "video_duration_seconds", "audio_duration_seconds",
+            "caption_characters", "has_caption", "is_document", "telegram_media_type",
+            "telegram_message_id", "telegram_filename_attribute", "pdf_creator",
+            "pdf_producer", "pdf_fonts", "pdf_linearized", "webpage_type",
+            "is_channel_post", "grouped_media_album", "contact_phone_present",
+            "venue_address_present", "location_coordinates_present",
+        }
+        quiet_false_flags = {
+            "image_is_animated", "image_has_transparency", "sticker_is_mask",
+            "sticker_is_animated", "video_is_round_note", "video_is_silent",
+            "audio_is_voice", "audio_is_music", "audio_has_waveform",
+            "pdf_tagged", "pdf_forms", "pdf_javascript", "pdf_embedded_files",
+            "poll_is_quiz", "poll_multiple_answers",
         }
         if r.media_info:
             for key, value in r.media_info.items():
-                if value not in (None, ""):
-                    label = label_overrides.get(key, key.replace("_", " ").title())
-                    lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
+                if key in omit_keys or value in (None, ""):
+                    continue
+                if key in quiet_false_flags and str(value).strip().lower() in {"no","false","0","none"}:
+                    continue
+                label = label_overrides.get(key, key.replace("_", " ").title())
+                lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
         else:
             lines.append("No media-specific attributes were found.")
         return "\n".join(lines)
@@ -1996,11 +2056,12 @@ def format_section(r:Report,section:str)->str:
         else:lines.append("No confirmed video track was exposed by the inspected metadata.")
         return "\n".join(lines).strip()
     if section=="technical":
-        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}"]
-        if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
-        if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
-        if r.container.get("muxing_app"):lines.append(f"Muxing app: {_safe(r.container['muxing_app'])}")
-        if r.container.get("writing_app"):lines.append(f"Writing app: {_safe(r.container['writing_app'])}")
-        if r.container.get("date_utc"):lines.append(f"Encoded date: {_safe(r.container['date_utc'])}")
+        lines=["⚙️ <b>TECHNICAL DETAILS</b>",""]
+        if r.container.get("average_bitrate"):
+            lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
+        if r.container.get("title"):
+            lines.append(f"Container title: {_safe(r.container['title'])}")
+        if len(lines) == 2:
+            return ""
         return "\n".join(lines)
     return format_report(r)
