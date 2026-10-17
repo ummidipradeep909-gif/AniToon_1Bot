@@ -4607,7 +4607,7 @@ def web_page(
         except (TypeError, ValueError):
             compressed_bytes = 0
 
-        archive_stats = [("Entries", str(archive_entry_count))]
+        archive_stats = []
         if "archive_uncompressed_bytes" in media_info:
             archive_stats.append(("Original size", human_size(uncompressed_bytes)))
         if "archive_compressed_bytes" in media_info:
@@ -4801,10 +4801,7 @@ def web_page(
     has_stream_report = bool(video or audio or subtitles)
     if has_stream_report:
         stream_summary_items: list[tuple[str, Any]] = []
-        if report.size is not None:
-            stream_summary_items.append(("File size", size_text))
-        if container_name and container_name != "Detected media":
-            stream_summary_items.append(("Format", container_name))
+        # File size and format already appear in the hero; keep only stream-specific facts.
         if video:
             stream_summary_items.append(("Video tracks", len(video)))
         if audio:
@@ -4822,17 +4819,13 @@ def web_page(
     else:
         extra_label, extra_value = (
             ("Frames", media_info.get("image_frame_count")) if media_info.get("image_frame_count") not in (None, "")
-            else ("Archive entries", media_info.get("archive_entry_count")) if media_info.get("archive_entry_count") not in (None, "")
             else ("PDF pages", media_info.get("pdf_pages")) if media_info.get("pdf_pages") not in (None, "")
             else ("Poll options", media_info.get("poll_option_count")) if media_info.get("poll_option_count") not in (None, "")
-            else ("Post views", media_info.get("views")) if media_info.get("views") not in (None, "")
-            else ("Extension", media_info.get("file_extension") or "—")
+            else ("", None)
         )
+        # Category, format and size are already clear in the hero.
         summary_items = [
-            ("Media category", media_category),
-            ("Format", media_info.get("image_format") or media_info.get("detected_format") or report.detected or "—"),
             ("Dimensions / pixels", media_info.get("image_pixel_dimensions") or media_info.get("dimensions") or "—"),
-            ("File size", size_text if report.size is not None else None),
             (extra_label, extra_value),
         ]
         summary_cards = "".join(
