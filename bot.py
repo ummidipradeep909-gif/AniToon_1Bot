@@ -5176,18 +5176,35 @@ def minimal_web_report_page(
     """Readable, resilient HTML fallback used if the advanced report renderer fails."""
     safe = _coerce_report(report)
     filename = html.escape(safe.filename or "Telegram media file")
-    kind = html.escape(str(safe.media_kind or safe.detected or "Media file"))
-    detected = html.escape(str(safe.detected or safe.ext or "Unknown format"))
+    kind_text = str(safe.media_kind or safe.detected or "Media file")
+    detected_text = str(safe.detected or safe.ext or "Unknown format")
+    kind = html.escape(kind_text)
+    detected = html.escape(detected_text)
+    show_kind = kind_text.strip().lower() != detected_text.strip().lower()
     size_text = html.escape(human(safe.size))
-    runtime_text = html.escape(str(safe.container.get("runtime") or "Not available"))
+    runtime_value = str(safe.container.get("runtime") or "").strip()
+    runtime_footer = (
+        f'<span>Runtime: {html.escape(runtime_value)}</span>'
+        if runtime_value and runtime_value.lower() not in {"not available", "n/a", "—"}
+        else ""
+    )
     video_count = len(safe.video.get("tracks", []))
     audio_count = len(safe.audio.get("tracks", []))
     subtitle_count = len(safe.subtitles)
 
-    # format_report/format_section use an allowlisted, internally generated
-    # Telegram HTML format. Dynamic metadata values are escaped by file_inspector._safe.
-    # Do not html.escape the complete strings or tags such as <b> become visible text.
-    summary = format_report(safe).replace("\n", "<br>")
+    # Keep only useful, non-zero summary counts. Media type/format and file name
+    # already appear in the hero, so the fallback does not repeat them below.
+    stat_items = [("File size", size_text)]
+    if video_count:
+        stat_items.append(("Video tracks", str(video_count)))
+    if audio_count:
+        stat_items.append(("Audio tracks", str(audio_count)))
+    if subtitle_count:
+        stat_items.append(("Subtitles", str(subtitle_count)))
+    stat_cards = "".join(
+        f'<div class="stat"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong></div>'
+        for label, value in stat_items
+    )
 
     sections = []
     if safe.media_info:
@@ -5206,12 +5223,16 @@ def minimal_web_report_page(
             or section == "video" and bool(safe.video.get("tracks"))
             or section == "audio" and bool(safe.audio.get("tracks") or safe.audio.get("sample_codecs"))
             or section == "subs" and bool(safe.subtitles)
-            or section == "technical"
+            or section == "technical" and bool(
+                safe.container.get("average_bitrate") or safe.container.get("title")
+            )
         )
         if not has_content:
             continue
         try:
             content = web_section(safe, section)
+            if not content.strip():
+                continue
             sections.append(
                 f'<section class="panel"><h2>{html.escape(title)}</h2>'
                 f'<div class="section-content">{content}</div></section>'
@@ -5219,18 +5240,77 @@ def minimal_web_report_page(
         except Exception:
             log.debug("Fallback report section render failed | section=%s", section, exc_info=True)
 
+    # Keep ZIP fallback reports useful as well if the advanced renderer errors.
+    is_zip = (
+        str(safe.ext or "").lower() == ".zip"
+        or "zip archive" in str(safe.detected or "").lower()
+    )
+    if is_zip:
+        archive_entries = [
+            item for item in (safe.archive_entries or [])
+            if isinstance(item, dict)
+        ][:MAX_REPORT_ARCHIVE_ENTRIES]
+        try:
+            archive_count = max(
+                len(archive_entries),
+                int((safe.media_info or {}).get("archive_entry_count") or len(archive_entries)),
+            )
+        except (TypeError, ValueError):
+            archive_count = len(archive_entries)
+
+        def archive_names_html(value: Any) -> str:
+            names = value if isinstance(value, list) else [value] if value else []
+            return "<br>".join(
+                html.escape(str(name)) for name in names if name not in (None, "")
+            ) or "—"
+
+        archive_rows = []
+        for entry in archive_entries:
+            try:
+                entry_size = int(entry.get("size") or 0)
+            except (TypeError, ValueError):
+                entry_size = 0
+            try:
+                compressed_size = int(entry.get("compressed_size") or 0)
+            except (TypeError, ValueError):
+                compressed_size = 0
+            archive_rows.append(
+                "<tr>"
+                f'<td class="archive-name">{html.escape(str(entry.get("name") or "Unnamed entry"))}</td>'
+                f'<td>{html.escape("Folder" if entry.get("is_dir") else str(entry.get("file_type") or "File"))}</td>'
+                f'<td>{html.escape(human(entry_size))}</td>'
+                f'<td>{html.escape(human(compressed_size))}</td>'
+                f'<td>{archive_names_html(entry.get("audio_names"))}</td>'
+                f'<td>{archive_names_html(entry.get("subtitle_names"))}</td>'
+                f'<td>{html.escape(str(entry.get("modified_at") or "—"))}</td>'
+                "</tr>"
+            )
+        if not archive_rows:
+            archive_rows.append(
+                '<tr><td colspan="7">ZIP directory details are not readable within the current scan limits.</td></tr>'
+            )
+        archive_note = (
+            f"Showing {len(archive_entries)} of {archive_count} entries. "
+            if archive_count > len(archive_entries)
+            else f"{len(archive_entries)} entries. "
+        ) + "Track names are shown when the archive metadata exposes them."
+        archive_html = (
+            '<section class="panel" id="archive-contents">'
+            f'<h2>📦 ZIP contents <span class="pill">{archive_count} entries</span></h2>'
+            f'<p class="archive-note">{html.escape(archive_note)}</p>'
+            '<div class="archive-table-wrap"><table class="archive-table">'
+            '<thead><tr><th>Name / path</th><th>Type</th><th>Size</th><th>Compressed</th>'
+            '<th>Audio track names</th><th>Subtitle names</th><th>Modified</th></tr></thead>'
+            f'<tbody>{"".join(archive_rows)}</tbody></table></div></section>'
+        )
+        sections.append(archive_html)
+
     expiry_text = (
         expires_at.strftime("%d %b %Y • %H:%M UTC")
         if isinstance(expires_at, datetime)
         else "Link expiry unavailable"
     )
     report_id = html.escape((report_token or "local")[:16])
-    stat_cards = "".join([
-        f'<div class="stat"><span>File size</span><strong>{size_text}</strong></div>',
-        f'<div class="stat"><span>Video tracks</span><strong>{video_count}</strong></div>',
-        f'<div class="stat"><span>Audio tracks</span><strong>{audio_count}</strong></div>',
-        f'<div class="stat"><span>Subtitles</span><strong>{subtitle_count}</strong></div>',
-    ])
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -5255,10 +5335,15 @@ h1{{font-size:clamp(27px,5vw,42px);line-height:1.08;letter-spacing:-.04em;margin
 .stat strong{{display:block;font-size:15px;overflow-wrap:anywhere}}
 .panel{{margin-top:13px;padding:19px;border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 15px 40px rgba(0,0,0,.14);overflow-wrap:anywhere}}
 h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
-.summary{{color:#d7dcf2;line-height:1.9}}
-.summary b,.section-content b{{color:#fff;font-weight:800}}
 .section-content{{color:#d7dcf2;line-height:1.85}}
-.section-content br+br,.summary br+br{{content:"";display:block;margin-top:5px}}
+.section-content br+br{{content:"";display:block;margin-top:5px}}
+.archive-note{{color:var(--muted);font-size:12px;margin:10px 0}}
+.archive-table-wrap{{width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:12px}}
+.archive-table{{width:100%;min-width:820px;border-collapse:collapse;font-size:12px}}
+.archive-table th,.archive-table td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}}
+.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;white-space:nowrap}}
+.archive-table td{{color:var(--text)}}
+.archive-table code{{overflow-wrap:anywhere}}
 .footer{{margin:17px 3px 0;color:#818aa9;font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}}
 @media(max-width:620px){{body{{padding:12px 10px 28px}}.hero,.panel{{padding:16px;border-radius:17px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.stat strong{{font-size:14px}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;animation:none!important;transition:none!important}}}}
@@ -5269,12 +5354,11 @@ h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
   <div class="brand">⛩ AniToon • Media report</div>
   <h1>File information</h1>
   <div class="file"><strong>{filename}</strong></div>
-  <div class="pills"><span class="pill">{kind}</span><span class="pill">{detected}</span><span class="pill">HTML report</span></div>
+  <div class="pills">{f'<span class="pill">{kind}</span>' if show_kind else ''}<span class="pill">{detected}</span><span class="pill">HTML report</span></div>
   <div class="stats">{stat_cards}</div>
 </header>
-<section class="panel"><h2>🔎 Overview</h2><div class="summary">{summary}</div></section>
 {''.join(sections)}
-<footer class="footer"><span>Report expires: {html.escape(expiry_text)}</span><span>Report ID: {report_id}</span><span>Runtime: {runtime_text}</span></footer>
+<footer class="footer"><span>Report expires: {html.escape(expiry_text)}</span><span>Report ID: {report_id}</span>{runtime_footer}</footer>
 </main></body></html>"""
     return document.encode("utf-8")
 
