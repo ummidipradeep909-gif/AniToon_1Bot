@@ -25,6 +25,7 @@ MAX_INITIAL_PROBE = 1 * 1024 * 1024
 MAX_DEEP_PROBE = MAX_SAFE_SOURCE_BYTES
 DEFAULT_CHUNK = 512 * 1024
 MAX_TRACKS_PER_KIND = 100
+MAX_ARCHIVE_ENTRIES = 100
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -88,6 +89,7 @@ class Report:
     probe_ranges:list[str]=field(default_factory=list)
     previews:list[dict[str,Any]]=field(default_factory=list)
     media_info:dict[str,Any]=field(default_factory=dict)
+    archive_entries:list[dict[str,Any]]=field(default_factory=list)
 
 def human(n:int|None)->str:
     if n is None:return "Not available"
@@ -1175,6 +1177,41 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                 put("archive_compressed_bytes", sum(item.compress_size for item in members))
                 put("archive_directory_preview", " | ".join(item.filename for item in members[:8]))
                 put("archive_contains_encrypted_members", any(item.flag_bits & 0x1 for item in members))
+                # Only actual ZIP archives get a dedicated member listing; office
+                # formats are ZIP containers internally, but keep their own report.
+                # Never extract archive member contents.
+                if ext == ".zip" or "zip archive" in report.detected.lower():
+                    compression_names = {
+                        zipfile.ZIP_STORED: "Stored",
+                        zipfile.ZIP_DEFLATED: "Deflate",
+                        getattr(zipfile, "ZIP_BZIP2", 12): "BZip2",
+                        getattr(zipfile, "ZIP_LZMA", 14): "LZMA",
+                    }
+                    entries = []
+                    for item in members[:MAX_ARCHIVE_ENTRIES]:
+                        try:
+                            modified_at = datetime(*item.date_time).strftime("%Y-%m-%d %H:%M")
+                        except (TypeError, ValueError, OverflowError):
+                            modified_at = "Not available"
+                        guessed_type = mimetypes.guess_type(item.filename)[0]
+                        suffix = os.path.splitext(item.filename)[1].lstrip(".").upper()
+                        entries.append({
+                            "name": str(item.filename)[:512],
+                            "file_type": (
+                                "Folder" if item.is_dir()
+                                else guessed_type or (f"{suffix} file" if suffix else "File")
+                            ),
+                            "size": int(item.file_size),
+                            "compressed_size": int(item.compress_size),
+                            "is_dir": bool(item.is_dir()),
+                            "compression": compression_names.get(
+                                item.compress_type, f"Method {int(item.compress_type)}"
+                            ),
+                            "modified_at": modified_at,
+                            "encrypted": bool(item.flag_bits & 0x1),
+                            "crc32": f"{int(item.CRC) & 0xFFFFFFFF:08X}",
+                        })
+                    report.archive_entries = entries
                 core = next((item for item in members if item.filename.lower() in {"docprops/core.xml", "meta.xml"}), None)
                 if core is not None and core.file_size <= 65536:
                     with archive.open(core) as handle:
