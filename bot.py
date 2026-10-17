@@ -78,6 +78,7 @@ REPORT_LINK_TTL_SECONDS = 10 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 MAX_REPORT_TRACKS = 100
+MAX_REPORT_ARCHIVE_ENTRIES = 100
 PUBLIC_WEB_URL = (
     os.getenv("PUBLIC_WEB_URL", "https://anitoons-1bot-oa44.onrender.com")
     .strip()
@@ -388,7 +389,7 @@ CLONE_HOME_TEXT = (
 CLONE_HELP_TEXT = (
     "📚 <b>AniToon Clone — Command Guide</b>\n\n"
     "📤 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the bot menu\n"
     "/help — Show this command guide\n"
@@ -417,7 +418,7 @@ HELP_TEXT = (
 
 SCAN_TEXT = (
     "🔎 <b>Scan Files</b>\n\n"
-    "1️⃣ Send a photo, video, GIF, sticker, PDF, audio file, document or supported post media.\n"
+    "1️⃣ Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file, document or supported post media.\n"
     "2️⃣ Tap <b>🔎 Scan File Info</b> under the file message.\n"
     "3️⃣ Tap <b>🌐 Open File Info</b> to view the complete web report.\n\n"
     "📄 The report shows the metadata available for that file."
@@ -430,7 +431,7 @@ ABOUT_TEXT = (
     "🌐 <b>AniToon Web</b>\n"
     "The web page presents the complete file information in a clean, easy-to-read report.\n\n"
     "📦 <b>What you get</b>\n"
-    "Images • Video • Audio • Stickers • GIFs • PDFs • Subtitles • Post context • Technical metadata\n\n"
+    "Images • Video • Audio • Stickers • GIFs • PDFs • ZIP contents • Subtitles • Post context • Technical metadata\n\n"
     "⚡ <b>Simple workflow</b>\n"
     "Send file → tap Scan File Info → open the web report.\n\n"
     "For help or questions, use the Help & Support button below."
@@ -447,7 +448,7 @@ def _coerce_report(value: Any) -> Report:
         allowed = {
             "filename", "size", "mime", "ext", "detected", "media_kind",
             "sampled", "sample_hash", "notes", "video", "audio",
-            "subtitles", "container", "probe_ranges", "previews", "media_info",
+            "subtitles", "container", "probe_ranges", "previews", "media_info", "archive_entries",
         }
         report = Report(**{key: value.get(key) for key in allowed if key in value})
     else:
@@ -485,6 +486,13 @@ def _coerce_report(value: Any) -> Report:
         item for item in previews
         if isinstance(item, dict) and str(item.get("data") or "").strip()
     ][:1]
+
+    archive_entries = getattr(report, "archive_entries", [])
+    if not isinstance(archive_entries, list):
+        archive_entries = []
+    report.archive_entries = [
+        item for item in archive_entries if isinstance(item, dict)
+    ][:MAX_REPORT_ARCHIVE_ENTRIES]
 
     if isinstance(report.notes, str):
         report.notes = [report.notes]
@@ -4553,6 +4561,112 @@ def web_page(
         media_detail_nav.append(f'<a href="#{section_id}">{esc(group_name)}</a>')
     media_details_sections = "".join(media_detail_sections_list)
 
+    # ZIPs get a dedicated directory listing; contents are never extracted.
+    archive_entries = [
+        item for item in (getattr(report, "archive_entries", []) or [])
+        if isinstance(item, dict)
+    ][:MAX_REPORT_ARCHIVE_ENTRIES]
+    is_zip_archive = (
+        str(report.ext or "").lower() == ".zip"
+        or "zip archive" in str(report.detected or "").lower()
+    )
+    archive_contents_section = ""
+    if is_zip_archive:
+        try:
+            archive_entry_count = max(
+                len(archive_entries),
+                int(media_info.get("archive_entry_count") or len(archive_entries)),
+            )
+        except (TypeError, ValueError):
+            archive_entry_count = len(archive_entries)
+
+        try:
+            uncompressed_bytes = int(media_info.get("archive_uncompressed_bytes") or 0)
+        except (TypeError, ValueError):
+            uncompressed_bytes = 0
+        try:
+            compressed_bytes = int(media_info.get("archive_compressed_bytes") or 0)
+        except (TypeError, ValueError):
+            compressed_bytes = 0
+
+        archive_stats = [
+            ("Total entries", str(archive_entry_count)),
+            ("Uncompressed size", human_size(uncompressed_bytes)),
+            ("Compressed size", human_size(compressed_bytes)),
+            (
+                "Overall packed ratio",
+                f"{(compressed_bytes / uncompressed_bytes) * 100:.1f}% of original"
+                if uncompressed_bytes > 0 else "—",
+            ),
+            ("Encrypted members", str(media_info.get("archive_contains_encrypted_members") or "Unknown")),
+        ]
+        archive_stat_cards = "".join(
+            f'<div class="tech"><small>{esc(label)}</small><b>{esc(value)}</b></div>'
+            for label, value in archive_stats
+        )
+
+        archive_rows: list[str] = []
+        for entry in archive_entries:
+            try:
+                entry_size = int(entry.get("size") or 0)
+            except (TypeError, ValueError):
+                entry_size = 0
+            try:
+                entry_compressed = int(entry.get("compressed_size") or 0)
+            except (TypeError, ValueError):
+                entry_compressed = 0
+            ratio = (
+                f"{(entry_compressed / entry_size) * 100:.1f}%"
+                if entry_size > 0 else "—"
+            )
+            is_directory = bool(entry.get("is_dir"))
+            file_type = "Folder" if is_directory else str(entry.get("file_type") or "File")
+            encrypted_value = entry.get("encrypted")
+            encrypted_text = (
+                "Yes" if encrypted_value is True
+                else "No" if encrypted_value is False
+                else str(encrypted_value or "Unknown")
+            )
+            archive_rows.append(
+                '<tr>'
+                f'<td class="archive-name"><code>{esc(entry.get("name") or "Unnamed entry")}</code></td>'
+                f'<td>{esc(file_type)}</td>'
+                f'<td>{esc(human_size(entry_size))}</td>'
+                f'<td>{esc(human_size(entry_compressed))}</td>'
+                f'<td>{esc(ratio)}</td>'
+                f'<td>{esc(entry.get("modified_at") or "Not available")}</td>'
+                f'<td>{esc(entry.get("compression") or "Unknown")}</td>'
+                f'<td>{esc(encrypted_text)}</td>'
+                f'<td><code>{esc(entry.get("crc32") or "—")}</code></td>'
+                '</tr>'
+            )
+        if not archive_rows:
+            archive_rows.append(
+                '<tr><td colspan="9">No readable ZIP directory was found in the bounded scan. '
+                'The archive may be damaged or too large for the current metadata scan.</td></tr>'
+            )
+        if archive_entry_count > len(archive_entries):
+            archive_note = (
+                f"Showing the first {len(archive_entries)} of {archive_entry_count} entries "
+                f"to keep the report lightweight. "
+            )
+        else:
+            archive_note = f"Showing {len(archive_entries)} entries. "
+        archive_note += "Metadata only: AniToon does not extract archive contents."
+        archive_contents_section = (
+            '<details id="archive-contents" class="section" open>'
+            '<summary class="section-head"><h2>📦 ZIP contents</h2>'
+            f'<span class="pill">{archive_entry_count} entries <span class="chev">⌄</span></span></summary>'
+            '<div class="section-body">'
+            f'<div class="tech-grid">{archive_stat_cards}</div>'
+            '<p class="archive-note">' + esc(archive_note) + '</p>'
+            '<div class="archive-table-wrap"><table class="archive-table">'
+            '<thead><tr><th>Name / path</th><th>Type</th><th>Size</th><th>Compressed</th>'
+            '<th>Packed ratio</th><th>Modified</th><th>Compression</th><th>Encrypted</th><th>CRC-32</th></tr></thead>'
+            f'<tbody>{"".join(archive_rows)}</tbody></table></div>'
+            '</div></details>'
+        )
+
     def track_cards(items: list[dict[str, Any]], kind: str) -> str:
         if not items:
             return (
@@ -4756,6 +4870,8 @@ def web_page(
     subtitle_section = stream_section(subtitles, "Subtitle", "subs-section", "subtitle", "Filter subtitle tracks…")
 
     nav_links = ['<a href="#overview">Overview</a>'] + media_detail_nav
+    if archive_contents_section:
+        nav_links.append('<a href="#archive-contents">ZIP contents</a>')
     if video_section:
         nav_links.append('<a href="#video-section">Video</a>')
     if audio_section:
@@ -4975,6 +5091,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   {language_ribbon}
 
   {media_details_sections}
+  {archive_contents_section}
 
   {quick_nav}
   {video_section}
@@ -5132,6 +5249,14 @@ h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
 .section-content{{color:#d7dcf2;line-height:1.85}}
 .section-content br+br,.summary br+br{{content:"";display:block;margin-top:5px}}
 .footer{{margin:17px 3px 0;color:#818aa9;font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}}
+.archive-note{{color:var(--muted);font-size:12px;margin:12px 0}}
+.archive-table-wrap{{width:100%;overflow-x:auto;margin-top:12px;border:1px solid var(--line);border-radius:12px}}
+.archive-table{{width:100%;min-width:980px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
+.archive-table th,.archive-table td{{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
+.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.035);white-space:nowrap}}
+.archive-table td{{color:var(--text);overflow-wrap:anywhere}}
+.archive-table .archive-name{{max-width:340px}}
+.archive-table code{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;color:var(--cyan)}}
 @media(max-width:620px){{body{{padding:12px 10px 28px}}.hero,.panel{{padding:16px;border-radius:17px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.stat strong{{font-size:14px}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;animation:none!important;transition:none!important}}}}
 </style>
