@@ -163,7 +163,7 @@ def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
     old_processing = set(bot.processing_scan_tokens)
     old_count = bot.queued_processes
     calls = []
-    status_one, status_two, status_three = object(), object(), object()
+    status_one, status_two, status_three, status_four, status_five = (object() for _ in range(5))
 
     async def fake_edit_status(message, text, buttons=None):
         calls.append((message, text, buttons))
@@ -172,35 +172,46 @@ def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
     monkeypatch.setattr(bot, "cancel_button", lambda token: f"cancel:{token}")
 
     try:
-        bot.scan_queue_order[:] = ["token-1", "token-2", "token-3"]
+        bot.scan_queue_order[:] = ["token-1", "token-2", "token-3", "token-4", "token-5"]
         bot.queued_scan_statuses.clear()
         bot.queued_scan_statuses.update({
             "token-1": (status_one, "first.mkv"),
             "token-2": (status_two, "second.pdf"),
             "token-3": (status_three, "third.zip"),
+            "token-4": (status_four, "fourth.mp4"),
+            "token-5": (status_five, "fifth.pdf"),
         })
-        # Active scans are not assigned queue numbers. The waiting scans start
-        # at QUEUE 1 and retain consecutive positions while the active scan runs.
+        # The first file keeps processing; all later scans wait as QUEUE 1, 2, 3, 4.
         bot.processing_scan_tokens.clear()
         bot.processing_scan_tokens.add("token-1")
-        bot.queued_processes = 2
+        bot.queued_processes = 4
 
         async def exercise_positions():
             await bot._refresh_queue_positions()
-            assert len(calls) == 2
-            assert calls[0][0] is status_two and "QUEUE 1" in calls[0][1]
-            assert calls[1][0] is status_three and "QUEUE 2" in calls[1][1]
-            assert "0%" not in calls[0][1] and "0%" not in calls[1][1]
+            assert len(calls) == 4
+            expected = [
+                (status_two, "QUEUE 1", "second.pdf"),
+                (status_three, "QUEUE 2", "third.zip"),
+                (status_four, "QUEUE 3", "fourth.mp4"),
+                (status_five, "QUEUE 4", "fifth.pdf"),
+            ]
+            for (message, queue_label, filename), call in zip(expected, calls):
+                assert call[0] is message
+                assert queue_label in call[1]
+                assert filename in call[1]
+                assert "0%" not in call[1]
 
-            # Completing the active scan does not count it as a waiting queue item.
+            # When the active scan ends, waiting scans remain numbered from QUEUE 1.
             await bot._remove_queued_scan("token-1")
 
         asyncio.run(exercise_positions())
 
-        shifted = calls[-2:]
-        assert shifted[0][0] is status_two and "QUEUE 1" in shifted[0][1]
-        assert shifted[1][0] is status_three and "QUEUE 2" in shifted[1][1]
-        assert bot.queued_processes == 2
+        shifted = calls[-4:]
+        assert ["QUEUE 1", "QUEUE 2", "QUEUE 3", "QUEUE 4"] == [
+            next(label for label in ("QUEUE 1", "QUEUE 2", "QUEUE 3", "QUEUE 4") if label in call[1])
+            for call in shifted
+        ]
+        assert bot.queued_processes == 4
     finally:
         bot.scan_queue_order[:] = old_order
         bot.queued_scan_statuses.clear()
