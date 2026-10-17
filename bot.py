@@ -4607,17 +4607,22 @@ def web_page(
         except (TypeError, ValueError):
             compressed_bytes = 0
 
-        archive_stats = [
-            ("Total entries", str(archive_entry_count)),
-            ("Uncompressed size", human_size(uncompressed_bytes)),
-            ("Compressed size", human_size(compressed_bytes)),
-            (
-                "Overall packed ratio",
-                f"{(compressed_bytes / uncompressed_bytes) * 100:.1f}% of original"
-                if uncompressed_bytes > 0 else "—",
-            ),
-            ("Encrypted members", str(media_info.get("archive_contains_encrypted_members") or "Unknown")),
-        ]
+        archive_stats = [("Entries", str(archive_entry_count))]
+        if "archive_uncompressed_bytes" in media_info:
+            archive_stats.append(("Original size", human_size(uncompressed_bytes)))
+        if "archive_compressed_bytes" in media_info:
+            archive_stats.append(("Compressed size", human_size(compressed_bytes)))
+        if uncompressed_bytes > 0 and compressed_bytes < uncompressed_bytes:
+            archive_stats.append((
+                "Space saved",
+                f"{(1 - compressed_bytes / uncompressed_bytes) * 100:.1f}%",
+            ))
+        encrypted_flag = str(
+            media_info.get("archive_contains_encrypted_members") or ""
+        ).strip().lower()
+        if encrypted_flag in {"yes", "true", "1"}:
+            archive_stats.append(("Password-protected entries", "Yes"))
+
         archive_stat_cards = "".join(
             f'<div class="tech"><small>{esc(label)}</small><b>{esc(value)}</b></div>'
             for label, value in archive_stats
@@ -4633,44 +4638,39 @@ def web_page(
                 entry_compressed = int(entry.get("compressed_size") or 0)
             except (TypeError, ValueError):
                 entry_compressed = 0
-            ratio = (
-                f"{(entry_compressed / entry_size) * 100:.1f}%"
-                if entry_size > 0 else "—"
-            )
             is_directory = bool(entry.get("is_dir"))
             file_type = "Folder" if is_directory else str(entry.get("file_type") or "File")
-            encrypted_value = entry.get("encrypted")
-            encrypted_text = (
-                "Yes" if encrypted_value is True
-                else "No" if encrypted_value is False
-                else str(encrypted_value or "Unknown")
-            )
+            audio_names = entry.get("audio_names") or []
+            subtitle_names = entry.get("subtitle_names") or []
+            if isinstance(audio_names, str):
+                audio_names = [audio_names]
+            if isinstance(subtitle_names, str):
+                subtitle_names = [subtitle_names]
+            audio_html = "<br>".join(esc(name) for name in audio_names if name) or "—"
+            subtitle_html = "<br>".join(esc(name) for name in subtitle_names if name) or "—"
             archive_rows.append(
                 '<tr>'
                 f'<td class="archive-name"><code>{esc(entry.get("name") or "Unnamed entry")}</code></td>'
                 f'<td>{esc(file_type)}</td>'
                 f'<td>{esc(human_size(entry_size))}</td>'
                 f'<td>{esc(human_size(entry_compressed))}</td>'
-                f'<td>{esc(ratio)}</td>'
-                f'<td>{esc(entry.get("modified_at") or "Not available")}</td>'
-                f'<td>{esc(entry.get("compression") or "Unknown")}</td>'
-                f'<td>{esc(encrypted_text)}</td>'
-                f'<td><code>{esc(entry.get("crc32") or "—")}</code></td>'
+                f'<td class="archive-track-names">{audio_html}</td>'
+                f'<td class="archive-track-names">{subtitle_html}</td>'
+                f'<td>{esc(entry.get("modified_at") or "—")}</td>'
                 '</tr>'
             )
         if not archive_rows:
             archive_rows.append(
-                '<tr><td colspan="9">No readable ZIP directory was found in the bounded scan. '
+                '<tr><td colspan="7">No readable ZIP directory was found in the bounded scan. '
                 'The archive may be damaged or too large for the current metadata scan.</td></tr>'
             )
         if archive_entry_count > len(archive_entries):
             archive_note = (
-                f"Showing the first {len(archive_entries)} of {archive_entry_count} entries "
-                f"to keep the report lightweight. "
+                f"Showing the first {len(archive_entries)} of {archive_entry_count} entries. "
             )
         else:
             archive_note = f"Showing {len(archive_entries)} entries. "
-        archive_note += "Metadata only: AniToon does not extract archive contents."
+        archive_note += "Embedded audio/subtitle names are shown when the archive format and readable file prefix expose them."
         archive_contents_section = (
             '<details id="archive-contents" class="section" open>'
             '<summary class="section-head"><h2>📦 ZIP contents</h2>'
@@ -4680,7 +4680,7 @@ def web_page(
             '<p class="archive-note">' + esc(archive_note) + '</p>'
             '<div class="archive-table-wrap"><table class="archive-table">'
             '<thead><tr><th>Name / path</th><th>Type</th><th>Size</th><th>Compressed</th>'
-            '<th>Packed ratio</th><th>Modified</th><th>Compression</th><th>Encrypted</th><th>CRC-32</th></tr></thead>'
+            '<th>Audio track names</th><th>Subtitle names</th><th>Modified</th></tr></thead>'
             f'<tbody>{"".join(archive_rows)}</tbody></table></div>'
             '</div></details>'
         )
@@ -5049,7 +5049,8 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 .archive-note{{color:var(--muted);font-size:12px;margin:12px 0}}
 .archive-table-wrap{{width:100%;overflow-x:auto;margin-top:12px;border:1px solid var(--line);border-radius:12px}}
-.archive-table{{width:100%;min-width:980px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
+.archive-table{{width:100%;min-width:840px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
+.archive-track-names{{min-width:180px;max-width:280px;white-space:normal;overflow-wrap:anywhere}}
 .archive-table th,.archive-table td{{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
 .archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.035);white-space:nowrap}}
 .archive-table td{{color:var(--text);overflow-wrap:anywhere}}
