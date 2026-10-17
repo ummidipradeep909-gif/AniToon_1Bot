@@ -71,7 +71,7 @@ FILE_CHECKER_PRIVATE_ONLY = (
     not in {"0", "false", "no", "off"}
 )
 # Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "1")), 3))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
 REPORT_LINK_TTL_SECONDS = 10 * 60
@@ -622,10 +622,10 @@ def home_buttons(
     user_id: int | None = None,
     show_privacy: bool = True,
 ):
-    scan = Button.inline("🔎 Scan Files", b"home:scan")
-    stats = Button.inline("📊 My Stats", b"home:stats")
-    help_btn = Button.inline("📖 Help", b"home:help")
-    about = Button.inline("ℹ️ About", b"home:about")
+    scan = Button.inline("🔎  Scan Files", b"home:scan")
+    stats = Button.inline("📊  My Stats", b"home:stats")
+    help_btn = Button.inline("📚  Help Center", b"home:help")
+    about = Button.inline("✨  About AniToon", b"home:about")
     add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
 
     if include_clone:
@@ -638,7 +638,7 @@ def home_buttons(
         ]
         if _owner_allowed(user_id):
             buttons[-1] = [
-                Button.inline("👑 Owner Dashboard", b"owner:dashboard"),
+                Button.inline("🛠️ Admin Studio", b"owner:dashboard"),
             ]
             buttons.append([add_group])
     else:
@@ -1084,6 +1084,18 @@ def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
 
 
+def adaptive_scan_limit() -> int:
+    """Scale concurrent scans to observed RAM use, within the configured hard cap."""
+    ram_pct = runtime_resource_stats()["ram_pct"]
+    if ram_pct >= RAM_PAUSE_PCT:
+        return 0
+    if ram_pct >= 60.0:
+        return 1
+    if ram_pct >= 45.0:
+        return min(2, MAX_CONCURRENT_CHECKS)
+    return MAX_CONCURRENT_CHECKS
+
+
 def resource_guard_reason() -> str | None:
     stats = runtime_resource_stats()
     if stats["ram_pct"] >= RAM_PAUSE_PCT:
@@ -1113,11 +1125,13 @@ async def render_owner_resources(event, user_id: int) -> None:
         return
 
     stats = runtime_resource_stats()
+    scan_limit = adaptive_scan_limit()
     ram_state = (
         "🟢 Normal"
-        if stats["ram_pct"] < 70
-        else ("🟡 Watch" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 High")
+        if stats["ram_pct"] < 45
+        else ("🟡 Watch" if stats["ram_pct"] < 60 else ("🟠 High" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 Critical"))
     )
+    worker_state = "PAUSED (RAM guard)" if scan_limit == 0 else f"{scan_limit} worker(s) allowed"
     egress_state = (
         "🟢 Low"
         if stats["web_egress_pct"] < 70
@@ -1133,9 +1147,11 @@ async def render_owner_resources(event, user_id: int) -> None:
         f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
         f"🧹 Bot temp <b>{stats['tmp_mb']:.1f}/{stats['tmp_limit_mb']:.0f} MB</b> • {stats['tmp_pct']:.1f}%\n"
         f"🔎 Load <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b> active • {queued_processes} queued\n"
+        f"🤖 Adaptive workers: <b>{worker_state}</b>\n"
         f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
-        "ℹ️ RAM ↑ = workers/media parsing. Web ↑ = browser traffic/previews. "
-        "Uptime ↑ = process running. Bot temp is auto-cleaned every 5 min; old files expire after 10 min.\n"
+        "ℹ️ The RAM controller allows up to 3 workers under low memory use, scales down as RAM rises, "
+        "and pauses new scans at the safety threshold. The queue keeps waiting jobs for all users. "
+        "Bot temp is auto-cleaned every 5 min; report links expire after 10 min.\n"
         "⚠️ Render host/root disk usage is not app-owned and cannot be safely cleaned by the bot."
     )
     await event.edit(
@@ -1184,7 +1200,8 @@ async def render_owner_dashboard(
 
     if summary.get("available"):
         text = (
-            "👑 <b>AniToon Owner Control Center</b>\n\n"
+            "🛠️ <b>ANITOON • ADMIN STUDIO</b>\n"
+            "<i>Operations • users • performance • insights</i>\n\n"
             f"📅 <b>{date_label}</b>\n"
             f"👥 Active users: <b>{int(summary.get('users', 0) or 0)}</b>\n"
             f"📁 Scans: <b>{int(summary.get('total_scans', 0) or 0)}</b> • ✅ {int(summary.get('completed', 0) or 0)}\n"
@@ -1198,7 +1215,8 @@ async def render_owner_dashboard(
         )
     else:
         text = (
-            "👑 <b>AniToon Owner Control Center</b>\n\n"
+            "🛠️ <b>ANITOON • ADMIN STUDIO</b>\n"
+            "<i>Operations • users • performance • insights</i>\n\n"
             f"📅 <b>{date_label}</b>\n"
             "⚠️ MongoDB statistics are temporarily unavailable.\n\n"
             f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
@@ -1234,17 +1252,17 @@ async def render_owner_dashboard(
     buttons = [
         day_buttons,
         [
-            Button.inline("👥 Users", b"owner:users:0"),
-            Button.inline("🤖 Clones", b"owner:clones"),
+            Button.inline("👥 User Management", b"owner:users:0"),
+            Button.inline("🤖 Clone Fleet", b"owner:clones"),
         ],
         [
-            Button.inline("🖥 Resources", b"owner:resources"),
-            Button.inline("💚 Bot Status", b"home:status"),
+            Button.inline("📈 Performance & RAM", b"owner:resources"),
+            Button.inline("🟢 Live Status", b"home:status"),
         ],
         [
-            Button.inline("📢 Broadcast", b"owner:broadcast"),
+            Button.inline("📣 Announcements", b"owner:broadcast"),
             Button.inline(
-                "🔄 Today",
+                "📅 Today",
                 f"owner:dashboard:day:{today.isoformat()}".encode("ascii"),
             ),
         ],
@@ -1824,9 +1842,13 @@ async def acquire_scan_slot(
                     ),
                     None,
                 )
+                # Resource-aware worker limit: more parallelism when memory is
+                # healthy, progressively fewer workers as RAM pressure increases.
+                worker_limit = adaptive_scan_limit()
                 can_start = (
                     not ram_high
-                    and active_processes < MAX_CONCURRENT_CHECKS
+                    and worker_limit > 0
+                    and active_processes < worker_limit
                     and first_waiting == scan_token
                 )
 
