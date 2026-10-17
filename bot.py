@@ -4518,19 +4518,36 @@ def web_page(
 
     media_groups: dict[str, list[tuple[str, Any]]] = {}
     omit_from_report = {
-        # Already shown in the hero or overview.
-        "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
-        "archive_directory_preview",  # Replaced by the detailed ZIP contents table.
-        # Telegram wrapper/post details are not file metadata and clutter the report.
-        # Keep useful Telegram source/post context visible in the web report.
-        # Caption, author, view/forward/reply counts and forwarding details are
-        # valuable provenance rather than redundant file metadata.
+        # Already visible in the hero, summary cards, or stream cards.
+        "category", "detected_format", "file_extension", "declared_mime_type",
+        "file_size_bytes", "archive_directory_preview", "image_format",
+        "image_pixel_dimensions", "video_width", "video_height", "dimensions",
+        "video_duration_seconds", "audio_duration_seconds", "caption_characters",
+        "has_caption", "is_document", "telegram_media_type", "telegram_message_id",
+        "telegram_filename_attribute", "pdf_creator", "pdf_producer", "pdf_fonts",
+        "pdf_linearized", "image_color_mode", "image_progressive", "webpage_type",
+        # Keep meaningful caption/author/views/forwards and forwarding provenance,
+        # but hide Telegram implementation IDs and simple presence flags.
+        "is_channel_post", "grouped_media_album", "contact_phone_present",
+        "venue_address_present", "location_coordinates_present",
+        "archive_directory_preview",
+    }
+    # Negative capability flags produce clutter (e.g. "Animated: No" on every
+    # still image). Positive flags remain visible; file/security essentials stay.
+    omit_false_flags = {
+        "image_is_animated", "image_has_transparency", "sticker_is_mask",
+        "sticker_is_animated", "video_is_round_note", "video_is_silent",
+        "audio_is_voice", "audio_is_music", "audio_has_waveform",
+        "pdf_tagged", "pdf_forms", "pdf_javascript", "pdf_embedded_files",
+        "poll_is_quiz", "poll_multiple_answers",
     }
     if is_pdf:
         # Page count already appears in the PDF overview card.
         omit_from_report.add("pdf_pages")
     for key, value in media_info.items():
         if key in omit_from_report or value in (None, "", []):
+            continue
+        if key in omit_false_flags and str(value).strip().lower() in {"no", "false", "0", "none"}:
             continue
         group_name = media_group_for(str(key), value)
         media_groups.setdefault(group_name, []).append(
@@ -4701,14 +4718,6 @@ def web_page(
                 ("Duration", track.get("duration")),
                 ("Bit depth", track.get("bit_depth")),
                 ("Bitrate", track.get("bitrate")),
-                ("Track", track.get("track")),
-                ("Default", track.get("default")),
-                ("Enabled", track.get("enabled")),
-                ("Forced", track.get("forced")),
-                ("Original", track.get("original")),
-                ("Commentary", track.get("commentary")),
-                ("Hearing impaired", track.get("hearing_impaired")),
-                ("Visual impaired", track.get("visual_impaired")),
                 ("Stereo mode", track.get("stereo_mode")),
                 ("Format", track.get("subtitle_format") or track.get("format")),
             ]
