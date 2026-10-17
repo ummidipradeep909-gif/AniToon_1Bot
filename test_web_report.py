@@ -286,7 +286,9 @@ def test_adaptive_scan_limit_scales_down_with_ram_pressure(monkeypatch):
 def test_owner_home_uses_admin_studio_label():
     source = open(bot.__file__, "r", encoding="utf-8").read()
     assert "🛠️ Admin Studio" in source
-    assert "ANITOON • ADMIN STUDIO" in source
+    assert "ANITOON OWNER DASHBOARD" in source
+    assert "Rolling 7-day overview" in source
+    assert "Clone messages" in source
     assert "Performance & RAM" in source
 
 
