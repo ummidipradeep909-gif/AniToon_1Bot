@@ -9,7 +9,7 @@ os.environ.setdefault("API_HASH", "0123456789abcdef0123456789abcdef")
 os.environ.setdefault("BOT_TOKEN", "123456:TEST_TOKEN")
 
 import bot
-from file_inspector import Report
+from file_inspector import Report, format_report, format_section
 
 
 def test_video_report_uses_advanced_renderer_and_preserves_track_details():
@@ -199,3 +199,33 @@ def test_queue_positions_shift_down_when_the_head_starts(monkeypatch):
         bot.queued_scan_statuses.update(old_statuses)
         bot.queued_processes = old_count
         bot.scan_queue_changed.clear()
+
+
+
+def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
+    report = Report(
+        filename="large-video.mkv",
+        size=20 * 1024 * 1024,
+        mime="video/x-matroska",
+        ext=".mkv",
+        detected="Matroska/WebM container",
+        media_kind="Video",
+        sampled=4 * 1024 * 1024,
+        probe_ranges=["initial metadata: +0 B (4.00 MiB)"],
+        notes=[
+            "Combined metadata sources: custom container parser + PyAV/FFmpeg.",
+            "Partial scan: source processing was bounded below 5 MB.",
+        ],
+    )
+
+    summary = format_report(report)
+    technical = format_section(report, "technical")
+
+    assert "Sampled:" not in summary
+    assert "targeted range" not in summary
+    assert "Combined metadata sources" not in summary
+    assert "Partial scan" in summary
+    assert "Sampled:" not in technical
+    assert "Ranges:" not in technical
+    assert "Probe map" not in technical
+    assert "initial metadata" not in technical
