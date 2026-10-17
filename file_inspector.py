@@ -2032,6 +2032,8 @@ def format_section(r:Report,section:str)->str:
                     continue
                 label = label_overrides.get(key, key.replace("_", " ").title())
                 lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
+            if len(lines) == 2:
+                return ""
         else:
             lines.append("No media-specific attributes were found.")
         return "\n".join(lines)
