@@ -1179,88 +1179,67 @@ async def render_owner_dashboard(
     edit: bool = True,
     selected_day: datetime | None = None,
 ) -> None:
+    """Show a concise owner overview with rolling seven-day analytics and live status."""
     if not _owner_allowed(user_id):
         await event.answer("Owner access only.", alert=True)
         return
 
-    today = datetime.now(timezone.utc).date()
-    selected_date = selected_day.date() if isinstance(selected_day, datetime) else today
-    oldest_date = today - timedelta(days=6)
-    if selected_date < oldest_date:
-        selected_date = oldest_date
-    if selected_date > today:
-        selected_date = today
-
-    selected_dt = datetime(
-        selected_date.year,
-        selected_date.month,
-        selected_date.day,
-        tzinfo=timezone.utc,
-    )
-    summary = await owner_daily_summary(selected_dt)
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    first_day = today - timedelta(days=6)
+    summary = await owner_7day_summary(7)
     mongo = "🟢 Connected" if mongodb_is_connected() else (
-        "🟠 Configured / reconnecting" if mongodb_is_configured() else "🔴 Not configured"
+        "🟠 Reconnecting" if mongodb_is_configured() else "🔴 Not configured"
     )
-    total = int(summary.get("completed", 0) or 0) + int(summary.get("failed", 0) or 0)
-    success = (int(summary.get("completed", 0) or 0) / total * 100) if total else 0.0
-    uptime = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600
-    date_label = selected_date.strftime("%d %b %Y")
+    active = int(summary.get("completed", 0) or 0)
+    failed = int(summary.get("failed", 0) or 0)
+    cancelled = int(summary.get("cancelled", 0) or 0)
+    total = int(summary.get("total_scans", 0) or 0)
+    success_rate = active / total * 100 if total else 0.0
+    period = f"{first_day.strftime('%d %b')} – {today.strftime('%d %b %Y')} UTC"
+    uptime = (now - started_at).total_seconds() / 3600
 
     if summary.get("available"):
         text = (
-            "🛠️ <b>ANITOON • ADMIN STUDIO</b>\n"
-            "<i>Operations • users • performance • insights</i>\n\n"
-            f"📅 <b>{date_label}</b>\n"
-            f"👥 Active users: <b>{int(summary.get('users', 0) or 0)}</b>\n"
-            f"📁 Scans: <b>{int(summary.get('total_scans', 0) or 0)}</b> • ✅ {int(summary.get('completed', 0) or 0)}\n"
-            f"❌ Failed: <b>{int(summary.get('failed', 0) or 0)}</b> • 🛑 {int(summary.get('cancelled', 0) or 0)}\n"
-            f"📈 Success rate: <b>{success:.1f}%</b>\n\n"
-            "⚡ <b>Live</b>\n"
-            f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
-            f"⏳ Queue: <b>{queued_processes}</b>\n"
-            f"🗄️ MongoDB: <b>{mongo}</b>\n"
-            f"⏱️ Uptime: <b>{uptime:.1f} h</b>"
+            "🛠️ <b>ANITOON OWNER DASHBOARD</b>\n"
+            f"<i>Rolling 7-day overview • {html.escape(period)}</i>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>USAGE (LAST 7 DAYS)</b>\n"
+            f"👥 Active users: <b>{int(summary.get('total_users', 0) or 0)}</b>\n"
+            f"📁 Total scans: <b>{total}</b>\n"
+            f"✅ Completed: <b>{active}</b>   ❌ Failed: <b>{failed}</b>   🛑 Cancelled: <b>{cancelled}</b>\n"
+            f"🎯 Completion rate: <b>{success_rate:.1f}%</b>\n\n"
+            "🤖 <b>CLONES</b>\n"
+            f"📦 Registered: <b>{int(summary.get('clone_registered', 0) or 0)}</b> "
+            f"• 🟢 Online: <b>{int(summary.get('clone_online', 0) or 0)}</b>\n"
+            f"🆕 Created in 7 days: <b>{int(summary.get('clone_created_7d', 0) or 0)}</b>\n"
+            f"💬 Clone messages: <b>{int(summary.get('clone_messages_7d', 0) or 0)}</b>\n"
+            f"🔎 Clone scans: <b>{int(summary.get('clone_scans_started_7d', 0) or 0)}</b> started "
+            f"• ✅ {int(summary.get('clone_scans_completed_7d', 0) or 0)} "
+            f"• ❌ {int(summary.get('clone_scans_failed_7d', 0) or 0)}\n\n"
+            "⚡ <b>LIVE NOW</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
+            f"🗄️ Database: <b>{mongo}</b>\n"
+            f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
         )
     else:
         text = (
-            "🛠️ <b>ANITOON • ADMIN STUDIO</b>\n"
-            "<i>Operations • users • performance • insights</i>\n\n"
-            f"📅 <b>{date_label}</b>\n"
-            "⚠️ MongoDB statistics are temporarily unavailable.\n\n"
-            f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
-            f"⏳ Queue: <b>{queued_processes}</b>\n"
-            f"🗄️ MongoDB: <b>{mongo}</b>\n"
-            f"⏱️ Uptime: <b>{uptime:.1f} h</b>"
-        )
-
-    day_buttons: list[Any] = []
-    if selected_date > oldest_date:
-        prev_date = selected_date - timedelta(days=1)
-        day_buttons.append(
-            Button.inline(
-                "◀️ Previous Day",
-                f"owner:dashboard:day:{prev_date.isoformat()}".encode("ascii"),
-            )
-        )
-    day_buttons.append(
-        Button.inline(
-            f"📅 {selected_date.strftime('%d %b')}",
-            f"owner:dashboard:day:{selected_date.isoformat()}".encode("ascii"),
-        )
-    )
-    if selected_date < today:
-        next_date = selected_date + timedelta(days=1)
-        day_buttons.append(
-            Button.inline(
-                "Next Day ▶️",
-                f"owner:dashboard:day:{next_date.isoformat()}".encode("ascii"),
-            )
+            "🛠️ <b>ANITOON OWNER DASHBOARD</b>\n"
+            f"<i>Rolling 7-day overview • {html.escape(period)}</i>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ <b>Analytics temporarily unavailable</b>\n"
+            "MongoDB could not provide the last-7-days statistics. No historical totals are guessed.\n\n"
+            "⚡ <b>LIVE NOW</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
+            f"🗄️ Database: <b>{mongo}</b>\n"
+            f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
         )
 
     buttons = [
-        day_buttons,
         [
-            Button.inline("👥 User Management", b"owner:users:0"),
+            Button.inline("👥 Users • 7 days", b"owner:users:0"),
             Button.inline("🤖 Clone Fleet", b"owner:clones"),
         ],
         [
@@ -1269,10 +1248,7 @@ async def render_owner_dashboard(
         ],
         [
             Button.inline("📣 Announcements", b"owner:broadcast"),
-            Button.inline(
-                "📅 Today",
-                f"owner:dashboard:day:{today.isoformat()}".encode("ascii"),
-            ),
+            Button.inline("🔄 Refresh", b"owner:dashboard"),
         ],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
