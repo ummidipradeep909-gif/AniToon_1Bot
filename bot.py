@@ -5038,6 +5038,14 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+.archive-note{{color:var(--muted);font-size:12px;margin:12px 0}}
+.archive-table-wrap{{width:100%;overflow-x:auto;margin-top:12px;border:1px solid var(--line);border-radius:12px}}
+.archive-table{{width:100%;min-width:980px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
+.archive-table th,.archive-table td{{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
+.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.035);white-space:nowrap}}
+.archive-table td{{color:var(--text);overflow-wrap:anywhere}}
+.archive-table .archive-name{{max-width:340px}}
+.archive-table code{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;color:var(--cyan)}}
 @media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 @media print{{
@@ -5250,14 +5258,6 @@ h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
 .section-content{{color:#d7dcf2;line-height:1.85}}
 .section-content br+br,.summary br+br{{content:"";display:block;margin-top:5px}}
 .footer{{margin:17px 3px 0;color:#818aa9;font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}}
-.archive-note{{color:var(--muted);font-size:12px;margin:12px 0}}
-.archive-table-wrap{{width:100%;overflow-x:auto;margin-top:12px;border:1px solid var(--line);border-radius:12px}}
-.archive-table{{width:100%;min-width:980px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
-.archive-table th,.archive-table td{{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
-.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.035);white-space:nowrap}}
-.archive-table td{{color:var(--text);overflow-wrap:anywhere}}
-.archive-table .archive-name{{max-width:340px}}
-.archive-table code{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;color:var(--cyan)}}
 @media(max-width:620px){{body{{padding:12px 10px 28px}}.hero,.panel{{padding:16px;border-radius:17px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.stat strong{{font-size:14px}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;animation:none!important;transition:none!important}}}}
 </style>
