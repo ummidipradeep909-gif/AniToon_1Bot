@@ -71,13 +71,14 @@ FILE_CHECKER_PRIVATE_ONLY = (
     not in {"0", "false", "no", "off"}
 )
 # Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 3))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
-REPORT_LINK_TTL_SECONDS = 24 * 60 * 60
+REPORT_LINK_TTL_SECONDS = 10 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 MAX_REPORT_TRACKS = 100
+MAX_REPORT_ARCHIVE_ENTRIES = 100
 PUBLIC_WEB_URL = (
     os.getenv("PUBLIC_WEB_URL", "https://anitoons-1bot-oa44.onrender.com")
     .strip()
@@ -388,7 +389,7 @@ CLONE_HOME_TEXT = (
 CLONE_HELP_TEXT = (
     "📚 <b>AniToon Clone — Command Guide</b>\n\n"
     "📤 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the bot menu\n"
     "/help — Show this command guide\n"
@@ -403,7 +404,7 @@ CLONE_HELP_TEXT = (
 HELP_TEXT = (
     "📚 <b>AniToon — Command Guide</b>\n\n"
     "🔎 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report.\n\n"
+    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the main menu\n"
     "/help — Show this command guide\n"
@@ -417,7 +418,7 @@ HELP_TEXT = (
 
 SCAN_TEXT = (
     "🔎 <b>Scan Files</b>\n\n"
-    "1️⃣ Send a photo, video, GIF, sticker, PDF, audio file, document or supported post media.\n"
+    "1️⃣ Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file, document or supported post media.\n"
     "2️⃣ Tap <b>🔎 Scan File Info</b> under the file message.\n"
     "3️⃣ Tap <b>🌐 Open File Info</b> to view the complete web report.\n\n"
     "📄 The report shows the metadata available for that file."
@@ -430,7 +431,7 @@ ABOUT_TEXT = (
     "🌐 <b>AniToon Web</b>\n"
     "The web page presents the complete file information in a clean, easy-to-read report.\n\n"
     "📦 <b>What you get</b>\n"
-    "Images • Video • Audio • Stickers • GIFs • PDFs • Subtitles • Post context • Technical metadata\n\n"
+    "Images • Video • Audio • Stickers • GIFs • PDFs • ZIP contents • Subtitles • Post context • Technical metadata\n\n"
     "⚡ <b>Simple workflow</b>\n"
     "Send file → tap Scan File Info → open the web report.\n\n"
     "For help or questions, use the Help & Support button below."
@@ -447,7 +448,7 @@ def _coerce_report(value: Any) -> Report:
         allowed = {
             "filename", "size", "mime", "ext", "detected", "media_kind",
             "sampled", "sample_hash", "notes", "video", "audio",
-            "subtitles", "container", "probe_ranges", "previews", "media_info",
+            "subtitles", "container", "probe_ranges", "previews", "media_info", "archive_entries",
         }
         report = Report(**{key: value.get(key) for key in allowed if key in value})
     else:
@@ -485,6 +486,13 @@ def _coerce_report(value: Any) -> Report:
         item for item in previews
         if isinstance(item, dict) and str(item.get("data") or "").strip()
     ][:1]
+
+    archive_entries = getattr(report, "archive_entries", [])
+    if not isinstance(archive_entries, list):
+        archive_entries = []
+    report.archive_entries = [
+        item for item in archive_entries if isinstance(item, dict)
+    ][:MAX_REPORT_ARCHIVE_ENTRIES]
 
     if isinstance(report.notes, str):
         report.notes = [report.notes]
@@ -622,10 +630,10 @@ def home_buttons(
     user_id: int | None = None,
     show_privacy: bool = True,
 ):
-    scan = Button.inline("🔎 Scan Files", b"home:scan")
-    stats = Button.inline("📊 My Stats", b"home:stats")
-    help_btn = Button.inline("📖 Help", b"home:help")
-    about = Button.inline("ℹ️ About", b"home:about")
+    scan = Button.inline("🔎  Scan Files", b"home:scan")
+    stats = Button.inline("📊  My Stats", b"home:stats")
+    help_btn = Button.inline("📚  Help Center", b"home:help")
+    about = Button.inline("✨  About AniToon", b"home:about")
     add_group = Button.url("➕ Add to Group", add_to_group_url(bot_username))
 
     if include_clone:
@@ -638,7 +646,7 @@ def home_buttons(
         ]
         if _owner_allowed(user_id):
             buttons[-1] = [
-                Button.inline("👑 Owner Dashboard", b"owner:dashboard"),
+                Button.inline("🛠️ Admin Studio", b"owner:dashboard"),
             ]
             buttons.append([add_group])
     else:
@@ -1084,6 +1092,18 @@ def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
 
 
+def adaptive_scan_limit() -> int:
+    """Scale concurrent scans to observed RAM use, within the configured hard cap."""
+    ram_pct = runtime_resource_stats()["ram_pct"]
+    if ram_pct >= RAM_PAUSE_PCT:
+        return 0
+    if ram_pct >= 60.0:
+        return 1
+    if ram_pct >= 45.0:
+        return min(2, MAX_CONCURRENT_CHECKS)
+    return MAX_CONCURRENT_CHECKS
+
+
 def resource_guard_reason() -> str | None:
     stats = runtime_resource_stats()
     if stats["ram_pct"] >= RAM_PAUSE_PCT:
@@ -1113,11 +1133,13 @@ async def render_owner_resources(event, user_id: int) -> None:
         return
 
     stats = runtime_resource_stats()
+    scan_limit = adaptive_scan_limit()
     ram_state = (
         "🟢 Normal"
-        if stats["ram_pct"] < 70
-        else ("🟡 Watch" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 High")
+        if stats["ram_pct"] < 45
+        else ("🟡 Watch" if stats["ram_pct"] < 60 else ("🟠 High" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 Critical"))
     )
+    worker_state = "PAUSED (RAM guard)" if scan_limit == 0 else f"{scan_limit} worker(s) allowed"
     egress_state = (
         "🟢 Low"
         if stats["web_egress_pct"] < 70
@@ -1133,9 +1155,11 @@ async def render_owner_resources(event, user_id: int) -> None:
         f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
         f"🧹 Bot temp <b>{stats['tmp_mb']:.1f}/{stats['tmp_limit_mb']:.0f} MB</b> • {stats['tmp_pct']:.1f}%\n"
         f"🔎 Load <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b> active • {queued_processes} queued\n"
+        f"🤖 Adaptive workers: <b>{worker_state}</b>\n"
         f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
-        "ℹ️ RAM ↑ = workers/media parsing. Web ↑ = browser traffic/previews. "
-        "Uptime ↑ = process running. Bot temp is auto-cleaned every 5 min; old files expire after 10 min.\n"
+        "ℹ️ The RAM controller allows up to 3 workers under low memory use, scales down as RAM rises, "
+        "and pauses new scans at the safety threshold. The queue keeps waiting jobs for all users. "
+        "Bot temp is auto-cleaned every 5 min; report links expire after 10 min.\n"
         "⚠️ Render host/root disk usage is not app-owned and cannot be safely cleaned by the bot."
     )
     await event.edit(
@@ -1155,98 +1179,76 @@ async def render_owner_dashboard(
     edit: bool = True,
     selected_day: datetime | None = None,
 ) -> None:
+    """Show a concise owner overview with rolling seven-day analytics and live status."""
     if not _owner_allowed(user_id):
         await event.answer("Owner access only.", alert=True)
         return
 
-    today = datetime.now(timezone.utc).date()
-    selected_date = selected_day.date() if isinstance(selected_day, datetime) else today
-    oldest_date = today - timedelta(days=6)
-    if selected_date < oldest_date:
-        selected_date = oldest_date
-    if selected_date > today:
-        selected_date = today
-
-    selected_dt = datetime(
-        selected_date.year,
-        selected_date.month,
-        selected_date.day,
-        tzinfo=timezone.utc,
-    )
-    summary = await owner_daily_summary(selected_dt)
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    first_day = today - timedelta(days=6)
+    summary = await owner_7day_summary(7)
     mongo = "🟢 Connected" if mongodb_is_connected() else (
-        "🟠 Configured / reconnecting" if mongodb_is_configured() else "🔴 Not configured"
+        "🟠 Reconnecting" if mongodb_is_configured() else "🔴 Not configured"
     )
-    total = int(summary.get("completed", 0) or 0) + int(summary.get("failed", 0) or 0)
-    success = (int(summary.get("completed", 0) or 0) / total * 100) if total else 0.0
-    uptime = (datetime.now(timezone.utc) - started_at).total_seconds() / 3600
-    date_label = selected_date.strftime("%d %b %Y")
+    active = int(summary.get("completed", 0) or 0)
+    failed = int(summary.get("failed", 0) or 0)
+    cancelled = int(summary.get("cancelled", 0) or 0)
+    total = int(summary.get("total_scans", 0) or 0)
+    success_rate = active / total * 100 if total else 0.0
+    period = f"{first_day.strftime('%d %b')} – {today.strftime('%d %b %Y')} UTC"
+    uptime = (now - started_at).total_seconds() / 3600
 
     if summary.get("available"):
         text = (
-            "👑 <b>AniToon Owner Control Center</b>\n\n"
-            f"📅 <b>{date_label}</b>\n"
-            f"👥 Active users: <b>{int(summary.get('users', 0) or 0)}</b>\n"
-            f"📁 Scans: <b>{int(summary.get('total_scans', 0) or 0)}</b> • ✅ {int(summary.get('completed', 0) or 0)}\n"
-            f"❌ Failed: <b>{int(summary.get('failed', 0) or 0)}</b> • 🛑 {int(summary.get('cancelled', 0) or 0)}\n"
-            f"📈 Success rate: <b>{success:.1f}%</b>\n\n"
-            "⚡ <b>Live</b>\n"
-            f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
-            f"⏳ Queue: <b>{queued_processes}</b>\n"
-            f"🗄️ MongoDB: <b>{mongo}</b>\n"
-            f"⏱️ Uptime: <b>{uptime:.1f} h</b>"
+            "🛠️ <b>ANITOON OWNER DASHBOARD</b>\n"
+            f"<i>Rolling 7-day overview • {html.escape(period)}</i>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📊 <b>USAGE (LAST 7 DAYS)</b>\n"
+            f"👥 Active users: <b>{int(summary.get('total_users', 0) or 0)}</b>\n"
+            f"📁 Total scans: <b>{total}</b>\n"
+            f"✅ Completed: <b>{active}</b>   ❌ Failed: <b>{failed}</b>   🛑 Cancelled: <b>{cancelled}</b>\n"
+            f"🎯 Completion rate: <b>{success_rate:.1f}%</b>\n\n"
+            "🤖 <b>CLONES</b>\n"
+            f"📦 Registered: <b>{int(summary.get('clone_registered', 0) or 0)}</b> "
+            f"• 🟢 Online: <b>{int(summary.get('clone_online', 0) or 0)}</b>\n"
+            f"🆕 Created in 7 days: <b>{int(summary.get('clone_created_7d', 0) or 0)}</b>\n"
+            f"💬 Clone messages: <b>{int(summary.get('clone_messages_7d', 0) or 0)}</b>\n"
+            f"🔎 Clone scans: <b>{int(summary.get('clone_scans_started_7d', 0) or 0)}</b> started "
+            f"• ✅ {int(summary.get('clone_scans_completed_7d', 0) or 0)} "
+            f"• ❌ {int(summary.get('clone_scans_failed_7d', 0) or 0)}\n\n"
+            "⚡ <b>LIVE NOW</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
+            f"🗄️ Database: <b>{mongo}</b>\n"
+            f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
         )
     else:
         text = (
-            "👑 <b>AniToon Owner Control Center</b>\n\n"
-            f"📅 <b>{date_label}</b>\n"
-            "⚠️ MongoDB statistics are temporarily unavailable.\n\n"
-            f"🔎 Active: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
-            f"⏳ Queue: <b>{queued_processes}</b>\n"
-            f"🗄️ MongoDB: <b>{mongo}</b>\n"
-            f"⏱️ Uptime: <b>{uptime:.1f} h</b>"
-        )
-
-    day_buttons: list[Any] = []
-    if selected_date > oldest_date:
-        prev_date = selected_date - timedelta(days=1)
-        day_buttons.append(
-            Button.inline(
-                "◀️ Previous Day",
-                f"owner:dashboard:day:{prev_date.isoformat()}".encode("ascii"),
-            )
-        )
-    day_buttons.append(
-        Button.inline(
-            f"📅 {selected_date.strftime('%d %b')}",
-            f"owner:dashboard:day:{selected_date.isoformat()}".encode("ascii"),
-        )
-    )
-    if selected_date < today:
-        next_date = selected_date + timedelta(days=1)
-        day_buttons.append(
-            Button.inline(
-                "Next Day ▶️",
-                f"owner:dashboard:day:{next_date.isoformat()}".encode("ascii"),
-            )
+            "🛠️ <b>ANITOON OWNER DASHBOARD</b>\n"
+            f"<i>Rolling 7-day overview • {html.escape(period)}</i>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ <b>Analytics temporarily unavailable</b>\n"
+            "MongoDB could not provide the last-7-days statistics. No historical totals are guessed.\n\n"
+            "⚡ <b>LIVE NOW</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
+            f"🗄️ Database: <b>{mongo}</b>\n"
+            f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
         )
 
     buttons = [
-        day_buttons,
         [
-            Button.inline("👥 Users", b"owner:users:0"),
-            Button.inline("🤖 Clones", b"owner:clones"),
+            Button.inline("👥 Users • 7 days", b"owner:users:0"),
+            Button.inline("🤖 Clone Fleet", b"owner:clones"),
         ],
         [
-            Button.inline("🖥 Resources", b"owner:resources"),
-            Button.inline("💚 Bot Status", b"home:status"),
+            Button.inline("📈 Performance & RAM", b"owner:resources"),
+            Button.inline("🟢 Live Status", b"home:status"),
         ],
         [
-            Button.inline("📢 Broadcast", b"owner:broadcast"),
-            Button.inline(
-                "🔄 Today",
-                f"owner:dashboard:day:{today.isoformat()}".encode("ascii"),
-            ),
+            Button.inline("📣 Announcements", b"owner:broadcast"),
+            Button.inline("🔄 Refresh", b"owner:dashboard"),
         ],
         [Button.inline("⬅️ Home", b"home:back")],
     ]
@@ -1576,9 +1578,9 @@ def status_text(
     pct = max(0, min(100, current_pct))
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
-    position = max(1, int(queue_position or 1))
+    # Active scans are shown as PROCESSING; QUEUE numbers are reserved for waiters.
     return (
-        f"🔎 <b>QUEUE {position} — PROCESSING</b>\n"
+        "🔎 <b>PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct}%</b>\n"
         f"⚙️ {html.escape(clean)}"
@@ -1733,7 +1735,7 @@ def _waiting_scan_count_locked() -> int:
 
 
 async def _scan_queue_position(scan_token: str) -> int:
-    """Return the current position including scans that are processing."""
+    """Return a scan's FIFO index; display formatting separates processing from waiters."""
     async with scan_queue_lock:
         try:
             return scan_queue_order.index(scan_token) + 1
@@ -1742,15 +1744,18 @@ async def _scan_queue_position(scan_token: str) -> int:
 
 
 async def _refresh_queue_positions() -> None:
-    """Update waiting messages using positions that include active scans."""
+    """Number waiting scans from QUEUE 1, excluding any scans already processing."""
     global queued_processes
     async with scan_queue_refresh_lock:
         async with scan_queue_lock:
             queued_processes = _waiting_scan_count_locked()
+            waiting_tokens = [
+                token for token in scan_queue_order
+                if token in queued_scan_statuses and token not in processing_scan_tokens
+            ]
             entries = [
                 (position, token, *queued_scan_statuses[token])
-                for position, token in enumerate(scan_queue_order, 1)
-                if token in queued_scan_statuses and token not in processing_scan_tokens
+                for position, token in enumerate(waiting_tokens, 1)
             ]
 
         for position, token, status_message, filename in entries:
@@ -1821,9 +1826,13 @@ async def acquire_scan_slot(
                     ),
                     None,
                 )
+                # Resource-aware worker limit: more parallelism when memory is
+                # healthy, progressively fewer workers as RAM pressure increases.
+                worker_limit = adaptive_scan_limit()
                 can_start = (
                     not ram_high
-                    and active_processes < MAX_CONCURRENT_CHECKS
+                    and worker_limit > 0
+                    and active_processes < worker_limit
                     and first_waiting == scan_token
                 )
 
@@ -3887,9 +3896,10 @@ async def handle_callback(
         status_message = await event.get_message()
         await edit_status(
             status_message,
-            "🔎 <b>SCANNING METADATA</b>\n\n"
-            "<code>[░░░░░░░░░░] 0%</code>\n"
-            "Starting scan…",
+            "⏳ <b>QUEUE — REGISTERING SCAN</b>\n"
+            "📄 <b>Waiting for queue position…</b>\n\n"
+            "<code>[▰▱▱▱▱▱▱▱▱▱] 10%</code>\n"
+            "Preparing your scan. Queue position will appear shortly.",
             buttons=cancel_button(token),
         )
 
@@ -4484,18 +4494,36 @@ def web_page(
 
     media_groups: dict[str, list[tuple[str, Any]]] = {}
     omit_from_report = {
-        # Already shown in the hero or overview.
-        "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
-        # Telegram wrapper/post details are not file metadata and clutter the report.
-        "caption_preview", "caption_characters", "telegram_message_id", "message_date_utc",
-        "post_author", "views", "forwards", "replies", "grouped_media_album", "is_channel_post",
-        "forwarded_from_name", "forwarded_post_number", "forwarded_date_utc",
+        # Already visible in the hero, summary cards, or stream cards.
+        "category", "detected_format", "file_extension", "declared_mime_type",
+        "file_size_bytes", "archive_directory_preview", "image_format",
+        "image_pixel_dimensions", "video_width", "video_height", "dimensions",
+        "video_duration_seconds", "audio_duration_seconds", "caption_characters",
+        "has_caption", "is_document", "telegram_media_type", "telegram_message_id",
+        "telegram_filename_attribute", "pdf_creator", "pdf_producer", "pdf_fonts",
+        "pdf_linearized", "image_color_mode", "image_progressive", "webpage_type",
+        # Keep meaningful caption/author/views/forwards and forwarding provenance,
+        # but hide Telegram implementation IDs and simple presence flags.
+        "is_channel_post", "grouped_media_album", "contact_phone_present",
+        "venue_address_present", "location_coordinates_present",
+        "archive_directory_preview",
+    }
+    # Negative capability flags produce clutter (e.g. "Animated: No" on every
+    # still image). Positive flags remain visible; file/security essentials stay.
+    omit_false_flags = {
+        "image_is_animated", "image_has_transparency", "sticker_is_mask",
+        "sticker_is_animated", "video_is_round_note", "video_is_silent",
+        "audio_is_voice", "audio_is_music", "audio_has_waveform",
+        "pdf_tagged", "pdf_forms", "pdf_javascript", "pdf_embedded_files",
+        "poll_is_quiz", "poll_multiple_answers",
     }
     if is_pdf:
         # Page count already appears in the PDF overview card.
         omit_from_report.add("pdf_pages")
     for key, value in media_info.items():
         if key in omit_from_report or value in (None, "", []):
+            continue
+        if key in omit_false_flags and str(value).strip().lower() in {"no", "false", "0", "none"}:
             continue
         group_name = media_group_for(str(key), value)
         media_groups.setdefault(group_name, []).append(
@@ -4526,6 +4554,112 @@ def web_page(
         )
         media_detail_nav.append(f'<a href="#{section_id}">{esc(group_name)}</a>')
     media_details_sections = "".join(media_detail_sections_list)
+
+    # ZIPs get a dedicated directory listing; contents are never extracted.
+    archive_entries = [
+        item for item in (getattr(report, "archive_entries", []) or [])
+        if isinstance(item, dict)
+    ][:MAX_REPORT_ARCHIVE_ENTRIES]
+    is_zip_archive = (
+        str(report.ext or "").lower() == ".zip"
+        or "zip archive" in str(report.detected or "").lower()
+    )
+    archive_contents_section = ""
+    if is_zip_archive:
+        try:
+            archive_entry_count = max(
+                len(archive_entries),
+                int(media_info.get("archive_entry_count") or len(archive_entries)),
+            )
+        except (TypeError, ValueError):
+            archive_entry_count = len(archive_entries)
+
+        try:
+            uncompressed_bytes = int(media_info.get("archive_uncompressed_bytes") or 0)
+        except (TypeError, ValueError):
+            uncompressed_bytes = 0
+        try:
+            compressed_bytes = int(media_info.get("archive_compressed_bytes") or 0)
+        except (TypeError, ValueError):
+            compressed_bytes = 0
+
+        archive_stats = []
+        if "archive_uncompressed_bytes" in media_info:
+            archive_stats.append(("Original size", human_size(uncompressed_bytes)))
+        if "archive_compressed_bytes" in media_info:
+            archive_stats.append(("Compressed size", human_size(compressed_bytes)))
+        if uncompressed_bytes > 0 and compressed_bytes < uncompressed_bytes:
+            archive_stats.append((
+                "Space saved",
+                f"{(1 - compressed_bytes / uncompressed_bytes) * 100:.1f}%",
+            ))
+        encrypted_flag = str(
+            media_info.get("archive_contains_encrypted_members") or ""
+        ).strip().lower()
+        if encrypted_flag in {"yes", "true", "1"}:
+            archive_stats.append(("Password-protected entries", "Yes"))
+
+        archive_stat_cards = "".join(
+            f'<div class="tech"><small>{esc(label)}</small><b>{esc(value)}</b></div>'
+            for label, value in archive_stats
+        )
+
+        archive_rows: list[str] = []
+        for entry in archive_entries:
+            try:
+                entry_size = int(entry.get("size") or 0)
+            except (TypeError, ValueError):
+                entry_size = 0
+            try:
+                entry_compressed = int(entry.get("compressed_size") or 0)
+            except (TypeError, ValueError):
+                entry_compressed = 0
+            is_directory = bool(entry.get("is_dir"))
+            file_type = "Folder" if is_directory else str(entry.get("file_type") or "File")
+            audio_names = entry.get("audio_names") or []
+            subtitle_names = entry.get("subtitle_names") or []
+            if isinstance(audio_names, str):
+                audio_names = [audio_names]
+            if isinstance(subtitle_names, str):
+                subtitle_names = [subtitle_names]
+            audio_html = "<br>".join(esc(name) for name in audio_names if name) or "—"
+            subtitle_html = "<br>".join(esc(name) for name in subtitle_names if name) or "—"
+            archive_rows.append(
+                '<tr>'
+                f'<td class="archive-name"><code>{esc(entry.get("name") or "Unnamed entry")}</code></td>'
+                f'<td>{esc(file_type)}</td>'
+                f'<td>{esc(human_size(entry_size))}</td>'
+                f'<td>{esc(human_size(entry_compressed))}</td>'
+                f'<td class="archive-track-names">{audio_html}</td>'
+                f'<td class="archive-track-names">{subtitle_html}</td>'
+                f'<td>{esc(entry.get("modified_at") or "—")}</td>'
+                '</tr>'
+            )
+        if not archive_rows:
+            archive_rows.append(
+                '<tr><td colspan="7">No readable ZIP directory was found in the bounded scan. '
+                'The archive may be damaged or too large for the current metadata scan.</td></tr>'
+            )
+        if archive_entry_count > len(archive_entries):
+            archive_note = (
+                f"Showing the first {len(archive_entries)} of {archive_entry_count} entries. "
+            )
+        else:
+            archive_note = f"Showing {len(archive_entries)} entries. "
+        archive_note += "Embedded audio/subtitle names are shown when the archive format and readable file prefix expose them."
+        archive_contents_section = (
+            '<details id="archive-contents" class="section" open>'
+            '<summary class="section-head"><h2>📦 ZIP contents</h2>'
+            f'<span class="pill">{archive_entry_count} entries <span class="chev">⌄</span></span></summary>'
+            '<div class="section-body">'
+            f'<div class="tech-grid">{archive_stat_cards}</div>'
+            '<p class="archive-note">' + esc(archive_note) + '</p>'
+            '<div class="archive-table-wrap"><table class="archive-table">'
+            '<thead><tr><th>Name / path</th><th>Type</th><th>Size</th><th>Compressed</th>'
+            '<th>Audio track names</th><th>Subtitle names</th><th>Modified</th></tr></thead>'
+            f'<tbody>{"".join(archive_rows)}</tbody></table></div>'
+            '</div></details>'
+        )
 
     def track_cards(items: list[dict[str, Any]], kind: str) -> str:
         if not items:
@@ -4560,14 +4694,6 @@ def web_page(
                 ("Duration", track.get("duration")),
                 ("Bit depth", track.get("bit_depth")),
                 ("Bitrate", track.get("bitrate")),
-                ("Track", track.get("track")),
-                ("Default", track.get("default")),
-                ("Enabled", track.get("enabled")),
-                ("Forced", track.get("forced")),
-                ("Original", track.get("original")),
-                ("Commentary", track.get("commentary")),
-                ("Hearing impaired", track.get("hearing_impaired")),
-                ("Visual impaired", track.get("visual_impaired")),
                 ("Stereo mode", track.get("stereo_mode")),
                 ("Format", track.get("subtitle_format") or track.get("format")),
             ]
@@ -4651,10 +4777,7 @@ def web_page(
     has_stream_report = bool(video or audio or subtitles)
     if has_stream_report:
         stream_summary_items: list[tuple[str, Any]] = []
-        if report.size is not None:
-            stream_summary_items.append(("File size", size_text))
-        if container_name and container_name != "Detected media":
-            stream_summary_items.append(("Format", container_name))
+        # File size and format already appear in the hero; keep only stream-specific facts.
         if video:
             stream_summary_items.append(("Video tracks", len(video)))
         if audio:
@@ -4672,17 +4795,13 @@ def web_page(
     else:
         extra_label, extra_value = (
             ("Frames", media_info.get("image_frame_count")) if media_info.get("image_frame_count") not in (None, "")
-            else ("Archive entries", media_info.get("archive_entry_count")) if media_info.get("archive_entry_count") not in (None, "")
             else ("PDF pages", media_info.get("pdf_pages")) if media_info.get("pdf_pages") not in (None, "")
             else ("Poll options", media_info.get("poll_option_count")) if media_info.get("poll_option_count") not in (None, "")
-            else ("Post views", media_info.get("views")) if media_info.get("views") not in (None, "")
-            else ("Extension", media_info.get("file_extension") or "—")
+            else ("", None)
         )
+        # Category, format and size are already clear in the hero.
         summary_items = [
-            ("Media category", media_category),
-            ("Format", media_info.get("image_format") or media_info.get("detected_format") or report.detected or "—"),
             ("Dimensions / pixels", media_info.get("image_pixel_dimensions") or media_info.get("dimensions") or "—"),
-            ("File size", size_text if report.size is not None else None),
             (extra_label, extra_value),
         ]
         summary_cards = "".join(
@@ -4730,6 +4849,8 @@ def web_page(
     subtitle_section = stream_section(subtitles, "Subtitle", "subs-section", "subtitle", "Filter subtitle tracks…")
 
     nav_links = ['<a href="#overview">Overview</a>'] + media_detail_nav
+    if archive_contents_section:
+        nav_links.append('<a href="#archive-contents">ZIP contents</a>')
     if video_section:
         nav_links.append('<a href="#video-section">Video</a>')
     if audio_section:
@@ -4738,9 +4859,8 @@ def web_page(
         nav_links.append('<a href="#subs-section">Subtitles</a>')
 
     technical_items = [
-        ("Container", container_name if container_name != "Detected media" else None),
-        ("MIME type", report.mime),
-        ("Runtime", runtime if runtime not in ("N/A", "—") else None),
+        # Hero/summary already contain type, size, runtime, and the primary format.
+        # Retain only a useful detail not already shown elsewhere.
         ("Average bitrate", bitrate if bitrate != "—" else None),
     ]
     technical_cards = "".join(
@@ -4895,6 +5015,15 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 @keyframes cardIn{{from{{opacity:0;transform:translateY(12px) scale(.985)}}to{{opacity:1;transform:none}}}}
 @keyframes shimmer{{0%,58%,100%{{transform:translateX(-120%)}}78%{{transform:translateX(120%)}}}}
 @media(max-width:900px){{.hero{{grid-template-columns:1fr}}.hero-media{{width:100%;height:220px;min-height:220px;max-height:220px}} .hero-media img{{min-height:0;max-height:none}}.summary{{grid-template-columns:repeat(3,minmax(0,1fr))}}.tech-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+.archive-note{{color:var(--muted);font-size:12px;margin:12px 0}}
+.archive-table-wrap{{width:100%;overflow-x:auto;margin-top:12px;border:1px solid var(--line);border-radius:12px}}
+.archive-table{{width:100%;min-width:840px;border-collapse:collapse;font-size:12px;background:rgba(0,0,0,.10)}}
+.archive-track-names{{min-width:180px;max-width:280px;white-space:normal;overflow-wrap:anywhere}}
+.archive-table th,.archive-table td{{padding:10px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
+.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.035);white-space:nowrap}}
+.archive-table td{{color:var(--text);overflow-wrap:anywhere}}
+.archive-table .archive-name{{max-width:340px}}
+.archive-table code{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;color:var(--cyan)}}
 @media(max-width:620px){{.wrap{{padding:10px 9px 30px}}.nav{{top:6px}}.brand{{font-size:9px}}.hero{{padding:15px;border-radius:22px}}.hero-media{{width:100%;height:200px;min-height:200px;max-height:200px}} .hero-media img{{min-height:0;max-height:none}}h1{{font-size:29px}}.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}.spec-grid,.tech-grid{{grid-template-columns:1fr}}.track-heading{{flex-direction:column}}.badges{{justify-content:flex-start}}.quick{{top:64px;overflow:auto;flex-wrap:nowrap}}.quick a{{white-space:nowrap}}.footer{{flex-direction:column;align-items:flex-start}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{animation:none!important;transition:none!important;scroll-behavior:auto!important}}}}
 @media print{{
@@ -4949,6 +5078,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   {language_ribbon}
 
   {media_details_sections}
+  {archive_contents_section}
 
   {quick_nav}
   {video_section}
@@ -5022,18 +5152,35 @@ def minimal_web_report_page(
     """Readable, resilient HTML fallback used if the advanced report renderer fails."""
     safe = _coerce_report(report)
     filename = html.escape(safe.filename or "Telegram media file")
-    kind = html.escape(str(safe.media_kind or safe.detected or "Media file"))
-    detected = html.escape(str(safe.detected or safe.ext or "Unknown format"))
+    kind_text = str(safe.media_kind or safe.detected or "Media file")
+    detected_text = str(safe.detected or safe.ext or "Unknown format")
+    kind = html.escape(kind_text)
+    detected = html.escape(detected_text)
+    show_kind = kind_text.strip().lower() != detected_text.strip().lower()
     size_text = html.escape(human(safe.size))
-    runtime_text = html.escape(str(safe.container.get("runtime") or "Not available"))
+    runtime_value = str(safe.container.get("runtime") or "").strip()
+    runtime_footer = (
+        f'<span>Runtime: {html.escape(runtime_value)}</span>'
+        if runtime_value and runtime_value.lower() not in {"not available", "n/a", "—"}
+        else ""
+    )
     video_count = len(safe.video.get("tracks", []))
     audio_count = len(safe.audio.get("tracks", []))
     subtitle_count = len(safe.subtitles)
 
-    # format_report/format_section use an allowlisted, internally generated
-    # Telegram HTML format. Dynamic metadata values are escaped by file_inspector._safe.
-    # Do not html.escape the complete strings or tags such as <b> become visible text.
-    summary = format_report(safe).replace("\n", "<br>")
+    # Keep only useful, non-zero summary counts. Media type/format and file name
+    # already appear in the hero, so the fallback does not repeat them below.
+    stat_items = [("File size", size_text)]
+    if video_count:
+        stat_items.append(("Video tracks", str(video_count)))
+    if audio_count:
+        stat_items.append(("Audio tracks", str(audio_count)))
+    if subtitle_count:
+        stat_items.append(("Subtitles", str(subtitle_count)))
+    stat_cards = "".join(
+        f'<div class="stat"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong></div>'
+        for label, value in stat_items
+    )
 
     sections = []
     if safe.media_info:
@@ -5052,12 +5199,16 @@ def minimal_web_report_page(
             or section == "video" and bool(safe.video.get("tracks"))
             or section == "audio" and bool(safe.audio.get("tracks") or safe.audio.get("sample_codecs"))
             or section == "subs" and bool(safe.subtitles)
-            or section == "technical"
+            or section == "technical" and bool(
+                safe.container.get("average_bitrate") or safe.container.get("title")
+            )
         )
         if not has_content:
             continue
         try:
             content = web_section(safe, section)
+            if not content.strip():
+                continue
             sections.append(
                 f'<section class="panel"><h2>{html.escape(title)}</h2>'
                 f'<div class="section-content">{content}</div></section>'
@@ -5065,18 +5216,77 @@ def minimal_web_report_page(
         except Exception:
             log.debug("Fallback report section render failed | section=%s", section, exc_info=True)
 
+    # Keep ZIP fallback reports useful as well if the advanced renderer errors.
+    is_zip = (
+        str(safe.ext or "").lower() == ".zip"
+        or "zip archive" in str(safe.detected or "").lower()
+    )
+    if is_zip:
+        archive_entries = [
+            item for item in (safe.archive_entries or [])
+            if isinstance(item, dict)
+        ][:MAX_REPORT_ARCHIVE_ENTRIES]
+        try:
+            archive_count = max(
+                len(archive_entries),
+                int((safe.media_info or {}).get("archive_entry_count") or len(archive_entries)),
+            )
+        except (TypeError, ValueError):
+            archive_count = len(archive_entries)
+
+        def archive_names_html(value: Any) -> str:
+            names = value if isinstance(value, list) else [value] if value else []
+            return "<br>".join(
+                html.escape(str(name)) for name in names if name not in (None, "")
+            ) or "—"
+
+        archive_rows = []
+        for entry in archive_entries:
+            try:
+                entry_size = int(entry.get("size") or 0)
+            except (TypeError, ValueError):
+                entry_size = 0
+            try:
+                compressed_size = int(entry.get("compressed_size") or 0)
+            except (TypeError, ValueError):
+                compressed_size = 0
+            archive_rows.append(
+                "<tr>"
+                f'<td class="archive-name">{html.escape(str(entry.get("name") or "Unnamed entry"))}</td>'
+                f'<td>{html.escape("Folder" if entry.get("is_dir") else str(entry.get("file_type") or "File"))}</td>'
+                f'<td>{html.escape(human(entry_size))}</td>'
+                f'<td>{html.escape(human(compressed_size))}</td>'
+                f'<td>{archive_names_html(entry.get("audio_names"))}</td>'
+                f'<td>{archive_names_html(entry.get("subtitle_names"))}</td>'
+                f'<td>{html.escape(str(entry.get("modified_at") or "—"))}</td>'
+                "</tr>"
+            )
+        if not archive_rows:
+            archive_rows.append(
+                '<tr><td colspan="7">ZIP directory details are not readable within the current scan limits.</td></tr>'
+            )
+        archive_note = (
+            f"Showing {len(archive_entries)} of {archive_count} entries. "
+            if archive_count > len(archive_entries)
+            else f"{len(archive_entries)} entries. "
+        ) + "Track names are shown when the archive metadata exposes them."
+        archive_html = (
+            '<section class="panel" id="archive-contents">'
+            f'<h2>📦 ZIP contents <span class="pill">{archive_count} entries</span></h2>'
+            f'<p class="archive-note">{html.escape(archive_note)}</p>'
+            '<div class="archive-table-wrap"><table class="archive-table">'
+            '<thead><tr><th>Name / path</th><th>Type</th><th>Size</th><th>Compressed</th>'
+            '<th>Audio track names</th><th>Subtitle names</th><th>Modified</th></tr></thead>'
+            f'<tbody>{"".join(archive_rows)}</tbody></table></div></section>'
+        )
+        sections.append(archive_html)
+
     expiry_text = (
         expires_at.strftime("%d %b %Y • %H:%M UTC")
         if isinstance(expires_at, datetime)
         else "Link expiry unavailable"
     )
     report_id = html.escape((report_token or "local")[:16])
-    stat_cards = "".join([
-        f'<div class="stat"><span>File size</span><strong>{size_text}</strong></div>',
-        f'<div class="stat"><span>Video tracks</span><strong>{video_count}</strong></div>',
-        f'<div class="stat"><span>Audio tracks</span><strong>{audio_count}</strong></div>',
-        f'<div class="stat"><span>Subtitles</span><strong>{subtitle_count}</strong></div>',
-    ])
     document = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -5101,10 +5311,15 @@ h1{{font-size:clamp(27px,5vw,42px);line-height:1.08;letter-spacing:-.04em;margin
 .stat strong{{display:block;font-size:15px;overflow-wrap:anywhere}}
 .panel{{margin-top:13px;padding:19px;border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 15px 40px rgba(0,0,0,.14);overflow-wrap:anywhere}}
 h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
-.summary{{color:#d7dcf2;line-height:1.9}}
-.summary b,.section-content b{{color:#fff;font-weight:800}}
 .section-content{{color:#d7dcf2;line-height:1.85}}
-.section-content br+br,.summary br+br{{content:"";display:block;margin-top:5px}}
+.section-content br+br{{content:"";display:block;margin-top:5px}}
+.archive-note{{color:var(--muted);font-size:12px;margin:10px 0}}
+.archive-table-wrap{{width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:12px}}
+.archive-table{{width:100%;min-width:820px;border-collapse:collapse;font-size:12px}}
+.archive-table th,.archive-table td{{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}}
+.archive-table th{{color:var(--muted);font-size:10px;text-transform:uppercase;white-space:nowrap}}
+.archive-table td{{color:var(--text)}}
+.archive-table code{{overflow-wrap:anywhere}}
 .footer{{margin:17px 3px 0;color:#818aa9;font-size:11px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}}
 @media(max-width:620px){{body{{padding:12px 10px 28px}}.hero,.panel{{padding:16px;border-radius:17px}}.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}.stat strong{{font-size:14px}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;animation:none!important;transition:none!important}}}}
@@ -5115,12 +5330,11 @@ h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
   <div class="brand">⛩ AniToon • Media report</div>
   <h1>File information</h1>
   <div class="file"><strong>{filename}</strong></div>
-  <div class="pills"><span class="pill">{kind}</span><span class="pill">{detected}</span><span class="pill">HTML report</span></div>
+  <div class="pills">{f'<span class="pill">{kind}</span>' if show_kind else ''}<span class="pill">{detected}</span><span class="pill">HTML report</span></div>
   <div class="stats">{stat_cards}</div>
 </header>
-<section class="panel"><h2>🔎 Overview</h2><div class="summary">{summary}</div></section>
 {''.join(sections)}
-<footer class="footer"><span>Report expires: {html.escape(expiry_text)}</span><span>Report ID: {report_id}</span><span>Runtime: {runtime_text}</span></footer>
+<footer class="footer"><span>Report expires: {html.escape(expiry_text)}</span><span>Report ID: {report_id}</span>{runtime_footer}</footer>
 </main></body></html>"""
     return document.encode("utf-8")
 
@@ -5285,8 +5499,6 @@ async def health_server():
                 payload = {
                     "status": "ok",
                     "service": "anitoons-file-intelligence",
-                    "intelligence_enabled": bool(os.getenv("GEMINI_API_KEY", "").strip()),
-                    "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY", "").strip()),
                     "telegram_connected": bot.is_connected(),
                     "mongodb_connected": mongodb_is_connected(),
                     "checks_total": checks_total,
