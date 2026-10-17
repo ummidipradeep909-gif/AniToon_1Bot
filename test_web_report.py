@@ -419,3 +419,68 @@ def test_file_report_hides_redundant_and_internal_metadata():
     assert "Image is animated" not in page
     assert "Transparency" not in page
 
+def test_large_zip_reads_directory_from_tail_within_probe_budget(monkeypatch):
+    import asyncio
+
+    archive_buffer = io.BytesIO()
+    padded_data = bytes(range(251)) * 22_000
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("media/episode-01.mkv", b"small fake media header")
+        archive.writestr("subs/English.srt", b"1\\n00:00:01,000 --> 00:00:02,000\\nHello\\n")
+        archive.writestr("padding.bin", padded_data)
+    raw_zip = archive_buffer.getvalue()
+    assert len(raw_zip) > file_inspector.MAX_SAFE_SOURCE_BYTES
+
+    class FakeMedia:
+        data = raw_zip
+
+    class FakeClient:
+        async def iter_download(
+            self, media, offset=0, limit=0, chunk_size=0, request_size=0, file_size=None
+        ):
+            yield media.data[offset:offset + limit]
+
+    source_file = SimpleNamespace(
+        name="large-pack.zip",
+        size=len(raw_zip),
+        mime_type="application/zip",
+        attributes=[],
+    )
+    message = SimpleNamespace(file=source_file, media=FakeMedia())
+
+    def fake_nested_report(nested_message, pieces):
+        return Report(
+            filename=nested_message.file.name,
+            size=nested_message.file.size,
+            mime=nested_message.file.mime_type,
+            ext=".mkv",
+            detected="Matroska/WebM container",
+            media_kind="Video",
+            audio={"tracks": [{
+                "type": "audio",
+                "name": "Japanese Main Track",
+                "language_name": "Japanese",
+                "codec_name": "AAC",
+            }]},
+            subtitles=[{
+                "type": "subtitles",
+                "name": "English Signs",
+                "language_name": "English",
+                "subtitle_format": "ASS",
+            }],
+        )
+
+    monkeypatch.setattr(file_inspector, "_report", fake_nested_report)
+    report, bytes_read = asyncio.run(
+        file_inspector.inspect_telegram_message(FakeClient(), message)
+    )
+
+    assert report.detected == "ZIP archive"
+    assert report.media_info["archive_entry_count"] == "3"
+    assert len(report.archive_entries) == 3
+    episode = next(entry for entry in report.archive_entries if entry["name"].endswith(".mkv"))
+    assert "Japanese Main Track (Japanese · AAC)" in episode["audio_names"]
+    assert "English Signs (English · ASS)" in episode["subtitle_names"]
+    assert bytes_read < file_inspector.MAX_SAFE_SOURCE_BYTES
+    assert bytes_read < len(raw_zip) // 2
+
