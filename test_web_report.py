@@ -376,6 +376,16 @@ def test_zip_report_lists_member_details_without_extracting_contents(monkeypatch
     assert "Password-protected entries" not in page
     assert "Embedded audio/subtitle names are shown" in page
 
+    fallback = bot.minimal_web_report_page(
+        report,
+        "zip-fallback-token",
+        datetime.now(timezone.utc) + timedelta(hours=1),
+    ).decode("utf-8")
+    assert "ZIP contents" in fallback
+    assert "Japanese Main Track (Japanese · AAC)" in fallback
+    assert "English Signs (English · ASS)" in fallback
+    assert "CRC-32" not in fallback
+
 
 def test_file_report_hides_redundant_and_internal_metadata():
     report = Report(
@@ -418,6 +428,17 @@ def test_file_report_hides_redundant_and_internal_metadata():
     assert "Caption characters" not in page
     assert "Image is animated" not in page
     assert "Transparency" not in page
+
+    fallback = bot.minimal_web_report_page(
+        report,
+        "clean-fallback-test",
+        datetime.now(timezone.utc) + timedelta(hours=1),
+    ).decode("utf-8")
+    assert "MessageMediaDocument" not in fallback
+    assert "98765" not in fallback
+    assert "Caption length" not in fallback
+    assert "image/jpeg" not in fallback
+
 
 def test_large_zip_reads_directory_from_tail_within_probe_budget(monkeypatch):
     import asyncio
