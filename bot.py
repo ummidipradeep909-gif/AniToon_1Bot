@@ -1576,9 +1576,9 @@ def status_text(
     pct = max(0, min(100, current_pct))
     filled = pct // 5
     bar = "▰" * filled + "▱" * (20 - filled)
-    position = max(1, int(queue_position or 1))
+    # Active scans are shown as PROCESSING; QUEUE numbers are reserved for waiters.
     return (
-        f"🔎 <b>QUEUE {position} — PROCESSING</b>\n"
+        "🔎 <b>PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct}%</b>\n"
         f"⚙️ {html.escape(clean)}"
@@ -1733,7 +1733,7 @@ def _waiting_scan_count_locked() -> int:
 
 
 async def _scan_queue_position(scan_token: str) -> int:
-    """Return the current position including scans that are processing."""
+    """Return a scan's FIFO index; display formatting separates processing from waiters."""
     async with scan_queue_lock:
         try:
             return scan_queue_order.index(scan_token) + 1
@@ -1742,15 +1742,18 @@ async def _scan_queue_position(scan_token: str) -> int:
 
 
 async def _refresh_queue_positions() -> None:
-    """Update waiting messages using positions that include active scans."""
+    """Number waiting scans from QUEUE 1, excluding any scans already processing."""
     global queued_processes
     async with scan_queue_refresh_lock:
         async with scan_queue_lock:
             queued_processes = _waiting_scan_count_locked()
+            waiting_tokens = [
+                token for token in scan_queue_order
+                if token in queued_scan_statuses and token not in processing_scan_tokens
+            ]
             entries = [
                 (position, token, *queued_scan_statuses[token])
-                for position, token in enumerate(scan_queue_order, 1)
-                if token in queued_scan_statuses and token not in processing_scan_tokens
+                for position, token in enumerate(waiting_tokens, 1)
             ]
 
         for position, token, status_message, filename in entries:
