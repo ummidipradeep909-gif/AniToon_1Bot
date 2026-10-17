@@ -5499,8 +5499,6 @@ async def health_server():
                 payload = {
                     "status": "ok",
                     "service": "anitoons-file-intelligence",
-                    "intelligence_enabled": bool(os.getenv("GEMINI_API_KEY", "").strip()),
-                    "youtube_api_enabled": bool(os.getenv("YOUTUBE_API_KEY", "").strip()),
                     "telegram_connected": bot.is_connected(),
                     "mongodb_connected": mongodb_is_connected(),
                     "checks_total": checks_total,
