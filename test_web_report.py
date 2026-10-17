@@ -373,7 +373,7 @@ def test_zip_report_lists_member_details_without_extracting_contents(monkeypatch
     assert "Audio track names" in page
     assert "Subtitle names" in page
     assert "CRC-32" not in page
-    assert "AniToon does not extract archive contents" not in page
+    assert "Password-protected entries" not in page
     assert "Embedded audio/subtitle names are shown" in page
 
 
