@@ -150,10 +150,10 @@ def test_pdf_report_uses_the_shared_file_report_layout_and_clean_pdf_fields():
     assert "PDF security" in page
     assert "Tagged document" in page
 
-    # Keep useful Telegram source/post context while presenting friendly labels.
+    # Keep reader-relevant post context but omit implementation IDs.
     assert "telegram_message_id" not in page
-    assert "Telegram message ID" in page
-    assert "98765" in page
+    assert "Telegram message ID" not in page
+    assert "98765" not in page
     assert "Views" in page
     assert "12345" in page
     assert "Runtime source" not in page
@@ -290,11 +290,13 @@ def test_owner_home_uses_admin_studio_label():
     assert "Performance & RAM" in source
 
 
-def test_zip_report_lists_member_details_without_extracting_contents():
+def test_zip_report_lists_member_details_without_extracting_contents(monkeypatch):
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("Episodes/", b"")
         archive.writestr("Episodes/episode-01.mkv", b"sample video data " * 20)
+        archive.writestr("Audio/Japanese.flac", b"fake audio bytes")
+        archive.writestr("Subtitles/English.srt", b"1\\n00:00:01,000 --> 00:00:02,000\\nHello\\n")
         archive.writestr("README.txt", b"Archive description")
 
     raw_zip = archive_buffer.getvalue()
@@ -314,17 +316,45 @@ def test_zip_report_lists_member_details_without_extracting_contents():
         media_kind="Archive",
     )
 
-    # This parser reads only ZIP directory metadata; it never extracts file bodies.
+    def fake_nested_report(nested_message, pieces):
+        return Report(
+            filename=nested_message.file.name,
+            size=nested_message.file.size,
+            mime=nested_message.file.mime_type,
+            ext=".mkv",
+            detected="Matroska/WebM container",
+            media_kind="Video",
+            audio={
+                "tracks": [{
+                    "type": "audio",
+                    "name": "Japanese Main Track",
+                    "language_name": "Japanese",
+                    "codec_name": "AAC",
+                }]
+            },
+            subtitles=[{
+                "type": "subtitles",
+                "name": "English Signs",
+                "language_name": "English",
+                "subtitle_format": "ASS",
+            }],
+        )
+
+    monkeypatch.setattr(file_inspector, "_report", fake_nested_report)
+
+    # The archive parser inspects ZIP directory data and bounded media prefixes;
+    # it never extracts archive member contents to disk.
     file_inspector._populate_telegram_media_info(message, report, raw_zip)
 
-    assert report.media_info["archive_entry_count"] == "3"
-    assert len(report.archive_entries) == 3
+    assert report.media_info["archive_entry_count"] == "5"
+    assert len(report.archive_entries) == 5
     assert report.archive_entries[0]["name"] == "Episodes/"
     assert report.archive_entries[0]["is_dir"] is True
     episode = next(item for item in report.archive_entries if item["name"].endswith(".mkv"))
     assert episode["size"] > 0
     assert episode["compression"] == "Deflate"
-    assert episode["crc32"]
+    assert "Japanese Main Track (Japanese · AAC)" in episode["audio_names"]
+    assert "English Signs (English · ASS)" in episode["subtitle_names"]
 
     page = bot.web_page(
         report,
@@ -334,10 +364,58 @@ def test_zip_report_lists_member_details_without_extracting_contents():
 
     assert "ZIP contents" in page
     assert "Episodes/episode-01.mkv" in page
-    assert "README.txt" in page
-    assert "Uncompressed size" in page
-    assert "Compressed" in page
-    assert "Modified" in page
-    assert "CRC-32" in page
-    assert "AniToon does not extract archive contents" in page
+    assert "Audio/Japanese.flac" in page
+    assert "Subtitles/English.srt" in page
+    assert "Japanese Main Track (Japanese · AAC)" in page
+    assert "English Signs (English · ASS)" in page
+    assert "Original size" in page
+    assert "Compressed size" in page
+    assert "Audio track names" in page
+    assert "Subtitle names" in page
+    assert "CRC-32" not in page
+    assert "AniToon does not extract archive contents" not in page
+    assert "Embedded audio/subtitle names are shown" in page
+
+
+def test_file_report_hides_redundant_and_internal_metadata():
+    report = Report(
+        filename="sample.jpg",
+        size=4096,
+        mime="image/jpeg",
+        ext=".jpg",
+        detected="JPEG image",
+        media_kind="Image",
+        media_info={
+            "category": "Image",
+            "detected_format": "JPEG image",
+            "file_extension": "JPG",
+            "declared_mime_type": "image/jpeg",
+            "file_size_bytes": "4096",
+            "image_format": "JPEG",
+            "image_pixel_dimensions": "800 × 600",
+            "telegram_media_type": "MessageMediaDocument",
+            "telegram_message_id": "98765",
+            "caption_characters": "130",
+            "has_caption": "Yes",
+            "image_is_animated": "No",
+            "image_has_transparency": "No",
+            "post_author": "AniToon Channel",
+            "views": "100",
+        },
+    )
+
+    page = bot.web_page(
+        report,
+        "clean-report-test",
+        datetime.now(timezone.utc) + timedelta(hours=1),
+    ).decode("utf-8")
+
+    assert "AniToon Channel" in page
+    assert "100" in page
+    assert "image/jpeg" not in page
+    assert "MessageMediaDocument" not in page
+    assert "98765" not in page
+    assert "Caption characters" not in page
+    assert "Image is animated" not in page
+    assert "Transparency" not in page
 
