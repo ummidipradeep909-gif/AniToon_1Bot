@@ -732,6 +732,14 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
             "completed": 0,
             "failed": 0,
             "cancelled": 0,
+            "clone_created_7d": 0,
+            "clone_registered": 0,
+            "clone_online": 0,
+            "clone_messages_7d": 0,
+            "clone_scans_started_7d": 0,
+            "clone_scans_completed_7d": 0,
+            "clone_scans_failed_7d": 0,
+            "clone_scans_cancelled_7d": 0,
         }
 
     try:
@@ -803,6 +811,35 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
             })
 
         total_scans = sum(int(row.get("scans", 0) or 0) for row in grouped)
+        # Clone analytics are deliberately bounded to the same rolling seven-day window.
+        today = datetime.now(timezone.utc).date()
+        first_day = today - timedelta(days=max(1, int(days)) - 1)
+        day_start = first_day.isoformat()
+        day_end = today.isoformat()
+        clone_rows = await asyncio.to_thread(
+            lambda: list(db.clone_daily_activity.find(
+                {"date": {"$gte": day_start, "$lte": day_end}},
+                {"_id": 0, "messages_received": 1, "scans_started": 1,
+                 "scans_completed": 1, "scans_failed": 1, "scans_cancelled": 1},
+            ))
+        )
+        clone_activity = {
+            key: sum(int(row.get(key, 0) or 0) for row in clone_rows)
+            for key in ("messages_received", "scans_started", "scans_completed",
+                        "scans_failed", "scans_cancelled")
+        }
+        clone_created = await asyncio.to_thread(
+            db.clones.count_documents,
+            {"created_at": {"$gte": cutoff}, "status": {"$ne": "removed"}},
+        )
+        clone_registered = await asyncio.to_thread(
+            db.clones.count_documents,
+            {"status": {"$in": ["online", "validated", "offline"]}},
+        )
+        clone_online = await asyncio.to_thread(
+            db.clones.count_documents,
+            {"status": {"$in": ["online", "validated"]}},
+        )
         return {
             "available": True,
             "users": users,
@@ -811,6 +848,16 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
             "completed": sum(int(row.get("completed", 0) or 0) for row in grouped),
             "failed": sum(int(row.get("failed", 0) or 0) for row in grouped),
             "cancelled": sum(int(row.get("cancelled", 0) or 0) for row in grouped),
+            "clone_created_7d": int(clone_created),
+            "clone_registered": int(clone_registered),
+            "clone_online": int(clone_online),
+            "clone_messages_7d": clone_activity["messages_received"],
+            "clone_scans_started_7d": clone_activity["scans_started"],
+            "clone_scans_completed_7d": clone_activity["scans_completed"],
+            "clone_scans_failed_7d": clone_activity["scans_failed"],
+            "clone_scans_cancelled_7d": clone_activity["scans_cancelled"],
+            "period_start": day_start,
+            "period_end": day_end,
         }
     except Exception:
         log.exception("Failed to build owner 7-day summary")
@@ -822,6 +869,14 @@ async def owner_7day_summary(days: int = 7) -> dict[str, Any]:
             "completed": 0,
             "failed": 0,
             "cancelled": 0,
+            "clone_created_7d": 0,
+            "clone_registered": 0,
+            "clone_online": 0,
+            "clone_messages_7d": 0,
+            "clone_scans_started_7d": 0,
+            "clone_scans_completed_7d": 0,
+            "clone_scans_failed_7d": 0,
+            "clone_scans_cancelled_7d": 0,
         }
 
 
