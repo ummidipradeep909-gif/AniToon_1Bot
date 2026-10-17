@@ -179,8 +179,8 @@ def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
             "token-2": (status_two, "second.pdf"),
             "token-3": (status_three, "third.zip"),
         })
-        # Queue 1 remains visible as processing. The next two jobs retain
-        # positions 2 and 3 until the first scan releases its worker slot.
+        # Active scans are not assigned queue numbers. The waiting scans start
+        # at QUEUE 1 and retain consecutive positions while the active scan runs.
         bot.processing_scan_tokens.clear()
         bot.processing_scan_tokens.add("token-1")
         bot.queued_processes = 2
@@ -188,10 +188,11 @@ def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
         async def exercise_positions():
             await bot._refresh_queue_positions()
             assert len(calls) == 2
-            assert calls[0][0] is status_two and "QUEUE 2" in calls[0][1]
-            assert calls[1][0] is status_three and "QUEUE 3" in calls[1][1]
+            assert calls[0][0] is status_two and "QUEUE 1" in calls[0][1]
+            assert calls[1][0] is status_three and "QUEUE 2" in calls[1][1]
+            assert "0%" not in calls[0][1] and "0%" not in calls[1][1]
 
-            # Completing Queue 1 removes it; remaining positions now shift to 1 and 2.
+            # Completing the active scan does not count it as a waiting queue item.
             await bot._remove_queued_scan("token-1")
 
         asyncio.run(exercise_positions())
@@ -210,12 +211,14 @@ def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
         bot.scan_queue_changed.clear()
 
 
-def test_processing_status_shows_the_actual_queue_position():
+def test_processing_status_is_separate_from_waiting_queue_numbers():
     first = bot.status_text("first.mkv", "Starting scan", 1, 1)
     second = bot.status_text("second.pdf", "Starting scan", 1, 2)
 
-    assert "QUEUE 1 — PROCESSING" in first
-    assert "QUEUE 2 — PROCESSING" in second
+    assert "<b>PROCESSING</b>" in first
+    assert "<b>PROCESSING</b>" in second
+    assert "QUEUE" not in first
+    assert "QUEUE" not in second
     assert "first.mkv" in first
     assert "second.pdf" in second
 
