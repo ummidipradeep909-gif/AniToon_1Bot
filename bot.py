@@ -4890,9 +4890,8 @@ def web_page(
         nav_links.append('<a href="#subs-section">Subtitles</a>')
 
     technical_items = [
-        ("Container", container_name if container_name != "Detected media" else None),
-        ("MIME type", report.mime),
-        ("Runtime", runtime if runtime not in ("N/A", "—") else None),
+        # Hero/summary already contain type, size, runtime, and the primary format.
+        # Retain only a useful detail not already shown elsewhere.
         ("Average bitrate", bitrate if bitrate != "—" else None),
     ]
     technical_cards = "".join(
