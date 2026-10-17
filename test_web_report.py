@@ -153,11 +153,12 @@ def test_pdf_report_uses_the_shared_file_report_layout_and_clean_pdf_fields():
     assert "Runtime source" not in page
 
 
-def test_queue_positions_shift_down_when_the_head_starts(monkeypatch):
+def test_queue_positions_shift_only_after_the_active_scan_finishes(monkeypatch):
     import asyncio
 
     old_order = list(bot.scan_queue_order)
     old_statuses = dict(bot.queued_scan_statuses)
+    old_processing = set(bot.processing_scan_tokens)
     old_count = bot.queued_processes
     calls = []
     status_one, status_two, status_three = object(), object(), object()
@@ -176,16 +177,20 @@ def test_queue_positions_shift_down_when_the_head_starts(monkeypatch):
             "token-2": (status_two, "second.pdf"),
             "token-3": (status_three, "third.zip"),
         })
-        bot.queued_processes = 3
+        # Queue 1 remains visible as processing. The next two jobs retain
+        # positions 2 and 3 until the first scan releases its worker slot.
+        bot.processing_scan_tokens.clear()
+        bot.processing_scan_tokens.add("token-1")
+        bot.queued_processes = 2
 
         async def exercise_positions():
             await bot._refresh_queue_positions()
-            assert ["QUEUE 1" in calls[0][1], "QUEUE 2" in calls[1][1], "QUEUE 3" in calls[2][1]] == [True, True, True]
+            assert len(calls) == 2
+            assert calls[0][0] is status_two and "QUEUE 2" in calls[0][1]
+            assert calls[1][0] is status_three and "QUEUE 3" in calls[1][1]
 
-            # Queue 1 starts: remove it, then re-render the waiting positions.
-            bot.scan_queue_order.pop(0)
-            bot.queued_scan_statuses.pop("token-1")
-            await bot._refresh_queue_positions()
+            # Completing Queue 1 removes it; remaining positions now shift to 1 and 2.
+            await bot._remove_queued_scan("token-1")
 
         asyncio.run(exercise_positions())
 
@@ -197,9 +202,20 @@ def test_queue_positions_shift_down_when_the_head_starts(monkeypatch):
         bot.scan_queue_order[:] = old_order
         bot.queued_scan_statuses.clear()
         bot.queued_scan_statuses.update(old_statuses)
+        bot.processing_scan_tokens.clear()
+        bot.processing_scan_tokens.update(old_processing)
         bot.queued_processes = old_count
         bot.scan_queue_changed.clear()
 
+
+def test_processing_status_shows_the_actual_queue_position():
+    first = bot.status_text("first.mkv", "Starting scan", 1, 1)
+    second = bot.status_text("second.pdf", "Starting scan", 1, 2)
+
+    assert "QUEUE 1 — PROCESSING" in first
+    assert "QUEUE 2 — PROCESSING" in second
+    assert "first.mkv" in first
+    assert "second.pdf" in second
 
 
 def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
