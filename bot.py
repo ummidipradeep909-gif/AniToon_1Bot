@@ -1800,12 +1800,14 @@ async def acquire_scan_slot(
                 )
 
                 if can_start:
+                    # Acquire the semaphore before removing Queue 1, so a
+                    # cancellation can never leave the following positions stale.
+                    await check_semaphore.acquire()
                     if scan_token in scan_queue_order:
                         scan_queue_order.pop(0)
                         queued_scan_statuses.pop(scan_token, None)
                         queued = False
                         refresh_queue = True
-                    await check_semaphore.acquire()
                     active_processes += 1
                     queued_processes = len(scan_queue_order)
                     start_now = True
@@ -3837,11 +3839,10 @@ async def handle_callback(
             return
 
         async with scan_queue_lock:
-            queue_full = active_processes >= MAX_CONCURRENT_CHECKS
-            queue_position = queued_processes + 1 if queue_full else 0
+            queue_full = active_processes >= MAX_CONCURRENT_CHECKS or bool(scan_queue_order)
 
         if queue_full:
-            await event.answer(f"Bot is full with {MAX_CONCURRENT_CHECKS} active scans. Your scan is queued at #{queue_position}.", alert=True)
+            await event.answer("Your scan is queued. Its QUEUE number updates automatically.")
         else:
             await event.answer("Metadata scan starting…")
 
@@ -4590,7 +4591,6 @@ def web_page(
         return "".join(cards)
 
     runtime = report.container.get("runtime") or "N/A"
-    runtime_source = report.container.get("runtime_source")
     container_name = report.detected or "Detected media"
     mime = report.mime or "application/octet-stream"
     size_text = human_size(report.size)
