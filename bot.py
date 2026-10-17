@@ -71,10 +71,10 @@ FILE_CHECKER_PRIVATE_ONLY = (
     not in {"0", "false", "no", "off"}
 )
 # Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "2")), 3))
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
-REPORT_LINK_TTL_SECONDS = 24 * 60 * 60
+REPORT_LINK_TTL_SECONDS = 10 * 60
 PENDING_SCAN_TTL_SECONDS = 10 * 60
 MAX_STORED_RESULTS = 100
 MAX_REPORT_TRACKS = 100
@@ -3887,9 +3887,10 @@ async def handle_callback(
         status_message = await event.get_message()
         await edit_status(
             status_message,
-            "🔎 <b>SCANNING METADATA</b>\n\n"
-            "<code>[░░░░░░░░░░] 0%</code>\n"
-            "Starting scan…",
+            "⏳ <b>QUEUE — REGISTERING SCAN</b>\n"
+            "📄 <b>Waiting for queue position…</b>\n\n"
+            "<code>[▰▱▱▱▱▱▱▱▱▱] 10%</code>\n"
+            "Preparing your scan. Queue position will appear shortly.",
             buttons=cancel_button(token),
         )
 
@@ -4487,9 +4488,9 @@ def web_page(
         # Already shown in the hero or overview.
         "category", "detected_format", "file_extension", "declared_mime_type", "file_size_bytes",
         # Telegram wrapper/post details are not file metadata and clutter the report.
-        "caption_preview", "caption_characters", "telegram_message_id", "message_date_utc",
-        "post_author", "views", "forwards", "replies", "grouped_media_album", "is_channel_post",
-        "forwarded_from_name", "forwarded_post_number", "forwarded_date_utc",
+        # Keep useful Telegram source/post context visible in the web report.
+        # Caption, author, view/forward/reply counts and forwarding details are
+        # valuable provenance rather than redundant file metadata.
     }
     if is_pdf:
         # Page count already appears in the PDF overview card.
