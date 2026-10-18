@@ -1694,17 +1694,35 @@ async def run_scan(
     filename = safe_filename(source_message)
 
     progress_state = {"pct": 0, "label": "Starting scan…"}
+    last_progress_edit_at = 0.0
+    last_progress_edit_pct = -1
 
     async def progress(line: str):
+        nonlocal last_progress_edit_at, last_progress_edit_pct
         parsed_pct, label = progress_details(line)
         progress_state["pct"] = max(int(progress_state["pct"]), parsed_pct)
         progress_state["label"] = label
+
+        # Parser callbacks can arrive in tight bursts. Telegram message edits are
+        # network round-trips, so throttle cosmetic updates instead of making the
+        # scan wait for every progress line. Large jumps still render immediately.
+        now = time.monotonic()
+        pct = int(progress_state["pct"])
+        if (
+            last_progress_edit_at > 0
+            and now - last_progress_edit_at < 0.8
+            and pct - last_progress_edit_pct < 12
+        ):
+            return
+
         queue_position = await _scan_queue_position(scan_token)
         await edit_status(
             status_message,
-            status_text(filename, label, progress_state["pct"], queue_position),
+            status_text(filename, label, pct, queue_position),
             buttons=cancel_button(scan_token),
         )
+        last_progress_edit_at = time.monotonic()
+        last_progress_edit_pct = pct
 
     heartbeat_stop = asyncio.Event()
     async def heartbeat():
