@@ -124,6 +124,45 @@ async def ensure_mongodb() -> bool:
     return (await _get_db()) is not None
 
 
+
+async def load_scan_worker_cap() -> int | None:
+    """Load the owner-selected maximum scan workers; None means use the environment default."""
+    db = await _get_db()
+    if db is None:
+        return None
+    try:
+        record = await asyncio.to_thread(
+            db.runtime_settings.find_one,
+            {"_id": "scan_worker_cap"},
+        )
+        if not record or "worker_cap" not in record:
+            return None
+        return max(1, min(int(record["worker_cap"]), 5))
+    except Exception:
+        log.exception("Failed to load scan worker cap")
+        return None
+
+
+async def save_scan_worker_cap(worker_cap: int) -> bool:
+    """Persist the owner's scan worker cap across restarts when MongoDB is reachable."""
+    db = await _get_db()
+    if db is None:
+        return False
+    value = max(1, min(int(worker_cap), 5))
+    try:
+        now = datetime.now(timezone.utc)
+        await asyncio.to_thread(
+            db.runtime_settings.update_one,
+            {"_id": "scan_worker_cap"},
+            {"$set": {"worker_cap": value, "updated_at": now}},
+            upsert=True,
+        )
+        return True
+    except Exception:
+        log.exception("Failed to save scan worker cap")
+        return False
+
+
 async def record_user(event) -> None:
     db = await _get_db()
     if db is None:
