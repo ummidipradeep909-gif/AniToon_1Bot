@@ -264,19 +264,33 @@ def _anitoon_start_art_bytes() -> bytes | None:
                 source.verify()
             with Image.open(io.BytesIO(raw)) as source:
                 image = source.convert("RGB")
+                # Prepare a high-resolution banner. Upscale smaller artwork to a
+                # 4K long edge with a high-quality resampler while preserving the
+                # original aspect ratio; never downscale artwork already larger.
+                max_width, max_height = 3840, 2160
+                width, height = image.size
+                scale = min(max_width / width, max_height / height)
+                if scale > 1:
+                    resampling = getattr(Image, "Resampling", Image).LANCZOS
+                    image = image.resize(
+                        (max(1, round(width * scale)), max(1, round(height * scale))),
+                        resampling,
+                    )
                 # Telegram is stricter about image decoding than Pillow; always
                 # send a freshly encoded baseline JPEG rather than raw bytes.
+                # Apply mild sharpening after resizing and avoid chroma subsampling
+                # to retain cleaner edges and color detail in the source JPEG.
                 image = image.filter(
-                    ImageFilter.UnsharpMask(radius=0.55, percent=95, threshold=3)
+                    ImageFilter.UnsharpMask(radius=0.8, percent=110, threshold=3)
                 )
                 out = io.BytesIO()
                 image.save(
                     out,
                     format="JPEG",
-                    quality=88,
+                    quality=95,
                     optimize=True,
                     progressive=False,
-                    subsampling=2,
+                    subsampling=0,
                 )
                 return out.getvalue()
         except Exception:
