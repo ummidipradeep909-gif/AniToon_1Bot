@@ -826,7 +826,7 @@ async def generate_video_previews(
     budget: int = 256 * 1024,
     timeout: int = 5,
 ) -> list[dict[str, Any]]:
-    """Generate one web preview: PDF first page, otherwise Telegram's thumbnail."""
+    """Generate one crisp web preview, preferring source pixels over tiny Telegram thumbs."""
     async with preview_semaphore:
         try:
             f = getattr(message, "file", None)
@@ -843,91 +843,126 @@ async def generate_video_previews(
             if not media:
                 return []
 
-            # For video/images and other Telegram media, use only Telegram's
-            # existing generated thumbnail; never seek frames from the source.
+            def encode_preview(source_image: Any) -> bytes | None:
+                """Keep chroma detail and resize gently rather than crushing quality to fit."""
+                try:
+                    image = ImageOps.exif_transpose(source_image).convert("RGB")
+                    image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
+                    image = image.filter(
+                        ImageFilter.UnsharpMask(radius=0.7, percent=90, threshold=3)
+                    )
+                    # Preserve color edges (especially blue/red detail) with 4:4:4
+                    # chroma. If needed, reduce dimensions rather than dropping JPEG
+                    # quality to the old very-blurry quality-68 fallback.
+                    for _ in range(8):
+                        output = io.BytesIO()
+                        image.save(
+                            output,
+                            format="JPEG",
+                            quality=90,
+                            optimize=True,
+                            progressive=True,
+                            subsampling=0,
+                        )
+                        encoded = output.getvalue()
+                        if encoded and len(encoded) <= 512 * 1024:
+                            return encoded
+                        if min(image.size) <= 480:
+                            break
+                        new_size = (
+                            max(1, int(image.width * 0.86)),
+                            max(1, int(image.height * 0.86)),
+                        )
+                        image = image.resize(new_size, Image.Resampling.LANCZOS)
+                    return None
+                except Exception:
+                    log.exception("Preview image encoding failed | token=%s", token)
+                    return None
+
+            def decode_video_frame(source: bytes) -> Any | None:
+                if not source or source.startswith(b"%PDF-") or av is None:
+                    return None
+                container = None
+                try:
+                    container = av.open(io.BytesIO(source), mode="r")
+                    stream = next((item for item in container.streams if item.type == "video"), None)
+                    if stream is None:
+                        return None
+                    frame = next(container.decode(stream), None)
+                    return frame.to_image().convert("RGB") if frame is not None else None
+                except Exception:
+                    log.info("Source first-frame preview unavailable | token=%s", token, exc_info=True)
+                    return None
+                finally:
+                    if container is not None:
+                        container.close()
+
             thumb = await asyncio.wait_for(
                 client.download_media(message, file=bytes, thumb=0),
                 timeout=timeout,
             )
-            if not thumb:
-                # Some Telegram documents/videos have no generated thumbnail.
-                # Create exactly one first-frame preview from a bounded source
-                # read, never exceeding the strict below-5-MB source budget.
+            thumb_raw = bytes(thumb) if thumb else b""
+            thumb_image = None
+            if thumb_raw and len(thumb_raw) <= PREVIEW_BUDGET:
                 try:
-                    raw_source = await _bounded_pdf_bytes(client, message, token)
-                    if raw_source and not raw_source.startswith(b"%PDF-") and av is not None:
-                        container = av.open(io.BytesIO(raw_source), mode="r")
-                        try:
-                            stream = next((st for st in container.streams if st.type == "video"), None)
-                            if stream is not None:
-                                frame = next(container.decode(stream), None)
-                                if frame is not None:
-                                    image = frame.to_image().convert("RGB")
-                                    image.thumbnail((1800, 1200), Image.Resampling.LANCZOS)
-                                    output = io.BytesIO()
-                                    image.save(output, format="JPEG", quality=84, optimize=True, progressive=True)
-                                    generated = output.getvalue()
-                                    if generated and len(generated) <= 512 * 1024:
-                                        return [{
-                                            "ratio": 0,
-                                            "seconds": 0,
-                                            "data": base64.b64encode(generated).decode("ascii"),
-                                            "mime": "image/jpeg",
-                                            "label": "Automatic first-frame thumbnail",
-                                        }]
-                        finally:
-                            container.close()
+                    with Image.open(io.BytesIO(thumb_raw)) as opened:
+                        thumb_image = ImageOps.exif_transpose(opened).convert("RGB")
                 except Exception:
-                    log.info("Automatic first-frame thumbnail unavailable | token=%s", token, exc_info=True)
-                log.info("No Telegram thumbnail available | token=%s", token)
-                return []
+                    thumb_image = None
 
-            raw = bytes(thumb)
-            if not raw or len(raw) > PREVIEW_BUDGET:
-                log.info(
-                    "Telegram thumbnail rejected | token=%s | bytes=%s",
-                    token,
-                    len(raw),
-                )
-                return []
-
-            with Image.open(io.BytesIO(raw)) as image:
-                image = ImageOps.exif_transpose(image).convert("RGB")
-                image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
-                image = image.filter(ImageFilter.UnsharpMask(radius=0.9, percent=105, threshold=3))
-                output = io.BytesIO()
-                image.save(
-                    output,
-                    format="JPEG",
-                    quality=90,
-                    optimize=True,
-                    progressive=True,
-                    subsampling="4:4:4",
-                )
-                web_raw = output.getvalue()
-
-            if len(web_raw) > 512 * 1024:
-                with Image.open(io.BytesIO(web_raw)) as image:
-                    output = io.BytesIO()
-                    image.save(
-                        output,
-                        format="JPEG",
-                        quality=68,
-                        optimize=True,
-                        progressive=True,
-                        subsampling="4:2:0",
+            # Telegram-generated thumbnails can be tiny and heavily compressed.
+            # For small thumbs, try a bounded source read and decode the real image
+            # or the video's first frame instead. Never download unbounded media.
+            source_image = None
+            thumb_is_small = (
+                thumb_image is not None
+                and max(thumb_image.size) < 720
+            )
+            source_size = getattr(f, "size", None)
+            source_is_bounded = (
+                isinstance(source_size, int)
+                and 0 < source_size < MAX_SAFE_SOURCE_BYTES
+            )
+            if (thumb_is_small or thumb_image is None) and source_is_bounded:
+                try:
+                    source_raw = await asyncio.wait_for(
+                        _bounded_pdf_bytes(client, message, token),
+                        timeout=max(timeout, 8),
                     )
-                    web_raw = output.getvalue()
+                    if source_raw and not source_raw.startswith(b"%PDF-"):
+                        if mime.startswith("image/") or name.endswith(
+                            (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff")
+                        ):
+                            try:
+                                with Image.open(io.BytesIO(source_raw)) as opened:
+                                    source_image = ImageOps.exif_transpose(opened).convert("RGB")
+                            except Exception:
+                                source_image = None
+                        if source_image is None:
+                            source_image = decode_video_frame(source_raw)
+                except Exception:
+                    log.info("Bounded source preview unavailable | token=%s", token, exc_info=True)
 
-            if not web_raw or len(web_raw) > 512 * 1024:
+            chosen_image = source_image or thumb_image
+            if chosen_image is None:
+                log.info("No usable thumbnail available | token=%s", token)
                 return []
 
+            web_raw = encode_preview(chosen_image)
+            if not web_raw:
+                return []
+
+            label = (
+                "High-quality source preview"
+                if source_image is not None
+                else "Telegram thumbnail"
+            )
             return [{
                 "ratio": 0,
                 "seconds": 0,
                 "data": base64.b64encode(web_raw).decode("ascii"),
                 "mime": "image/jpeg",
-                "label": "Telegram thumbnail",
+                "label": label,
             }]
         except (asyncio.TimeoutError, asyncio.CancelledError):
             log.info("Web preview unavailable | token=%s", token)
