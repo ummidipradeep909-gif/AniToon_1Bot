@@ -238,6 +238,45 @@ def test_processing_status_is_separate_from_waiting_queue_numbers():
     assert "second.pdf" in second
 
 
+def test_queue_number_update_bypasses_recent_registration_edit_throttle():
+    import asyncio
+    import time
+
+    class FakeStatusMessage:
+        id = 902001
+        chat_id = 902002
+
+        def __init__(self):
+            self.edits = []
+
+        async def edit(self, text, parse_mode=None, buttons=None):
+            self.edits.append((text, parse_mode, buttons))
+
+    message = FakeStatusMessage()
+    key = (message.chat_id, message.id)
+    previous = bot.status_edit_cache.get(key)
+    registering_text = (
+        "⏳ <b>QUEUE — REGISTERING SCAN</b>\\n"
+        "📄 <b>Waiting for queue position…</b>\\n\\n"
+        "<code>[▰▱▱▱▱▱▱▱▱▱] 10%</code>\\n"
+        "Preparing your scan. Queue position will appear shortly."
+    )
+    queue_three = bot.queue_status_text("third.gif", 3)
+
+    try:
+        # Simulate the user-visible registering message being edited just now.
+        bot.status_edit_cache[key] = (time.monotonic(), registering_text)
+        asyncio.run(bot.edit_status(message, queue_three, buttons="cancel"))
+        assert len(message.edits) == 1
+        assert "QUEUE 3" in message.edits[0][0]
+        assert "REGISTERING SCAN" not in message.edits[0][0]
+    finally:
+        if previous is None:
+            bot.status_edit_cache.pop(key, None)
+        else:
+            bot.status_edit_cache[key] = previous
+
+
 def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
     report = Report(
         filename="large-video.mkv",
