@@ -1159,17 +1159,6 @@ def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
 
 
-def adaptive_scan_limit() -> int:
-    """Scale concurrent scans to observed RAM use, within the configured hard cap."""
-    ram_pct = runtime_resource_stats()["ram_pct"]
-    if ram_pct >= RAM_PAUSE_PCT:
-        return 0
-    if ram_pct >= 60.0:
-        return 1
-    if ram_pct >= 45.0:
-        return min(2, MAX_CONCURRENT_CHECKS)
-    return MAX_CONCURRENT_CHECKS
-
 
 def resource_guard_reason() -> str | None:
     stats = runtime_resource_stats()
@@ -1313,7 +1302,7 @@ async def render_owner_dashboard(
             "⚠️ <b>Analytics temporarily unavailable</b>\n"
             "MongoDB could not provide the last-7-days statistics. No historical totals are guessed.\n\n"
             "⚡ <b>LIVE NOW</b>\n"
-            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{adaptive_scan_limit()} allowed</b> • cap {scan_worker_cap}/{MAX_SCAN_WORKERS}\n"
             f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
             f"🗄️ Database: <b>{mongo}</b>\n"
             f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
@@ -3685,7 +3674,6 @@ async def handle_callback(
         return
 
     if data.startswith("owner:workers:"):
-        await event.answer()
         sender = await event.get_sender()
         user_id = getattr(sender, "id", None)
         if not _owner_allowed(user_id):
