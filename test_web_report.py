@@ -307,11 +307,23 @@ def test_user_report_hides_probe_internals_but_keeps_scan_caveats():
 
 
 
-def test_adaptive_scan_limit_scales_down_with_ram_pressure(monkeypatch):
-    original_limit = bot.MAX_CONCURRENT_CHECKS
-    monkeypatch.setattr(bot, "MAX_CONCURRENT_CHECKS", 3)
+def test_adaptive_scan_limit_scales_from_five_workers_as_ram_rises(monkeypatch):
+    monkeypatch.setattr(bot, "scan_worker_cap", 5)
 
-    for ram_pct, expected in ((20.0, 3), (50.0, 2), (65.0, 1), (80.0, 0)):
+    for ram_pct, expected in (
+        (20.0, 5),
+        (34.9, 5),
+        (35.0, 4),
+        (44.9, 4),
+        (45.0, 3),
+        (54.9, 3),
+        (55.0, 2),
+        (64.9, 2),
+        (65.0, 1),
+        (74.9, 1),
+        (75.0, 0),
+        (90.0, 0),
+    ):
         monkeypatch.setattr(
             bot,
             "runtime_resource_stats",
@@ -319,7 +331,14 @@ def test_adaptive_scan_limit_scales_down_with_ram_pressure(monkeypatch):
         )
         assert bot.adaptive_scan_limit() == expected
 
-    monkeypatch.setattr(bot, "MAX_CONCURRENT_CHECKS", original_limit)
+
+def test_adaptive_ram_controller_respects_owner_worker_cap():
+    assert bot.worker_limit_for_ram(10.0, configured_cap=1) == 1
+    assert bot.worker_limit_for_ram(10.0, configured_cap=3) == 3
+    assert bot.worker_limit_for_ram(50.0, configured_cap=5) == 3
+    assert bot.worker_limit_for_ram(74.0, configured_cap=5) == 1
+    assert bot.worker_limit_for_ram(75.0, configured_cap=5) == 0
+    assert bot.worker_limit_for_ram(10.0, configured_cap=99) == 5
 
 
 def test_owner_home_uses_admin_studio_label():
@@ -329,6 +348,9 @@ def test_owner_home_uses_admin_studio_label():
     assert "Rolling 7-day overview" in source
     assert "Clone messages" in source
     assert "Performance & RAM" in source
+    assert "Smart RAM Scan Controller" in source
+    assert "owner:workers:up" in source
+    assert "adaptive_worker_limit" in source
 
 
 def test_zip_report_lists_member_details_without_extracting_contents(monkeypatch):
