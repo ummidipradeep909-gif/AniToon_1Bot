@@ -24,7 +24,7 @@ Optional:
 
 - `MONGODB_URI` — persistence for scan/user/clone records and dashboard analytics.
 - `CLONE_TOKEN_ENCRYPTION_KEY` — encryption key for stored clone bot tokens.
-- `MAX_CONCURRENT_CHECKS` — upper bound for simultaneous scans; runtime resource controls can reduce concurrency.
+- `MAX_CONCURRENT_CHECKS` — owner-configurable upper bound for simultaneous scans, from 1 to 5 (Render defaults to 5). A RAM-aware controller dynamically limits worker starts: below 35% RAM it can use the full cap; at 35/45/55/65% it steps down to 4/3/2/1 workers; at 75% or above it pauses new scans. The owner can change the cap from the Performance & RAM dashboard, and MongoDB saves that selection across restarts.
 - `SCAN_TIMEOUT_SECONDS` — per-scan timeout.
 
 Never commit bot tokens, API credentials or database credentials to source control.
