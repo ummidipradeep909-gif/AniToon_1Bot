@@ -23,7 +23,7 @@ services:
       - key: FILE_PROBE_CHUNK_BYTES
         value: "131072"
       - key: MAX_CONCURRENT_CHECKS
-        value: "3"
+        value: "5"
       - key: SCAN_TIMEOUT_SECONDS
         value: "90"
       - key: PUBLIC_WEB_URL

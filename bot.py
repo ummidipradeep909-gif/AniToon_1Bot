@@ -59,6 +59,8 @@ from mongo_store import (
     record_group_chat,
     list_group_chats,
     update_group_onboarding,
+    load_scan_worker_cap,
+    save_scan_worker_cap,
 )
 load_dotenv()
 
@@ -70,8 +72,12 @@ FILE_CHECKER_PRIVATE_ONLY = (
     os.getenv("FILE_CHECKER_PRIVATE_ONLY", "0").strip().lower()
     not in {"0", "false", "no", "off"}
 )
-# Adaptive free-instance default: avoid multiplying parser memory across too many simultaneous files.
-MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "3")), 3))
+# Hard safety ceiling. The RAM controller decides how many of these workers may run now.
+MAX_SCAN_WORKERS = 5
+MAX_CONCURRENT_CHECKS = max(1, min(int(os.getenv("MAX_CONCURRENT_CHECKS", "5")), MAX_SCAN_WORKERS))
+scan_worker_cap = MAX_CONCURRENT_CHECKS
+scan_worker_cap_persisted = False
+scan_worker_cap_source = "environment default"
 # Fail fast instead of leaving a Free-instance worker hung for minutes.
 SCAN_TIMEOUT_SECONDS = max(20, min(int(os.getenv("SCAN_TIMEOUT_SECONDS", "60")), 120))
 REPORT_LINK_TTL_SECONDS = 10 * 60
@@ -131,7 +137,8 @@ bot = TelegramClient(
     auto_reconnect=True,
 )
 bot.flood_sleep_threshold = 15 * 60
-check_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKS)
+# Reserve the full bounded pool so owner controls can raise the cap live without restart.
+check_semaphore = asyncio.Semaphore(MAX_SCAN_WORKERS)
 scan_queue_lock = asyncio.Lock()
 scan_queue_refresh_lock = asyncio.Lock()
 scan_queue_changed = asyncio.Event()
@@ -1039,19 +1046,19 @@ async def temp_cleanup_loop() -> None:
 
 
 def runtime_resource_stats() -> dict[str, Any]:
-    """Return app-owned resource signals; host/root filesystem is not app-controlled."""
-    rss_mb = 0.0
+    """Return container-aware memory and app-owned resource signals."""
+    process_rss_mb = 0.0
     try:
         with open("/proc/self/status", "r", encoding="utf-8") as handle:
             for line in handle:
                 if line.startswith("VmRSS:"):
-                    rss_mb = float(line.split()[1]) / 1024.0
+                    process_rss_mb = float(line.split()[1]) / 1024.0
                     break
     except (OSError, ValueError):
         pass
 
-    # Prefer the actual container memory limit when Render exposes cgroup v2/v1;
-    # keep a conservative fallback for environments without a readable limit.
+    # Prefer cgroup limits, as these reflect the memory budget of the Render
+    # container instead of the much larger host. Fall back conservatively.
     ram_limit_mb = 512.0
     for limit_path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
         try:
@@ -1064,7 +1071,23 @@ def runtime_resource_stats() -> dict[str, Any]:
                     break
         except (OSError, ValueError):
             continue
-    ram_pct = min(100.0, (rss_mb / ram_limit_mb * 100.0)) if ram_limit_mb else 0.0
+
+    # cgroup current usage includes the complete container, not just this
+    # Python process, so it better captures parser/native-library memory.
+    container_used_mb = None
+    for current_path in ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        try:
+            with open(current_path, "r", encoding="utf-8") as handle:
+                current_bytes = int(handle.read().strip())
+            if current_bytes > 0:
+                container_used_mb = current_bytes / (1024**2)
+                break
+        except (OSError, ValueError):
+            continue
+
+    memory_used_mb = container_used_mb if container_used_mb is not None else process_rss_mb
+    memory_source = "container cgroup" if container_used_mb is not None else "process RSS estimate"
+    ram_pct = min(100.0, memory_used_mb / ram_limit_mb * 100.0) if ram_limit_mb else 0.0
     tmp_bytes = app_temp_usage_bytes()
     tmp_mb = tmp_bytes / (1024**2)
     tmp_pct = min(100.0, tmp_bytes / APP_TMP_LIMIT_BYTES * 100.0)
@@ -1075,7 +1098,9 @@ def runtime_resource_stats() -> dict[str, Any]:
     egress_pct = min(100.0, egress_gb / 4.0 * 100.0)
 
     return {
-        "rss_mb": rss_mb,
+        "rss_mb": process_rss_mb,
+        "memory_used_mb": memory_used_mb,
+        "memory_source": memory_source,
         "ram_limit_mb": ram_limit_mb,
         "ram_pct": ram_pct,
         "tmp_mb": tmp_mb,
@@ -1088,20 +1113,51 @@ def runtime_resource_stats() -> dict[str, Any]:
         "web_egress_pct": egress_pct,
     }
 
+
 def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
 
 
-def adaptive_scan_limit() -> int:
-    """Scale concurrent scans to observed RAM use, within the configured hard cap."""
-    ram_pct = runtime_resource_stats()["ram_pct"]
+def worker_limit_for_ram(ram_pct: float, configured_cap: int | None = None) -> int:
+    """Choose 0-5 workers from measured RAM pressure, always respecting the owner cap."""
+    cap = max(1, min(int(scan_worker_cap if configured_cap is None else configured_cap), MAX_SCAN_WORKERS))
+    ram_pct = max(0.0, min(100.0, float(ram_pct)))
     if ram_pct >= RAM_PAUSE_PCT:
         return 0
-    if ram_pct >= 60.0:
-        return 1
+    # Five-way operation is permitted only with plenty of free container RAM.
+    # Concurrency is reduced before the hard pause to avoid OOM kills.
+    if ram_pct >= 65.0:
+        return min(cap, 1)
+    if ram_pct >= 55.0:
+        return min(cap, 2)
     if ram_pct >= 45.0:
-        return min(2, MAX_CONCURRENT_CHECKS)
-    return MAX_CONCURRENT_CHECKS
+        return min(cap, 3)
+    if ram_pct >= 35.0:
+        return min(cap, 4)
+    return cap
+
+
+def adaptive_scan_limit() -> int:
+    """Dynamically cap scan starts using container memory and the owner-set maximum."""
+    return worker_limit_for_ram(runtime_resource_stats()["ram_pct"], scan_worker_cap)
+
+
+async def change_scan_worker_cap(new_cap: int) -> bool:
+    """Change the live owner cap and persist it when MongoDB is reachable."""
+    global scan_worker_cap, scan_worker_cap_persisted, scan_worker_cap_source
+    scan_worker_cap = max(1, min(int(new_cap), MAX_SCAN_WORKERS))
+    try:
+        scan_worker_cap_persisted = await save_scan_worker_cap(scan_worker_cap)
+    except Exception:
+        log.exception("Could not persist scan worker cap")
+        scan_worker_cap_persisted = False
+    scan_worker_cap_source = "MongoDB" if scan_worker_cap_persisted else "runtime only until restart"
+    scan_queue_changed.set()
+    return scan_worker_cap_persisted
+
+def memory_pressure_high() -> bool:
+    return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
+
 
 
 def resource_guard_reason() -> str | None:
@@ -1136,10 +1192,10 @@ async def render_owner_resources(event, user_id: int) -> None:
     scan_limit = adaptive_scan_limit()
     ram_state = (
         "🟢 Normal"
-        if stats["ram_pct"] < 45
-        else ("🟡 Watch" if stats["ram_pct"] < 60 else ("🟠 High" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 Critical"))
+        if stats["ram_pct"] < 35
+        else ("🟡 Watch" if stats["ram_pct"] < 45 else ("🟠 High" if stats["ram_pct"] < RAM_PAUSE_PCT else "🔴 Critical"))
     )
-    worker_state = "PAUSED (RAM guard)" if scan_limit == 0 else f"{scan_limit} worker(s) allowed"
+    worker_state = "PAUSED (RAM guard)" if scan_limit == 0 else f"{scan_limit} worker(s) allowed now"
     egress_state = (
         "🟢 Low"
         if stats["web_egress_pct"] < 70
@@ -1147,25 +1203,40 @@ async def render_owner_resources(event, user_id: int) -> None:
     )
     guard = resource_guard_reason()
     guard_line = "✅ Guard is clear — new heavy scans are allowed." if not guard else f"🛑 <b>Guard active:</b> {html.escape(guard)}"
+    persist_state = "saved in MongoDB" if scan_worker_cap_persisted else "runtime-only until restart"
 
     text = (
-        "🖥️ <b>Render Resource Guard</b>\n"
-        f"🧠 RAM <b>{stats['rss_mb']:.1f}/512 MB</b> • {stats['ram_pct']:.1f}% {ram_state}\n"
+        "🧠 <b>Smart RAM Scan Controller</b>\n"
+        f"🧠 RAM <b>{stats['memory_used_mb']:.1f}/{stats['ram_limit_mb']:.0f} MB</b> • {stats['ram_pct']:.1f}% {ram_state}\n"
+        f"📍 Memory source: <i>{html.escape(stats['memory_source'])}</i>\n"
+        f"⚙️ Worker cap: <b>{scan_worker_cap}/{MAX_SCAN_WORKERS}</b> • {scan_worker_cap_source}\n"
+        f"🤖 Adaptive limit now: <b>{scan_limit if scan_limit else 'PAUSED'}</b> worker(s)\n"
+        f"🔎 Active scans: <b>{active_processes}</b> • Waiting: <b>{queued_processes}</b>\n"
         f"📡 Web egress <b>{stats['web_egress_gb']:.3f}/4 GB</b> • {stats['web_egress_pct']:.1f}% {egress_state}\n"
         f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
         f"🧹 Bot temp <b>{stats['tmp_mb']:.1f}/{stats['tmp_limit_mb']:.0f} MB</b> • {stats['tmp_pct']:.1f}%\n"
-        f"🔎 Load <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b> active • {queued_processes} queued\n"
-        f"🤖 Adaptive workers: <b>{worker_state}</b>\n"
         f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
-        "ℹ️ The RAM controller allows up to 3 workers under low memory use, scales down as RAM rises, "
-        "and pauses new scans at the safety threshold. The queue keeps waiting jobs for all users. "
-        "Bot temp is auto-cleaned every 5 min; report links expire after 10 min.\n"
-        "⚠️ Render host/root disk usage is not app-owned and cannot be safely cleaned by the bot."
+        "<b>Automatic RAM limits</b>\n"
+        "Below 35%: up to 5 workers • 35–44%: 4 • 45–54%: 3 • 55–64%: 2 • 65–74%: 1 • 75%+: pause new scans.\n"
+        "Use the controls below to change the maximum cap. The controller still reduces workers automatically for safety.\n"
+        f"💾 Cap setting: <b>{persist_state}</b>\n"
+        "Temp files are cleaned every 5 min; report links expire after 10 min.\n"
+        "⚠️ A five-worker cap is a maximum, not a promise of five active scans when memory is elevated."
     )
     await event.edit(
         text,
         parse_mode="html",
         buttons=[
+            [
+                Button.inline("➖", b"owner:workers:down"),
+                Button.inline(f"Worker cap {scan_worker_cap}/{MAX_SCAN_WORKERS}", b"owner:resources"),
+                Button.inline("➕", b"owner:workers:up"),
+            ],
+            [
+                Button.inline("🛡 Safe (2)", b"owner:workers:set:2"),
+                Button.inline("⚖ Balanced (3)", b"owner:workers:set:3"),
+                Button.inline("🚀 Max (5)", b"owner:workers:set:5"),
+            ],
             [Button.inline("🔄 Refresh", b"owner:resources")],
             [Button.inline("⬅️ Dashboard", b"owner:dashboard")],
         ],
@@ -1218,7 +1289,7 @@ async def render_owner_dashboard(
             f"• ✅ {int(summary.get('clone_scans_completed_7d', 0) or 0)} "
             f"• ❌ {int(summary.get('clone_scans_failed_7d', 0) or 0)}\n\n"
             "⚡ <b>LIVE NOW</b>\n"
-            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{adaptive_scan_limit()} allowed</b> • cap {scan_worker_cap}/{MAX_SCAN_WORKERS}\n"
             f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
             f"🗄️ Database: <b>{mongo}</b>\n"
             f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
@@ -1231,7 +1302,7 @@ async def render_owner_dashboard(
             "⚠️ <b>Analytics temporarily unavailable</b>\n"
             "MongoDB could not provide the last-7-days statistics. No historical totals are guessed.\n\n"
             "⚡ <b>LIVE NOW</b>\n"
-            f"🔎 Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+            f"🔎 Active scans: <b>{active_processes}/{adaptive_scan_limit()} allowed</b> • cap {scan_worker_cap}/{MAX_SCAN_WORKERS}\n"
             f"⏳ Waiting in queue: <b>{queued_processes}</b>\n"
             f"🗄️ Database: <b>{mongo}</b>\n"
             f"⏱️ Process uptime: <b>{uptime:.1f} hours</b>"
@@ -3223,7 +3294,7 @@ async def render_public_status(event, *, edit: bool = True) -> None:
     else:
         mongo = "🔴 URI not configured"
     queue = (
-        f"⚡ Active scans: <b>{active_processes}/{MAX_CONCURRENT_CHECKS}</b>\n"
+        f"⚡ Active scans: <b>{active_processes}/{adaptive_scan_limit()} allowed</b> • cap {scan_worker_cap}/{MAX_SCAN_WORKERS}\n"
         f"⏳ Queued scans: <b>{queued_processes}</b>"
     )
     text = (
@@ -3602,6 +3673,37 @@ async def handle_callback(
             await render_owner_dashboard(event, int(user_id))
         return
 
+    if data.startswith("owner:workers:"):
+        sender = await event.get_sender()
+        user_id = getattr(sender, "id", None)
+        if not _owner_allowed(user_id):
+            await event.answer("Owner access only.", alert=True)
+            return
+
+        parts = data.split(":")
+        new_cap = scan_worker_cap
+        try:
+            if len(parts) == 3 and parts[2] == "up":
+                new_cap = min(MAX_SCAN_WORKERS, scan_worker_cap + 1)
+            elif len(parts) == 3 and parts[2] == "down":
+                new_cap = max(1, scan_worker_cap - 1)
+            elif len(parts) == 4 and parts[2] == "set":
+                new_cap = max(1, min(int(parts[3]), MAX_SCAN_WORKERS))
+            else:
+                await event.answer("Invalid worker control.", alert=True)
+                return
+        except ValueError:
+            await event.answer("Invalid worker cap.", alert=True)
+            return
+
+        persisted = await change_scan_worker_cap(new_cap)
+        if persisted:
+            await event.answer(f"Worker cap saved: {scan_worker_cap}/{MAX_SCAN_WORKERS}.")
+        else:
+            await event.answer(f"Worker cap set: {scan_worker_cap}/{MAX_SCAN_WORKERS} (not persisted).")
+        await render_owner_resources(event, int(user_id))
+        return
+
     if data == "owner:resources":
         await event.answer()
         sender = await event.get_sender()
@@ -3896,7 +3998,7 @@ async def handle_callback(
 
         async with scan_queue_lock:
             queue_full = (
-                active_processes >= MAX_CONCURRENT_CHECKS
+                active_processes >= max(1, adaptive_scan_limit())
                 or any(token not in processing_scan_tokens for token in scan_queue_order)
             )
 
@@ -5521,7 +5623,10 @@ async def health_server():
                     "active_scans": active_processes,
                     "queued_scans": queued_processes,
                     "preview_tasks": len(preview_tasks),
-                    "max_active_scans": MAX_CONCURRENT_CHECKS,
+                    "max_active_scans": scan_worker_cap,
+                    "worker_hard_limit": MAX_SCAN_WORKERS,
+                    "adaptive_worker_limit": adaptive_scan_limit(),
+                    "ram_auto_control": True,
                     "ram_pct": runtime_resource_stats()["ram_pct"],
                     "web_egress_gb": runtime_resource_stats()["web_egress_gb"],
                     "guard_active": bool(resource_guard_reason()),
@@ -5722,6 +5827,7 @@ strong{color:#fff}
 
 
 async def main():
+    global scan_worker_cap, scan_worker_cap_persisted, scan_worker_cap_source
     clone_monitor_task: asyncio.Task | None = None
     group_onboarding_task: asyncio.Task | None = None
     temp_cleanup_task: asyncio.Task | None = None
@@ -5775,6 +5881,12 @@ async def main():
                 mongo_ok,
             )
             if mongo_ok:
+                saved_worker_cap = await load_scan_worker_cap()
+                if saved_worker_cap is not None:
+                    scan_worker_cap = max(1, min(int(saved_worker_cap), MAX_SCAN_WORKERS))
+                    scan_worker_cap_persisted = True
+                    scan_worker_cap_source = "MongoDB"
+                    log.info("Loaded saved scan worker cap | cap=%s/%s", scan_worker_cap, MAX_SCAN_WORKERS)
                 from mongo_store import purge_expired_web_reports
                 await purge_expired_web_reports()
             try:
@@ -5849,7 +5961,7 @@ async def main():
             username,
             FILE_CHECKER_PRIVATE_ONLY,
             restored,
-            MAX_CONCURRENT_CHECKS,
+            scan_worker_cap,
             SCAN_TIMEOUT_SECONDS,
             PUBLIC_WEB_URL,
         )
