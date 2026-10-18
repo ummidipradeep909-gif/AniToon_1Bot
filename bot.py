@@ -1523,7 +1523,19 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
         "temporarily rate-limited this scan",
         "metadata scan failed",
     ))
-    if previous and not terminal_update and now - previous[0] < STATUS_EDIT_MIN_INTERVAL:
+    # Queue positions are state transitions, not animation frames. They must
+    # update immediately so the temporary "REGISTERING SCAN" message cannot
+    # stick at 10% when the first queue-number edit happens inside the throttle.
+    queue_state_update = (
+        lowered.startswith("⏳ <b>queue ")
+        and "registering scan" not in lowered
+    )
+    if (
+        previous
+        and not terminal_update
+        and not queue_state_update
+        and now - previous[0] < STATUS_EDIT_MIN_INTERVAL
+    ):
         return
 
     try:
