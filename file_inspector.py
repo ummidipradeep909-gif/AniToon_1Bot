@@ -8,6 +8,7 @@ import os
 import re
 import struct
 import zipfile
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -25,6 +26,11 @@ MAX_INITIAL_PROBE = 1 * 1024 * 1024
 MAX_DEEP_PROBE = MAX_SAFE_SOURCE_BYTES
 DEFAULT_CHUNK = 512 * 1024
 MAX_TRACKS_PER_KIND = 100
+MAX_ARCHIVE_ENTRIES = 100
+MAX_ARCHIVE_MEMBER_PROBE_BYTES = 512 * 1024
+MAX_ARCHIVE_NESTED_PROBE_BYTES = 1024 * 1024
+MAX_ARCHIVE_NESTED_MEDIA = 3
+MAX_ARCHIVE_CENTRAL_DIRECTORY_BYTES = 2 * 1024 * 1024
 ProgressFn = Callable[[str], Awaitable[None]]
 
 LANG = {
@@ -88,6 +94,7 @@ class Report:
     probe_ranges:list[str]=field(default_factory=list)
     previews:list[dict[str,Any]]=field(default_factory=list)
     media_info:dict[str,Any]=field(default_factory=dict)
+    archive_entries:list[dict[str,Any]]=field(default_factory=list)
 
 def human(n:int|None)->str:
     if n is None:return "Not available"
@@ -1175,6 +1182,127 @@ def _populate_telegram_media_info(message: Any, report: Report, raw: bytes = b""
                 put("archive_compressed_bytes", sum(item.compress_size for item in members))
                 put("archive_directory_preview", " | ".join(item.filename for item in members[:8]))
                 put("archive_contains_encrypted_members", any(item.flag_bits & 0x1 for item in members))
+                # Only actual ZIP archives get a dedicated member listing; office
+                # formats are ZIP containers internally, but keep their own report.
+                # Inspect media headers/track metadata only, never extracting files.
+                if ext == ".zip" or "zip archive" in report.detected.lower():
+                    compression_names = {
+                        zipfile.ZIP_STORED: "Stored",
+                        zipfile.ZIP_DEFLATED: "Deflate",
+                        getattr(zipfile, "ZIP_BZIP2", 12): "BZip2",
+                        getattr(zipfile, "ZIP_LZMA", 14): "LZMA",
+                    }
+                    entries = []
+                    remaining_nested_budget = MAX_ARCHIVE_NESTED_PROBE_BYTES
+                    nested_media_scanned = 0
+                    video_container_exts = {
+                        ".mkv", ".webm", ".mp4", ".m4v", ".mov", ".mka",
+                    }
+                    for item in members[:MAX_ARCHIVE_ENTRIES]:
+                        try:
+                            modified_at = datetime(*item.date_time).strftime("%Y-%m-%d %H:%M")
+                        except (TypeError, ValueError, OverflowError):
+                            modified_at = "Not available"
+                        guessed_type = mimetypes.guess_type(item.filename)[0]
+                        member_ext = _ext(item.filename.lower())
+                        suffix = member_ext.lstrip(".").upper()
+                        audio_names: list[str] = []
+                        subtitle_names: list[str] = []
+                        # Loose audio/subtitle files are useful by their actual archive
+                        # path even if they do not contain embedded track-title metadata.
+                        if not item.is_dir() and member_ext in AUDIO_EXT:
+                            audio_names.append(str(item.filename)[:512])
+                        if not item.is_dir() and member_ext in SUB_EXT:
+                            subtitle_names.append(str(item.filename)[:512])
+
+                        # Matroska and MP4 containers can expose language and track names.
+                        # Read only a small prefix of at most three media members, with a
+                        # separate aggregate decompressed-byte ceiling to mitigate zip bombs.
+                        if (
+                            not item.is_dir()
+                            and member_ext in video_container_exts
+                            and nested_media_scanned < MAX_ARCHIVE_NESTED_MEDIA
+                            and remaining_nested_budget > 0
+                            and not (item.flag_bits & 0x1)
+                        ):
+                            nested_read_limit = min(
+                                MAX_ARCHIVE_MEMBER_PROBE_BYTES,
+                                remaining_nested_budget,
+                            )
+                            try:
+                                with archive.open(item, "r") as nested_handle:
+                                    nested_raw = nested_handle.read(nested_read_limit)
+                                remaining_nested_budget -= len(nested_raw)
+                                nested_media_scanned += 1
+                                if nested_raw:
+                                    nested_file = SimpleNamespace(
+                                        name=str(item.filename),
+                                        size=int(item.file_size),
+                                        mime_type=guessed_type,
+                                        attributes=[],
+                                    )
+                                    nested_message = SimpleNamespace(
+                                        file=nested_file,
+                                        media=None,
+                                    )
+                                    nested_report = _report(
+                                        nested_message,
+                                        [ProbePiece(0, nested_raw, "ZIP member metadata prefix")],
+                                    )
+                                    for track in nested_report.audio.get("tracks", []):
+                                        track_name = str(
+                                            track.get("name")
+                                            or track.get("display_name")
+                                            or "Audio track"
+                                        ).strip()
+                                        language = str(track.get("language_name") or "").strip()
+                                        codec = str(track.get("codec_name") or track.get("codec") or "").strip()
+                                        extra = " · ".join(part for part in (language, codec) if part)
+                                        shown = f"{track_name} ({extra})" if extra else track_name
+                                        if shown and shown not in audio_names:
+                                            audio_names.append(shown[:220])
+                                    for track in nested_report.subtitles:
+                                        track_name = str(
+                                            track.get("name")
+                                            or track.get("display_name")
+                                            or "Subtitle track"
+                                        ).strip()
+                                        language = str(track.get("language_name") or "").strip()
+                                        subtitle_format = str(
+                                            track.get("subtitle_format")
+                                            or track.get("format")
+                                            or ""
+                                        ).strip()
+                                        extra = " · ".join(
+                                            part for part in (language, subtitle_format) if part
+                                        )
+                                        shown = f"{track_name} ({extra})" if extra else track_name
+                                        if shown and shown not in subtitle_names:
+                                            subtitle_names.append(shown[:220])
+                            except Exception:
+                                # Broken/unsupported or encrypted members remain visible
+                                # in the archive listing without aborting the full report.
+                                pass
+
+                        entries.append({
+                            "name": str(item.filename)[:512],
+                            "file_type": (
+                                "Folder" if item.is_dir()
+                                else guessed_type or (f"{suffix} file" if suffix else "File")
+                            ),
+                            "size": int(item.file_size),
+                            "compressed_size": int(item.compress_size),
+                            "is_dir": bool(item.is_dir()),
+                            "compression": compression_names.get(
+                                item.compress_type, f"Method {int(item.compress_type)}"
+                            ),
+                            "modified_at": modified_at,
+                            "encrypted": bool(item.flag_bits & 0x1),
+                            "crc32": f"{int(item.CRC) & 0xFFFFFFFF:08X}",
+                            "audio_names": audio_names,
+                            "subtitle_names": subtitle_names,
+                        })
+                    report.archive_entries = entries
                 core = next((item for item in members if item.filename.lower() in {"docprops/core.xml", "meta.xml"}), None)
                 if core is not None and core.file_size <= 65536:
                     with archive.open(core) as handle:
@@ -1392,6 +1520,303 @@ def _required_element_end(data:bytes,pos:int)->int|None:
     return pos+id_len+size_len+size
 
 
+class _SparseRangeReader:
+    """Seekable ZIP reader backed only by explicitly fetched source-byte ranges."""
+
+    def __init__(self, size: int):
+        self.size = max(0, int(size))
+        self.position = 0
+        self.ranges: list[tuple[int, bytes]] = []
+        self.closed = False
+
+    def add_range(self, offset: int, data: bytes) -> None:
+        if data:
+            self.ranges.append((max(0, int(offset)), bytes(data)))
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.position
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence == 0:
+            target = offset
+        elif whence == 1:
+            target = self.position + offset
+        elif whence == 2:
+            target = self.size + offset
+        else:
+            raise ValueError("Invalid seek origin")
+        if target < 0:
+            raise ValueError("Negative seek position")
+        self.position = int(target)
+        return self.position
+
+    def read(self, size: int = -1) -> bytes:
+        if self.closed or self.position >= self.size:
+            return b""
+        if size is None or size < 0:
+            size = self.size - self.position
+        if size == 0:
+            return b""
+        candidates = [
+            (start, data)
+            for start, data in self.ranges
+            if start <= self.position < start + len(data)
+        ]
+        if not candidates:
+            return b""
+        start, data = max(candidates, key=lambda pair: pair[0] + len(pair[1]))
+        available = start + len(data) - self.position
+        count = min(int(size), available)
+        begin = self.position - start
+        result = data[begin:begin + count]
+        self.position += len(result)
+        return result
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def _inspect_large_zip_from_ranges(
+    client: Any,
+    message: Any,
+    progress: ProgressFn | None = None,
+) -> tuple[Report, int] | None:
+    """Read a ZIP's directory and a few media prefixes without downloading the archive."""
+    file_obj = getattr(message, "file", None)
+    media = getattr(message, "media", None)
+    total = getattr(file_obj, "size", None)
+    if not isinstance(total, int) or total <= MAX_SAFE_SOURCE_BYTES or not media:
+        return None
+
+    filename = str(getattr(file_obj, "name", None) or "telegram_file")
+    mime = str(getattr(file_obj, "mime_type", None) or "").lower()
+    if _ext(filename.lower()) != ".zip" and mime not in {
+        "application/zip", "application/x-zip-compressed", "application/x-zip",
+    }:
+        return None
+
+    async def say(line: str) -> None:
+        if progress:
+            await progress(line)
+
+    tail_limit = 65_557  # Maximum classic ZIP end record + its comment.
+    tail_offset = max(0, total - tail_limit)
+    await say("🧭 Stage 1/3 • locating the ZIP directory at the file end…")
+    tail, err = await _read_range(
+        client, media, total, tail_offset, min(tail_limit, total)
+    )
+    bytes_read = len(tail)
+    if not tail:
+        return None
+
+    end_signature = b"PK\x05\x06"
+    end_pos = tail.rfind(end_signature)
+    while end_pos >= 0:
+        if end_pos + 22 <= len(tail):
+            comment_size = int.from_bytes(tail[end_pos + 20:end_pos + 22], "little")
+            if end_pos + 22 + comment_size == len(tail):
+                break
+        end_pos = tail.rfind(end_signature, 0, end_pos)
+    if end_pos < 0 or end_pos + 22 > len(tail):
+        return None
+
+    entries_on_disk = int.from_bytes(tail[end_pos + 8:end_pos + 10], "little")
+    entry_count = int.from_bytes(tail[end_pos + 10:end_pos + 12], "little")
+    directory_size = int.from_bytes(tail[end_pos + 12:end_pos + 16], "little")
+    directory_offset = int.from_bytes(tail[end_pos + 16:end_pos + 20], "little")
+    if (
+        entries_on_disk == 0xFFFF
+        or entry_count == 0xFFFF
+        or directory_size == 0xFFFFFFFF
+        or directory_offset == 0xFFFFFFFF
+        or entries_on_disk != entry_count
+        or directory_size > MAX_ARCHIVE_CENTRAL_DIRECTORY_BYTES
+    ):
+        # ZIP64 and multi-disk archives use different directory records.
+        return None
+
+    end_absolute = tail_offset + end_pos
+    concat_offset = end_absolute - directory_size - directory_offset
+    directory_start = directory_offset + concat_offset
+    if (
+        directory_start < 0
+        or directory_start + directory_size > total
+        or directory_start + directory_size > end_absolute
+    ):
+        return None
+
+    await say("🎯 Stage 2/3 • reading the bounded ZIP directory and file list…")
+    directory, err = await _read_range(
+        client, media, total, directory_start, directory_size
+    )
+    bytes_read += len(directory)
+    if len(directory) != directory_size:
+        return None
+
+    reader = _SparseRangeReader(total)
+    reader.add_range(tail_offset, tail)
+    reader.add_range(directory_start, directory)
+
+    compression_names = {
+        zipfile.ZIP_STORED: "Stored",
+        zipfile.ZIP_DEFLATED: "Deflate",
+        getattr(zipfile, "ZIP_BZIP2", 12): "BZip2",
+        getattr(zipfile, "ZIP_LZMA", 14): "LZMA",
+    }
+    video_container_exts = {".mkv", ".webm", ".mp4", ".m4v", ".mov", ".mka"}
+    remaining_nested_budget = MAX_ARCHIVE_NESTED_PROBE_BYTES
+    nested_media_scanned = 0
+    archive_entries: list[dict[str, Any]] = []
+
+    try:
+        with zipfile.ZipFile(reader, "r") as archive:
+            members = archive.infolist()
+            total_uncompressed = sum(int(item.file_size) for item in members)
+            total_compressed = sum(int(item.compress_size) for item in members)
+            encrypted_members = any(bool(item.flag_bits & 0x1) for item in members)
+
+            for item in members[:MAX_ARCHIVE_ENTRIES]:
+                try:
+                    modified_at = datetime(*item.date_time).strftime("%Y-%m-%d %H:%M")
+                except (TypeError, ValueError, OverflowError):
+                    modified_at = "Not available"
+                guessed_type = mimetypes.guess_type(item.filename)[0]
+                member_ext = _ext(item.filename.lower())
+                suffix = member_ext.lstrip(".").upper()
+                audio_names: list[str] = []
+                subtitle_names: list[str] = []
+                if not item.is_dir() and member_ext in AUDIO_EXT:
+                    audio_names.append(str(item.filename)[:512])
+                if not item.is_dir() and member_ext in SUB_EXT:
+                    subtitle_names.append(str(item.filename)[:512])
+
+                if (
+                    not item.is_dir()
+                    and member_ext in video_container_exts
+                    and not (item.flag_bits & 0x1)
+                    and nested_media_scanned < MAX_ARCHIVE_NESTED_MEDIA
+                    and remaining_nested_budget > 0
+                ):
+                    range_size = min(
+                        MAX_ARCHIVE_MEMBER_PROBE_BYTES,
+                        remaining_nested_budget,
+                        max(64 * 1024, int(item.compress_size) + 64 * 1024),
+                    )
+                    range_size = min(range_size, max(0, total - int(item.header_offset)))
+                    try:
+                        nested_range, nested_error = await _read_range(
+                            client, media, total, int(item.header_offset), range_size
+                        )
+                        bytes_read += len(nested_range)
+                        if nested_range:
+                            reader.add_range(int(item.header_offset), nested_range)
+                            remaining_nested_budget -= len(nested_range)
+                            nested_media_scanned += 1
+                            # Prefix-only decompression: enough for common stream headers,
+                            # never enough to extract or save the full embedded media file.
+                            with archive.open(item, "r") as nested_handle:
+                                nested_raw = nested_handle.read(
+                                    min(256 * 1024, MAX_ARCHIVE_MEMBER_PROBE_BYTES)
+                                )
+                            if nested_raw:
+                                nested_file = SimpleNamespace(
+                                    name=str(item.filename),
+                                    size=int(item.file_size),
+                                    mime_type=guessed_type,
+                                    attributes=[],
+                                )
+                                nested_message = SimpleNamespace(
+                                    file=nested_file,
+                                    media=None,
+                                )
+                                nested_report = _report(
+                                    nested_message,
+                                    [ProbePiece(0, nested_raw, "ZIP member metadata prefix")],
+                                )
+                                for track in nested_report.audio.get("tracks", []):
+                                    track_name = str(
+                                        track.get("name")
+                                        or track.get("display_name")
+                                        or "Audio track"
+                                    ).strip()
+                                    language = str(track.get("language_name") or "").strip()
+                                    codec = str(track.get("codec_name") or track.get("codec") or "").strip()
+                                    extra = " · ".join(part for part in (language, codec) if part)
+                                    shown = f"{track_name} ({extra})" if extra else track_name
+                                    if shown and shown not in audio_names:
+                                        audio_names.append(shown[:220])
+                                for track in nested_report.subtitles:
+                                    track_name = str(
+                                        track.get("name")
+                                        or track.get("display_name")
+                                        or "Subtitle track"
+                                    ).strip()
+                                    language = str(track.get("language_name") or "").strip()
+                                    subtitle_format = str(
+                                        track.get("subtitle_format")
+                                        or track.get("format")
+                                        or ""
+                                    ).strip()
+                                    extra = " · ".join(
+                                        part for part in (language, subtitle_format) if part
+                                    )
+                                    shown = f"{track_name} ({extra})" if extra else track_name
+                                    if shown and shown not in subtitle_names:
+                                        subtitle_names.append(shown[:220])
+                    except Exception:
+                        # Some unusual ZIP entries can lack local headers or be damaged;
+                        # their directory records should still be shown.
+                        pass
+
+                archive_entries.append({
+                    "name": str(item.filename)[:512],
+                    "file_type": (
+                        "Folder" if item.is_dir()
+                        else guessed_type or (f"{suffix} file" if suffix else "File")
+                    ),
+                    "size": int(item.file_size),
+                    "compressed_size": int(item.compress_size),
+                    "is_dir": bool(item.is_dir()),
+                    "compression": compression_names.get(
+                        item.compress_type, f"Method {int(item.compress_type)}"
+                    ),
+                    "modified_at": modified_at,
+                    "encrypted": bool(item.flag_bits & 0x1),
+                    "crc32": f"{int(item.CRC) & 0xFFFFFFFF:08X}",
+                    "audio_names": audio_names,
+                    "subtitle_names": subtitle_names,
+                })
+
+    except (OSError, ValueError, zipfile.BadZipFile, RuntimeError):
+        return None
+
+    report = Report(
+        filename=filename,
+        size=total,
+        mime=mime or "application/zip",
+        ext=_ext(filename),
+        detected="ZIP archive",
+        media_kind="Archive",
+        sampled=bytes_read,
+        archive_entries=archive_entries,
+    )
+    _populate_telegram_media_info(message, report)
+    report.media_info.update({
+        "archive_entry_count": str(len(members)),
+        "archive_uncompressed_bytes": str(total_uncompressed),
+        "archive_compressed_bytes": str(total_compressed),
+        "archive_contains_encrypted_members": "Yes" if encrypted_members else "No",
+    })
+    await say("🧪 Stage 3/3 • assembling the ZIP contents report…")
+    return report, bytes_read
+
+
 async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|None=None,deep:bool=True)->tuple[Report,int]:
     f=getattr(message,"file",None)
     total=getattr(f,"size",None)
@@ -1404,6 +1829,21 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
 
     configured_budget = deep_probe_budget()
     total_int = int(total) if isinstance(total, int) and total > 0 else None
+
+    # For ZIPs larger than the normal full-file boundary, inspect the central
+    # directory at the file tail first. This avoids wasting the 5 MB probe on
+    # an archive prefix that cannot contain its directory listing.
+    if total_int is not None and total_int > MAX_SAFE_SOURCE_BYTES:
+        try:
+            large_zip_report = await _inspect_large_zip_from_ranges(
+                client, message, progress=progress
+            )
+            if large_zip_report is not None:
+                return large_zip_report
+        except Exception:
+            # Fall back to the ordinary bounded metadata scan for unsupported ZIPs.
+            pass
+
     full_small_file = total_int is not None and total_int < MAX_SAFE_SOURCE_BYTES
 
     async def say(s):
@@ -1471,24 +1911,52 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
 def _safe(v:Any)->str:return html.escape(str(v))
 def _rows(track:dict[str,Any],i:int):
     out=[f"{i}. {_safe(track.get('name') or track.get('display_name') or 'Unnamed')}"]
-    if track.get("name_source"):out.append(f"   Name source: {_safe(track['name_source'])}")
-    for k in ("track_uid","language_name","language","codec_name","codec","dimensions","display_dimensions","crop","frame_rate","scan_type","stereo_mode","alpha_mode","channels","sample_rate","output_sample_rate","bit_depth","codec_delay","seek_preroll","default","forced","enabled","original","commentary","hearing_impaired","visual_impaired"):
-        if track.get(k):out.append(f"   {_safe(k.replace('_',' ').title())}: {_safe(track[k])}")
+    fields = (
+        ("Language", track.get("language_name") or track.get("language")),
+        ("Codec", track.get("codec_name") or track.get("codec")),
+        ("Resolution", track.get("dimensions")),
+        ("Display size", track.get("display_dimensions")),
+        ("Crop", track.get("crop")),
+        ("Frame rate", track.get("frame_rate")),
+        ("Scan type", track.get("scan_type")),
+        ("Stereo mode", track.get("stereo_mode")),
+        ("Alpha mode", track.get("alpha_mode")),
+        ("Channels", track.get("channels")),
+        ("Sample rate", track.get("sample_rate")),
+        ("Output sample rate", track.get("output_sample_rate")),
+        ("Bit depth", track.get("bit_depth")),
+    )
+    for label, value in fields:
+        if value not in (None, ""):
+            out.append(f"   {_safe(label)}: {_safe(value)}")
+    # Status flags add value when enabled; listing every negative flag and internal
+    # track UID/name-source details is repetitive and not useful to most readers.
+    for key,label in (
+        ("default","Default"),("forced","Forced"),("original","Original"),
+        ("commentary","Commentary"),("hearing_impaired","Hearing impaired"),
+        ("visual_impaired","Visual impaired"),
+    ):
+        if str(track.get(key) or "").lower() in {"yes","true","1"}:
+            out.append(f"   {_safe(label)}: Yes")
     return out
 
 def format_report(r:Report)->str:
     a=r.audio.get("tracks",[]);v=r.video.get("tracks",[])
+    category = str(r.media_info.get("category") or r.media_kind or "").strip()
+    detected = str(r.detected or "").strip()
     lines=[
         "🔬 <b>FILE INTELLIGENCE</b>","",
         f"📄 <b>{_safe(r.filename)}</b>",
-        f"📦 {_safe(r.detected)}",
+        f"📦 {_safe(detected or category or 'Media file')}",
         f"📏 {human(r.size)}",
-        f"🧾 MIME: {_safe(r.mime or 'application/octet-stream')}",
-        f"🧩 Media category: <b>{_safe(r.media_info.get('category') or r.media_kind or 'File')}</b>",
     ]
-    if r.container.get("runtime"):lines.append(f"⏱ Runtime: <b>{_safe(r.container['runtime'])}</b>")
-    for key in ("image_pixel_dimensions", "image_format", "sticker_alt_text", "sticker_set",
-                "video_duration_seconds", "audio_title", "audio_performer", "pdf_pages",
+    if category and category.lower() not in detected.lower():
+        lines.append(f"🧩 Type: <b>{_safe(category)}</b>")
+    runtime = r.container.get("runtime")
+    if runtime:
+        lines.append(f"⏱ Runtime: <b>{_safe(runtime)}</b>")
+    for key in ("image_pixel_dimensions", "sticker_alt_text", "sticker_set",
+                "audio_title", "audio_performer", "pdf_pages",
                 "webpage_title", "poll_question", "post_author", "views", "forwards"):
         value = r.media_info.get(key)
         if value not in (None, ""):
@@ -1502,9 +1970,8 @@ def format_report(r:Report)->str:
         track_count_lines.append(f"💬 Subtitle tracks: <b>{len(r.subtitles)}</b>")
     if track_count_lines:
         lines += [""] + track_count_lines
-    if r.container.get("average_bitrate"):lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
-    # Keep only user-relevant caveats; probe byte counts/range counts are
-    # internal implementation details rather than file information.
+    if r.container.get("average_bitrate"):
+        lines.append(f"⚙️ Average bitrate: {_safe(r.container['average_bitrate'])}")
     if r.notes:
         user_note = next(
             (note for note in r.notes if note and "combined metadata sources" not in note.lower()),
@@ -1519,19 +1986,54 @@ def format_section(r:Report,section:str)->str:
     if section == "media":
         lines = ["🧩 <b>MEDIA-SPECIFIC DETAILS</b>", ""]
         label_overrides = {
-            "category": "Media category", "detected_format": "Detected format",
-            "telegram_media_type": "Telegram media type", "file_extension": "File extension",
-            "declared_mime_type": "MIME type", "file_size_bytes": "File size in bytes",
-            "caption_preview": "Caption preview", "caption_characters": "Caption length",
-            "telegram_message_id": "Telegram message ID", "message_date_utc": "Message date",
-            "post_author": "Post author", "views": "Views", "forwards": "Forwards",
-            "replies": "Replies", "grouped_media_album": "Part of album/grouped media",
+            "caption_preview": "Caption",
+            "message_date_utc": "Message date",
+            "post_author": "Post author",
+            "views": "Views",
+            "forwards": "Forwards",
+            "replies": "Replies",
+            "image_exif_summary": "Camera / image details",
+            "image_pixel_dimensions": "Image dimensions",
+            "image_frame_count": "Frames",
+            "pdf_title": "Title",
+            "pdf_author": "Author",
+            "pdf_subject": "Subject",
+            "pdf_keywords": "Keywords",
+            "pdf_creation_date": "Created",
+            "pdf_modified_date": "Modified",
+            "audio_title": "Track title",
+            "audio_performer": "Artist",
+            "sticker_alt_text": "Sticker emoji",
+            "sticker_set": "Sticker set",
+        }
+        omit_keys = {
+            "category", "detected_format", "file_extension", "declared_mime_type",
+            "file_size_bytes", "archive_directory_preview", "image_format",
+            "video_width", "video_height", "dimensions", "image_color_mode",
+            "image_progressive", "video_duration_seconds", "audio_duration_seconds",
+            "caption_characters", "has_caption", "is_document", "telegram_media_type",
+            "telegram_message_id", "telegram_filename_attribute", "pdf_creator",
+            "pdf_producer", "pdf_fonts", "pdf_linearized", "webpage_type",
+            "is_channel_post", "grouped_media_album", "contact_phone_present",
+            "venue_address_present", "location_coordinates_present",
+        }
+        quiet_false_flags = {
+            "image_is_animated", "image_has_transparency", "sticker_is_mask",
+            "sticker_is_animated", "video_is_round_note", "video_is_silent",
+            "audio_is_voice", "audio_is_music", "audio_has_waveform",
+            "pdf_tagged", "pdf_forms", "pdf_javascript", "pdf_embedded_files",
+            "poll_is_quiz", "poll_multiple_answers",
         }
         if r.media_info:
             for key, value in r.media_info.items():
-                if value not in (None, ""):
-                    label = label_overrides.get(key, key.replace("_", " ").title())
-                    lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
+                if key in omit_keys or value in (None, ""):
+                    continue
+                if key in quiet_false_flags and str(value).strip().lower() in {"no","false","0","none"}:
+                    continue
+                label = label_overrides.get(key, key.replace("_", " ").title())
+                lines.append(f"<b>{_safe(label)}:</b> {_safe(value)}")
+            if len(lines) == 2:
+                return ""
         else:
             lines.append("No media-specific attributes were found.")
         return "\n".join(lines)
@@ -1556,11 +2058,12 @@ def format_section(r:Report,section:str)->str:
         else:lines.append("No confirmed video track was exposed by the inspected metadata.")
         return "\n".join(lines).strip()
     if section=="technical":
-        lines=["⚙️ <b>TECHNICAL</b>","",f"Runtime: {_safe(r.container.get('runtime','Not available'))}",f"Container: {_safe(r.detected)}",f"MIME: {_safe(r.mime or 'application/octet-stream')}"]
-        if r.container.get("average_bitrate"):lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
-        if r.container.get("title"):lines.append(f"Container title: {_safe(r.container['title'])}")
-        if r.container.get("muxing_app"):lines.append(f"Muxing app: {_safe(r.container['muxing_app'])}")
-        if r.container.get("writing_app"):lines.append(f"Writing app: {_safe(r.container['writing_app'])}")
-        if r.container.get("date_utc"):lines.append(f"Encoded date: {_safe(r.container['date_utc'])}")
+        lines=["⚙️ <b>TECHNICAL DETAILS</b>",""]
+        if r.container.get("average_bitrate"):
+            lines.append(f"Average bitrate: {_safe(r.container['average_bitrate'])}")
+        if r.container.get("title"):
+            lines.append(f"Container title: {_safe(r.container['title'])}")
+        if len(lines) == 2:
+            return ""
         return "\n".join(lines)
     return format_report(r)
