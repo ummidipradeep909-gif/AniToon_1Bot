@@ -1008,7 +1008,6 @@ async def inspect_telegram_player(
     total = getattr(f, "size", None)
     name = str(getattr(f, "name", None) or "")
     mime = str(getattr(f, "mime_type", None) or "").lower()
-    is_mkv = name.lower().endswith((".mkv", ".webm")) or "matroska" in mime
     source_limit = MAX_PROBE_BUDGET
     total_int = int(total) if isinstance(total, int) and total > 0 else None
     effective_budget = (
@@ -1021,22 +1020,11 @@ async def inspect_telegram_player(
         if progress:
             await progress(value)
 
-    custom_report: Report | None = None
-    if is_mkv:
-        try:
-            await say("🧭 Stage 1/4 • inspecting container indexes and track metadata…")
-            custom_report, _ = await inspect_telegram_message(
-                client,
-                message,
-                progress=progress,
-                deep=False,
-            )
-        except (ProbeBudgetExceeded, ProbeCancelled):
-            raise
-        except Exception as exc:
-            await say(f"🔄 Stage 2/4 • switching metadata source ({type(exc).__name__})…")
-
-    await say("🎬 Stage 2/4 • opening the seekable FFmpeg player engine…")
+    # Run one bounded FFmpeg/PyAV probe for the media container. The previous
+    # MKV/WebM pre-pass invoked the general inspector before opening the player,
+    # causing duplicate source reads on slow or CPU-limited instances. If this
+    # player probe fails, bot.py falls back to the general bounded inspector.
+    await say("🎬 Stage 1/3 • opening the seekable FFmpeg player engine…")
     session = register_probe(token, client, media, total, budget=effective_budget)
     loop = asyncio.get_running_loop()
     reader = TelegramSeekableFile(session, loop)
@@ -1060,25 +1048,20 @@ async def inspect_telegram_player(
                 reader,
                 format_hint,
             )
-            await say("🔎 Stage 3/4 • reading video, audio and subtitle streams…")
+            await say("🔎 Stage 2/3 • reading video, audio and subtitle streams…")
             player_report = _build_report(message, container, session)
         finally:
             if container is not None:
                 container.close()
 
-        await say("🧩 Stage 4/4 • merging every available metadata source…")
-        if custom_report is not None:
-            return _merge_reports(custom_report, player_report)
+        await say("🧩 Stage 3/3 • finalizing parsed stream metadata…")
         return player_report
 
     except (ProbeBudgetExceeded, ProbeCancelled):
         raise
     except Exception as exc:
         if isinstance(exc, av.error.ExitError):
-            # Never run a second multi-range parser after the main player probe.
-            # For MKV, the container parser already populated custom_report.
-            if custom_report is not None:
-                return custom_report
+            # The player probe failed; try one bounded metadata fallback.
             try:
                 fallback, _ = await inspect_telegram_message(
                     client,
