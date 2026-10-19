@@ -1620,7 +1620,7 @@ class ResourceGuardPause(RuntimeError):
 
 
 status_edit_cache: dict[tuple[int, int], tuple[float, str]] = {}
-STATUS_EDIT_MIN_INTERVAL = 0.8
+STATUS_EDIT_MIN_INTERVAL = 0.25
 
 async def edit_status(message, text: str, *, buttons=None) -> None:
     """Apply non-critical progress updates without blocking or breaking a scan."""
@@ -1746,34 +1746,14 @@ async def run_scan(
 
     progress_state = {
         "shown_pct": 0,
-        "stage_floor": 0,
-        "started_at": time.monotonic(),
         "label": "Starting scan…",
     }
 
     async def progress(line: str):
-        # Parser stages provide a lower bound. A time-based estimate also keeps
-        # moving during slow Telegram reads between stage callbacks, so it does
-        # not freeze at a milestone while the real scan is still working.
+        # Keep parser callbacks for phase text only. The percentage animation
+        # runs on its own cadence so a slow file read cannot freeze the display
+        # at any stage milestone.
         _parsed_pct, label = progress_details(line)
-        low = line.lower()
-        stage_floors = (
-            ("stage 1/4", 5),
-            ("stage 2/4", 38),
-            ("stage 3/4", 65),
-            ("stage 4/4", 88),
-            ("stage 1/3", 5),
-            ("stage 2/3", 55),
-            ("stage 3/3", 88),
-            ("stage 1/1", 60),
-            ("stage 2/2", 78),
-        )
-        floor = next((pct for marker, pct in stage_floors if marker in low), None)
-        if floor is not None:
-            progress_state["stage_floor"] = max(
-                int(progress_state["stage_floor"]),
-                floor,
-            )
         progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
@@ -1782,34 +1762,19 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Leave enough time between edits for Telegram and the shared edit
-            # throttle. Frequent rejected edits made the old percentage look frozen.
-            await asyncio.sleep(1.05)
+            # Update below one second per number when Telegram accepts edits.
+            await asyncio.sleep(0.65)
             if heartbeat_stop.is_set():
                 break
 
-            elapsed = max(0.0, time.monotonic() - float(progress_state["started_at"]))
-            # Scan timeout bounds this estimate: it advances throughout slow
-            # reads, but deliberately stays below 100 until report creation succeeds.
-            elapsed_pct = min(
-                89,
-                int(elapsed * 88 / max(1, SCAN_TIMEOUT_SECONDS)),
-            )
             shown_pct = int(progress_state["shown_pct"])
-            desired_pct = min(
-                89,
-                max(
-                    shown_pct,
-                    int(progress_state["stage_floor"]),
-                    elapsed_pct,
-                ),
-            )
-            # Ease toward parser-stage floors rather than making large jumps;
-            # elapsed progress then keeps advancing during any long stage.
-            if shown_pct < desired_pct:
-                step = min(3, max(1, math.ceil((desired_pct - shown_pct) / 3)))
-                shown_pct = min(desired_pct, shown_pct + step)
-                progress_state["shown_pct"] = shown_pct
+            if shown_pct >= 99:
+                # Never sit at 99% while a real scan is still running. Cycle
+                # the high-end estimate until the report genuinely completes.
+                shown_pct = 94
+            else:
+                shown_pct += 1
+            progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
             # Queue position is not shown for an active scan, so avoid an
