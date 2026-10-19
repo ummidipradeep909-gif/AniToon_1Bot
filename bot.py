@@ -4165,7 +4165,7 @@ def home_page(report_token: str | None = None) -> bytes:
             "Movies and Webseries": "https://wallpapers.com/images/hd/collage-of-movie-posters-g2fdqahxlakaa7yq.jpg",
             "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-iq9ixtuvgaun4idt.jpg",
             "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
-            "Manga": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
+            "Manga": "https://wallpapers.com/images/hd/popular-anime-protagonists-manga-panel-mcfc6sppw3nyxnrt.jpg",
             "One Piece": "https://wallpapers.com/images/hd/one-piece-anime-characters-horizontal-do16pbv49bija5mc.jpg",
             "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-character-banner-efvhw0ned14olfy5.jpg",
             "Naruto Shippuden": "https://wallpapers.com/images/hd/1920-x-1080-naruto-w9k2fjfla24xapo0.jpg",
@@ -4175,8 +4175,16 @@ def home_page(report_token: str | None = None) -> bytes:
             "Pokemon": "https://wallpapers.com/images/hd/pokemon-characters-va6139eg5csznzmw.jpg",
         }
         image = images.get(name, "")
+        secondary_image = (
+            "https://wallpapers.com/images/hd/tv-shows-pictures-ws7fd3r9gza1ed5e.jpg"
+            if name == "Movies and Webseries" else ""
+        )
+        secondary_style = (
+            f";--channel-image-secondary:url({html.escape(secondary_image)})"
+            if secondary_image else ""
+        )
         return (
-            f'<a class="channel channel-picture" style="--channel-image:url({html.escape(image)})" '
+            f'<a class="channel channel-picture" style="--channel-image:url({html.escape(image)}){secondary_style}" '
             f'data-channel="{html.escape(name)}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
             f'<span class="channel-picture-shade"></span>'
             f'<span class="channel-picture-content"><span class="channel-name">{html.escape(name)}</span>'
@@ -4349,6 +4357,8 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
 .channel-picture{{position:relative;aspect-ratio:16/9;min-height:190px;overflow:hidden;isolation:isolate;background-color:#090b16;background-image:var(--channel-image);background-position:center center;background-size:cover;background-repeat:no-repeat;border-color:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.025)}}
+.channel-picture[data-channel="Movies and Webseries"]{{background-image:var(--channel-image),var(--channel-image-secondary);background-size:50% 100%,50% 100%;background-position:left center,right center;background-repeat:no-repeat}}
+.channel-picture[data-channel="Movies and Webseries"]:hover{{background-size:50% 100%,50% 100%}}
 .channel-picture-shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.12) 35%,rgba(3,4,11,.84) 100%),linear-gradient(90deg,rgba(4,5,12,.58),transparent 65%);transition:.3s ease}}
 .channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:3px;min-height:190px;width:100%;padding:16px}}
 .channel-picture-content .channel-name{{font-size:15px;line-height:1.1;text-shadow:0 2px 12px rgba(0,0,0,.75)}}
