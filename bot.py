@@ -1717,9 +1717,15 @@ def status_text(
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
     pct = max(0, min(100, current_pct))
-    # A compact ten-cell bar stays on one line on narrow Telegram mobile screens.
-    filled = min(10, max(0, pct // 10))
-    bar = "▓" * filled + "░" * (10 - filled)
+    # Keep ten cells on mobile, but use a fractional first cell so 1-9%
+    # doesn't look like a fully filled 10% block.
+    filled, remainder = divmod(pct * 10, 100)
+    partial_cells = ("", "▏", "▎", "▍", "▌", "▋", "▊", "▉")
+    bar = "▓" * filled
+    if remainder and filled < 10:
+        partial_index = min(7, max(1, (remainder * 8 + 99) // 100))
+        bar += partial_cells[partial_index]
+    bar += "░" * (10 - len(bar))
     # Keep the percentage and bar together; use short labels to avoid mobile wrapping.
     return (
         "⚡ <b>PROCESSING</b>\n"
