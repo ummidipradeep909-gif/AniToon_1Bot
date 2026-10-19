@@ -4162,7 +4162,7 @@ def home_page(report_token: str | None = None) -> bytes:
 
     def card(icon: str, name: str, url: str) -> str:
         images = {
-            "Movies": "https://wallpapers.com/images/hd/manga-characters-4098-x-2304-wallpaper-ff93l3eceu85ykx9.jpg",
+            "Movies": "https://wallpapers.com/images/hd/your-name-anime-2016-movie-poster-mlwlcbx1run1k2u9.jpg",
             "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-iq9ixtuvgaun4idt.jpg",
             "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
             "Manga": "https://wallpapers.com/images/hd/manga-characters-750-x-1334-wallpaper-vx8thrxsyp3drooa.jpg",
@@ -4348,13 +4348,13 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
-.channel-picture{{position:relative;min-height:112px;overflow:hidden;isolation:isolate;background:#090b16 center/cover no-repeat; background-image:var(--channel-image);border-color:rgba(255,255,255,.12)}}
+.channel-picture{{position:relative;min-height:156px;overflow:hidden;isolation:isolate;background-color:#090b16;background-image:var(--channel-image);background-position:center center;background-size:contain;background-repeat:no-repeat;border-color:rgba(255,255,255,.12)}}
 .channel-picture-shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.12) 35%,rgba(3,4,11,.84) 100%),linear-gradient(90deg,rgba(4,5,12,.58),transparent 65%);transition:.3s ease}}
-.channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:2px;min-height:112px;width:100%;padding:14px}}
+.channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:2px;min-height:156px;width:100%;padding:14px}}
 .channel-picture-content .channel-name{{font-size:15px;line-height:1.1;text-shadow:0 2px 12px rgba(0,0,0,.75)}}
 .channel-picture-content small{{font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.68)}}
 .channel-picture .channel-arrow{{position:absolute;top:10px;right:12px;z-index:3;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65)}}
-.channel-picture:hover{{background-size:110%;transform:translateY(-4px)}}
+.channel-picture:hover{{background-size:contain;transform:translateY(-4px)}}
 .channel-picture:hover .channel-picture-shade{{background:linear-gradient(180deg,rgba(0,0,0,.02),rgba(0,0,0,.12) 30%,rgba(3,4,11,.72) 100%),linear-gradient(90deg,rgba(4,5,12,.42),transparent 65%)}}
 .channel-picture::after{{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.12) 46%,transparent 62%);background-size:220% 100%;animation:pictureSheen 6.5s ease-in-out infinite;pointer-events:none}}
 @keyframes startReveal{{from{{opacity:0;transform:translateY(14px)}}to{{opacity:1;transform:none}}}}
