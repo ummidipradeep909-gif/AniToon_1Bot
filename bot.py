@@ -4166,17 +4166,17 @@ def home_page(report_token: str | None = None) -> bytes:
 
     def card(icon: str, name: str, url: str) -> str:
         images = {
-            "Movies": "https://wallpapers.com/images/hd/collage-of-movie-posters-g2fdqahxlakaa7yq.jpg",
-            "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-btw6ksti5ppp0i0c.jpg",
-            "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1280-x-1024-wallpaper-6rtfuw4mdqbj5bl7.jpg",
-            "Manga": "https://wallpapers.com/images/hd/manga-characters-1080-x-1921-wallpaper-0yw5dwcep9u6y5br.jpg",
-            "One Piece": "https://wallpapers.com/images/hd/one-piece-characters-1920-x-1080-wallpaper-afjei82kvqtjudwv.jpg",
-            "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-character-collage-wpu7k51bqivbzyu6.jpg",
-            "Naruto Shippuden": "https://naruto-official.com/special/anime_gallery/anime-gallery4.webp",
-            "Doraemon": "https://media.animeoshi.com/anime/images/tmdb/1194773989.jpg",
-            "Shin-Chan": "https://wallpapers.com/images/hd/shin-chan-cartoon-family-52v90xiip287tmsp.jpg",
-            "Beyblade": "https://wallpapers.com/images/hd/beyblade-burst-valt-aoi-es6gp1y8m6atxn72.jpg",
-            "Pokemon": "https://wallpapers.com/images/hd/pikachu-pokemon-character-hb662lvw02y4qq83.jpg",
+            "Movies": "https://wallpapers.com/images/hd/manga-characters-4098-x-2304-wallpaper-ff93l3eceu85ykx9.jpg",
+            "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-iq9ixtuvgaun4idt.jpg",
+            "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
+            "Manga": "https://wallpapers.com/images/hd/manga-characters-750-x-1334-wallpaper-vx8thrxsyp3drooa.jpg",
+            "One Piece": "https://wallpapers.com/images/hd/one-piece-character-with-straw-hat-1vljkfw5b541vtk6.jpg",
+            "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-promotional-poster-i11xo9ig8d2ex201.jpg",
+            "Naruto Shippuden": "https://wallpapers.com/images/hd/1920-x-1080-naruto-w9k2fjfla24xapo0.jpg",
+            "Doraemon": "https://wallpapers.com/images/hd/doraemon-anime-series-jyi51qfzj7w2aq1e.jpg",
+            "Shin-Chan": "https://wallpapers.com/images/hd/crayon-shin-chan-characters-cover-fg3ovqrvinul7krz.jpg",
+            "Beyblade": "https://wallpapers.com/images/hd/anime-all-characters-hd-00skmrqegel3nlks.jpg",
+            "Pokemon": "https://wallpapers.com/images/hd/pokemon-characters-va6139eg5csznzmw.jpg",
         }
         image = images.get(name, "")
         return (
