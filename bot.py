@@ -4175,7 +4175,7 @@ def home_page(report_token: str | None = None) -> bytes:
             "Naruto Shippuden": "https://wallpapers.com/images/hd/1920-x-1080-naruto-w9k2fjfla24xapo0.jpg",
             "Doraemon": "https://wallpapers.com/images/hd/doraemon-anime-series-jyi51qfzj7w2aq1e.jpg",
             "Shin-Chan": "https://wallpapers.com/images/hd/crayon-shin-chan-characters-cover-fg3ovqrvinul7krz.jpg",
-            "Beyblade": "https://wallpapers.com/images/hd/anime-all-characters-hd-00skmrqegel3nlks.jpg",
+            "Beyblade": "https://wallpapers.com/images/hd/beyblade-burst-game-u72mr60kqfva4pax.jpg",
             "Pokemon": "https://wallpapers.com/images/hd/pokemon-characters-va6139eg5csznzmw.jpg",
         }
         image = images.get(name, "")
