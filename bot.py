@@ -1739,19 +1739,15 @@ async def run_scan(
     filename = safe_filename(source_message)
 
     progress_state = {
-        "target_pct": 1,
         "shown_pct": 1,
         "label": "Starting scan…",
     }
 
     async def progress(line: str):
-        # Keep parser progress separate from the displayed percentage. The UI
-        # advances one percentage point per heartbeat, rather than jumping
-        # straight to fixed 20/40/60/80 milestones.
-        parsed_pct, label = progress_details(line)
-        progress_state["target_pct"] = max(
-            int(progress_state["target_pct"]), parsed_pct
-        )
+        # Parser callbacks update the phase label. The percentage is animated
+        # monotonically by the heartbeat because source reads are bounded and
+        # do not expose a reliable byte-accurate percentage.
+        _parsed_pct, label = progress_details(line)
         progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
@@ -1763,23 +1759,11 @@ async def run_scan(
             if heartbeat_stop.is_set():
                 break
 
-            # Show percentage changes sequentially while work is actually running.
-            # Do not wait for a cosmetic 1%-at-a-time animation after the report
-            # is ready: completion immediately becomes 100%.
-            target_pct = max(
-                1, min(96, int(progress_state["target_pct"]))
-            )
-            shown_pct = int(progress_state["shown_pct"])
-            progress_changed = shown_pct < target_pct
-            if progress_changed:
-                shown_pct += 1
-                progress_state["shown_pct"] = shown_pct
-
-            # While a stage is waiting on network/decoder work, refresh the
-            # activity indicator less often to avoid Telegram edit traffic.
-            if not progress_changed and index % 3 != 0:
-                index += 1
-                continue
+            # Advance one percentage point per heartbeat instead of leaping to
+            # 20/40/60/80. Stop at 96 while work is active; only a real successful
+            # report completion can set the display to 100%.
+            shown_pct = min(96, int(progress_state["shown_pct"]) + 1)
+            progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
             queue_position = await _scan_queue_position(scan_token)
@@ -1848,7 +1832,6 @@ async def run_scan(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
-        progress_state["target_pct"] = 100
         progress_state["shown_pct"] = 100
         progress_state["label"] = "✅ Scan complete — report ready."
         queue_position = await _scan_queue_position(scan_token)
