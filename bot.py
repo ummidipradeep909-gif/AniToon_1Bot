@@ -1762,18 +1762,17 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Change the displayed percentage and bar at least twice per second when Telegram accepts edits.
-            await asyncio.sleep(0.45)
+            # Telegram limits message edits; a steady ~1-second cadence is
+            # more reliable than rapid edits that trigger FloodWait and appear frozen.
+            await asyncio.sleep(1.0)
             if heartbeat_stop.is_set():
                 break
 
             shown_pct = int(progress_state["shown_pct"])
-            if shown_pct >= 99:
-                # Never sit at 99% while a real scan is still running. Cycle
-                # the high-end estimate until the report genuinely completes.
-                shown_pct = 94
-            else:
-                shown_pct += 1
+            # Keep the estimate monotonic while work is in progress. Never jump
+            # backwards from 99 to 94; 95% means the scan is still processing.
+            if shown_pct < 95:
+                shown_pct = min(95, shown_pct + 2)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -2228,8 +2227,8 @@ async def analyze_source(
                     scan_token,
                 )
 
-        with suppress(Exception):
-            await status_message.delete()
+        # Keep the completed result and its report buttons visible in the same
+        # message; deleting it here made successful scans appear to vanish.
 
         checks_ok += 1
         outcome = "completed"
