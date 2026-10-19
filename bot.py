@@ -1719,13 +1719,13 @@ def status_text(
     pct = max(0, min(100, current_pct))
     # A compact ten-cell bar stays on one line on narrow Telegram mobile screens.
     filled = min(10, max(0, pct // 10))
-    bar = "█" * filled + "░" * (10 - filled)
-    # Active scans are shown as PROCESSING; QUEUE numbers are reserved for waiters.
+    bar = "▓" * filled + "░" * (10 - filled)
+    # Keep the percentage and bar together; use short labels to avoid mobile wrapping.
     return (
-        "🔎 <b>PROCESSING</b>\n"
+        "⚡ <b>SCANNING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
-        f"<code>{bar}</code> <b>{pct}%</b>\n"
-        f"⚙️ {html.escape(clean)}"
+        f"<code>{bar}</code> <b>{pct:3d}%</b>\n"
+        f"🔄 {html.escape(clean)}"
     )
 
 
@@ -1755,7 +1755,8 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(1.0)
+            # Keep updates responsive without flooding Telegram with edits.
+            await asyncio.sleep(0.8)
             if heartbeat_stop.is_set():
                 break
 
@@ -1766,14 +1767,14 @@ async def run_scan(
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
-            queue_position = await _scan_queue_position(scan_token)
+            # Queue position is not shown for an active scan, so avoid an
+            # unnecessary queue/database lookup on every progress refresh.
             await edit_status(
                 status_message,
                 status_text(
                     filename,
-                    f"⚡ {label} {pulse[index % len(pulse)]}",
+                    f"{label} {pulse[index % len(pulse)]}",
                     shown_pct,
-                    queue_position,
                 ),
                 buttons=cancel_button(scan_token),
             )
