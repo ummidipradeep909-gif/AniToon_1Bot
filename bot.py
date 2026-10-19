@@ -1762,17 +1762,17 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Telegram limits message edits; a steady ~1-second cadence is
-            # more reliable than rapid edits that trigger FloodWait and appear frozen.
-            await asyncio.sleep(1.0)
+            # Use a steady cadence that makes progress visibly move without
+            # hammering Telegram with too many edits.
+            await asyncio.sleep(0.65)
             if heartbeat_stop.is_set():
                 break
 
             shown_pct = int(progress_state["shown_pct"])
-            # Keep the estimate monotonic while work is in progress. Never jump
-            # backwards from 99 to 94; 95% means the scan is still processing.
+            # Keep the estimate monotonic and reserve 100% for a real completion.
+            # The progress message is removed once the separate result is delivered.
             if shown_pct < 95:
-                shown_pct = min(95, shown_pct + 2)
+                shown_pct = min(95, shown_pct + 3)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -1871,14 +1871,8 @@ async def run_scan(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
-        progress_state["shown_pct"] = 100
-        progress_state["label"] = "✅ Scan complete — report ready."
-        queue_position = await _scan_queue_position(scan_token)
-        await edit_status(
-            status_message,
-            status_text(filename, progress_state["label"], 100, queue_position),
-            buttons=cancel_button(scan_token),
-        )
+        # Do not turn the processing message into a 100% result message.
+        # The caller sends the final report separately and removes this status message.
         return report
     finally:
         heartbeat_stop.set()
@@ -2195,20 +2189,24 @@ async def analyze_source(
         )
 
         try:
-            # Reuse the single progress message for the completed result instead
-            # of sending a second message and deleting the progress message.
-            await edit_status(
-                status_message,
+            # Deliver the result as a new message so the processing percentage
+            # never visibly jumps to 100%. Send first, then remove the progress
+            # message so a delivery failure cannot erase the user's only status.
+            await client.send_message(
+                status_message.chat_id,
                 final_result_text,
+                parse_mode="html",
                 buttons=result_buttons,
             )
+            with suppress(Exception):
+                await status_message.delete()
             log.info(
-                "Final scan result shown in the existing message | token=%s | thumbnail_web_only=%s",
+                "Final scan result sent separately; progress message deleted | token=%s | thumbnail_web_only=%s",
                 scan_token,
                 True,
             )
         except Exception:
-            log.exception("Failed to update final scan result message | token=%s", scan_token)
+            log.exception("Failed to send final scan result message | token=%s", scan_token)
             raise
 
         # Archive only after the scan is complete and its report was delivered.
@@ -2226,9 +2224,6 @@ async def analyze_source(
                     "Post-scan storage copy was not confirmed | token=%s",
                     scan_token,
                 )
-
-        # Keep the completed result and its report buttons visible in the same
-        # message; deleting it here made successful scans appear to vanish.
 
         checks_ok += 1
         outcome = "completed"
