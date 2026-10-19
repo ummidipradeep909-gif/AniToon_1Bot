@@ -1740,14 +1740,32 @@ async def run_scan(
 
     progress_state = {
         "shown_pct": 1,
+        "target_pct": 15,
         "label": "Starting scan…",
     }
 
     async def progress(line: str):
-        # Parser callbacks update the phase label. The percentage is animated
-        # monotonically by the heartbeat because source reads are bounded and
-        # do not expose a reliable byte-accurate percentage.
+        # Drive the estimate from parser stages instead of letting a timer race
+        # to 96% while a remote file read is still blocked.
         _parsed_pct, label = progress_details(line)
+        low = line.lower()
+        stage_targets = (
+            ("stage 1/4", 25),
+            ("stage 2/4", 50),
+            ("stage 3/4", 75),
+            ("stage 4/4", 92),
+            ("stage 1/3", 32),
+            ("stage 2/3", 65),
+            ("stage 3/3", 92),
+            ("stage 1/1", 82),
+            ("stage 2/2", 82),
+        )
+        target = next((pct for marker, pct in stage_targets if marker in low), None)
+        if target is not None:
+            progress_state["target_pct"] = max(
+                int(progress_state["target_pct"]),
+                target,
+            )
         progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
@@ -1760,11 +1778,18 @@ async def run_scan(
             if heartbeat_stop.is_set():
                 break
 
-            # Advance one percentage point per heartbeat instead of leaping to
-            # 20/40/60/80. Stop at 96 while work is active; only a real successful
-            # report completion can set the display to 100%.
-            shown_pct = min(96, int(progress_state["shown_pct"]) + 1)
-            progress_state["shown_pct"] = shown_pct
+            # Move quickly toward the next real parser-stage milestone, but
+            # never animate to a fake 96% while the file is still being read.
+            # Successful completion alone is allowed to set 100%.
+            shown_pct = int(progress_state["shown_pct"])
+            target_pct = min(
+                94,
+                max(shown_pct, int(progress_state.get("target_pct", 15))),
+            )
+            if shown_pct < target_pct:
+                step = min(4, max(1, math.ceil((target_pct - shown_pct) / 3)))
+                shown_pct = min(target_pct, shown_pct + step)
+                progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
             # Queue position is not shown for an active scan, so avoid an
@@ -1802,6 +1827,35 @@ async def run_scan(
                 or any("documentattributevideo" in name or "documentattributeaudio" in name for name in attribute_names)
                 or any(filename.endswith(ext) for ext in av_extensions)
             )
+
+            # Matroska/WebM store the Info and Tracks elements near the file
+            # header in normal files. The bounded parser can extract these
+            # without the random EOF seeks FFmpeg sometimes attempts on very
+            # large Telegram files. Use that fast path first to avoid a slow
+            # FFmpeg failure followed by a second full metadata pass.
+            if filename.endswith((".mkv", ".webm", ".mka")):
+                try:
+                    fast_report, fast_bytes = await inspect_telegram_message(
+                        client,
+                        source_message,
+                        progress=progress,
+                        deep=False,
+                    )
+                    log.info(
+                        "Fast Matroska/WebM scan complete | file=%s | sampled_bytes=%s",
+                        safe_filename(source_message),
+                        int(fast_bytes or 0),
+                    )
+                    return fast_report, int(fast_bytes or 0)
+                except (ProbeBudgetExceeded, ProbeCancelled, asyncio.CancelledError):
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "Fast Matroska/WebM scan failed; trying FFmpeg fallback | file=%s | error=%s",
+                        safe_filename(source_message),
+                        type(exc).__name__,
+                    )
+
             if has_av_streams:
                 try:
                     player_report = await inspect_telegram_player(
