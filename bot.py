@@ -369,7 +369,7 @@ def web_report_button(
 ):
     # Keep Telegram clean: expose the report and the group-join action only.
     return [
-        [Button.url("🌐 Open File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
+        [Button.url("ℹ️ View File Info", f"{PUBLIC_WEB_URL}/report/{token}")],
         [Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))],
     ]
 
@@ -1762,9 +1762,9 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Use a steady cadence that makes progress visibly move without
-            # hammering Telegram with too many edits.
-            await asyncio.sleep(0.65)
+            # Refresh the animation at least twice per second while respecting
+            # the existing edit throttle to avoid Telegram rate limits.
+            await asyncio.sleep(0.45)
             if heartbeat_stop.is_set():
                 break
 
@@ -1772,7 +1772,7 @@ async def run_scan(
             # Keep the estimate monotonic and reserve 100% for a real completion.
             # The progress message is removed once the separate result is delivered.
             if shown_pct < 95:
-                shown_pct = min(95, shown_pct + 3)
+                shown_pct = min(95, shown_pct + 2)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
