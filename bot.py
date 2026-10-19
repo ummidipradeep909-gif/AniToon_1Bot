@@ -6,6 +6,7 @@ import html
 import io
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -1128,6 +1129,43 @@ def runtime_resource_stats() -> dict[str, Any]:
     }
 
 
+def runtime_cpu_cores() -> float | None:
+    """Read this container's CPU quota, avoiding oversubscribed scans on tiny instances."""
+    for quota_path, period_path in (
+        ("/sys/fs/cgroup/cpu.max", None),
+        ("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    ):
+        try:
+            if period_path is None:
+                with open(quota_path, "r", encoding="utf-8") as handle:
+                    quota, period = handle.read().strip().split()[:2]
+                if quota == "max":
+                    continue
+                quota_us, period_us = int(quota), int(period)
+            else:
+                with open(quota_path, "r", encoding="utf-8") as handle:
+                    quota_us = int(handle.read().strip())
+                with open(period_path, "r", encoding="utf-8") as handle:
+                    period_us = int(handle.read().strip())
+            if quota_us > 0 and period_us > 0:
+                return max(0.01, quota_us / period_us)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def worker_limit_for_cpu(cpu_cores: float | None, configured_cap: int | None = None) -> int:
+    """Limit concurrent scans based on CPU quota; each extra worker contends for CPU."""
+    cap = scan_worker_cap if configured_cap is None else int(configured_cap)
+    cap = max(1, min(MAX_SCAN_WORKERS, cap))
+    if cpu_cores is None or cpu_cores <= 0:
+        return cap
+    # Allow roughly three mostly-I/O-bound scans per CPU core, with one minimum
+    # worker for Free instances (0.1 CPU) so scans still make progress.
+    cpu_cap = max(1, min(MAX_SCAN_WORKERS, math.ceil(cpu_cores * 3)))
+    return min(cap, cpu_cap)
+
+
 def memory_pressure_high() -> bool:
     return runtime_resource_stats()["ram_pct"] >= RAM_PAUSE_PCT
 
@@ -1152,8 +1190,10 @@ def worker_limit_for_ram(ram_pct: float, configured_cap: int | None = None) -> i
 
 
 def adaptive_scan_limit() -> int:
-    """Dynamically cap scan starts using container memory and the owner-set maximum."""
-    return worker_limit_for_ram(runtime_resource_stats()["ram_pct"], scan_worker_cap)
+    """Cap scan starts using both container memory pressure and CPU quota."""
+    ram_limit = worker_limit_for_ram(runtime_resource_stats()["ram_pct"], scan_worker_cap)
+    cpu_limit = worker_limit_for_cpu(runtime_cpu_cores(), scan_worker_cap)
+    return min(ram_limit, cpu_limit)
 
 
 async def change_scan_worker_cap(new_cap: int) -> bool:
@@ -1641,18 +1681,22 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
 def progress_details(line: str) -> tuple[int, str]:
     low = line.lower()
 
-    if "stage 1/4" in low:
-        pct = 10
+    if "starting scan" in low:
+        pct = 1
+    elif "stage 1/4" in low or "stage 1/3" in low:
+        pct = 12
     elif "stage 2/4" in low:
-        pct = 30
-    elif "stage 3/4" in low:
-        pct = 56
-    elif "stage 4/4" in low:
+        pct = 32
+    elif "stage 2/3" in low:
+        pct = 60
+    elif "stage 3/4" in low or "stage 3/3" in low:
         pct = 88
+    elif "stage 4/4" in low:
+        pct = 92
+    elif "stage 1/1" in low:
+        pct = 20
     elif "stage 2/2" in low or "reading available media metadata" in low:
         pct = 72
-    elif "starting scan" in low:
-        pct = 1
     else:
         pct = 50
 
@@ -1673,8 +1717,9 @@ def status_text(
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
     pct = max(0, min(100, current_pct))
-    filled = pct // 5
-    bar = "▰" * filled + "▱" * (20 - filled)
+    # A compact ten-cell bar stays on one line on narrow Telegram mobile screens.
+    filled = min(10, max(0, pct // 10))
+    bar = "█" * filled + "░" * (10 - filled)
     # Active scans are shown as PROCESSING; QUEUE numbers are reserved for waiters.
     return (
         "🔎 <b>PROCESSING</b>\n"
@@ -1693,66 +1738,49 @@ async def run_scan(
 ) -> Report:
     filename = safe_filename(source_message)
 
-    progress_state = {"pct": 0, "label": "Starting scan…"}
-    last_progress_edit_at = 0.0
-    last_progress_edit_pct = -1
+    progress_state = {
+        "target_pct": 1,
+        "shown_pct": 1,
+        "label": "Starting scan…",
+    }
 
     async def progress(line: str):
-        nonlocal last_progress_edit_at, last_progress_edit_pct
+        # Keep parser progress separate from the displayed percentage. The UI
+        # advances one percentage point per heartbeat, rather than jumping
+        # straight to fixed 20/40/60/80 milestones.
         parsed_pct, label = progress_details(line)
-        progress_state["pct"] = max(int(progress_state["pct"]), parsed_pct)
-        progress_state["label"] = label
-
-        # Parser callbacks can arrive in tight bursts. Telegram message edits are
-        # network round-trips, so throttle cosmetic updates instead of making the
-        # scan wait for every progress line. Large jumps still render immediately.
-        now = time.monotonic()
-        pct = int(progress_state["pct"])
-        if (
-            last_progress_edit_at > 0
-            and now - last_progress_edit_at < 0.8
-            and pct - last_progress_edit_pct < 12
-        ):
-            return
-
-        queue_position = await _scan_queue_position(scan_token)
-        await edit_status(
-            status_message,
-            status_text(filename, label, pct, queue_position),
-            buttons=cancel_button(scan_token),
+        progress_state["target_pct"] = max(
+            int(progress_state["target_pct"]), parsed_pct
         )
-        last_progress_edit_at = time.monotonic()
-        last_progress_edit_pct = pct
+        progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
     async def heartbeat():
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(1.0)
             if heartbeat_stop.is_set():
                 break
 
-            # Keep the bar visibly moving while the worker is doing bounded
-            # network/metadata work. Real parser callbacks can jump it forward.
-            current = int(progress_state["pct"])
-            if current < 1:
-                current = 1
+            # Show percentage changes sequentially while work is actually running.
+            # Do not wait for a cosmetic 1%-at-a-time animation after the report
+            # is ready: completion immediately becomes 100%.
+            target_pct = max(
+                1, min(96, int(progress_state["target_pct"]))
+            )
+            shown_pct = int(progress_state["shown_pct"])
+            progress_changed = shown_pct < target_pct
+            if progress_changed:
+                shown_pct += 1
+                progress_state["shown_pct"] = shown_pct
 
-            # Animate in clear 20% milestones: 20, 40, 60, 80.
-            # Keep 100% reserved for a successfully generated report.
-            if current < 20:
-                visual_pct = 20
-            elif current < 40:
-                visual_pct = 40
-            elif current < 60:
-                visual_pct = 60
-            elif current < 80:
-                visual_pct = 80
-            else:
-                visual_pct = min(96, current)
+            # While a stage is waiting on network/decoder work, refresh the
+            # activity indicator less often to avoid Telegram edit traffic.
+            if not progress_changed and index % 3 != 0:
+                index += 1
+                continue
 
-            progress_state["pct"] = max(current, visual_pct)
             label = progress_state["label"]
             queue_position = await _scan_queue_position(scan_token)
             await edit_status(
@@ -1760,7 +1788,7 @@ async def run_scan(
                 status_text(
                     filename,
                     f"⚡ {label} {pulse[index % len(pulse)]}",
-                    progress_state["pct"],
+                    shown_pct,
                     queue_position,
                 ),
                 buttons=cancel_button(scan_token),
@@ -1820,7 +1848,8 @@ async def run_scan(
             fast_worker(),
             timeout=SCAN_TIMEOUT_SECONDS,
         )
-        progress_state["pct"] = 100
+        progress_state["target_pct"] = 100
+        progress_state["shown_pct"] = 100
         progress_state["label"] = "✅ Scan complete — report ready."
         queue_position = await _scan_queue_position(scan_token)
         await edit_status(
