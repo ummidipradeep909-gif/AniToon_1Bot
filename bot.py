@@ -1751,18 +1751,27 @@ async def run_scan(
         progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
+    scan_started_at = time.monotonic()
+
     async def heartbeat():
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            await asyncio.sleep(1.0)
+            # Match Telegram's edit throttle: frequent enough to feel active,
+            # but not so frequent that UI updates compete with media scanning.
+            await asyncio.sleep(0.8)
             if heartbeat_stop.is_set():
                 break
 
-            # Advance one percentage point per heartbeat instead of leaping to
-            # 20/40/60/80. Stop at 96 while work is active; only a real successful
-            # report completion can set the display to 100%.
-            shown_pct = min(96, int(progress_state["shown_pct"]) + 1)
+            # Ease quickly through the early part, then slow near the end.
+            # This is a visual estimate (not byte-accurate); 100% remains
+            # reserved for a successfully generated report.
+            elapsed = max(0.0, time.monotonic() - scan_started_at)
+            eased_pct = 1 + int(95 * (1.0 - math.exp(-elapsed / 9.5)))
+            shown_pct = max(
+                int(progress_state["shown_pct"]),
+                min(96, eased_pct),
+            )
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
