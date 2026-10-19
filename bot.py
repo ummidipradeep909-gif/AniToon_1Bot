@@ -4166,17 +4166,17 @@ def home_page(report_token: str | None = None) -> bytes:
 
     def card(icon: str, name: str, url: str) -> str:
         images = {
-            "Movies": "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=82",
-            "All Animes": "https://commons.wikimedia.org/wiki/Special:FilePath/Mahuri.jpg",
-            "Dual Content": "https://commons.wikimedia.org/wiki/Special:FilePath/Luffy.jpg",
-            "Manga": "https://commons.wikimedia.org/wiki/Special:FilePath/Manga%20%281%29.jpg",
-            "One Piece": "https://commons.wikimedia.org/wiki/Special:FilePath/Luffy.jpg",
-            "Jujutsu Kaisen": "https://commons.wikimedia.org/wiki/Special:FilePath/Sketch%20of%20gojo%20satoru.jpg",
-            "Naruto Shippuden": "https://commons.wikimedia.org/wiki/Special:FilePath/Naruto%20%2820858980350%29.jpg",
-            "Doraemon": "https://commons.wikimedia.org/wiki/Special:FilePath/Doraemon%20at%20National%20Museum%20of%20Singapore..jpg",
-            "Shin-Chan": "https://commons.wikimedia.org/wiki/Special:FilePath/Shinchan.jpg",
-            "Beyblade": "https://commons.wikimedia.org/wiki/Special:FilePath/Beyblade.jpg",
-            "Pokemon": "https://commons.wikimedia.org/wiki/Special:FilePath/Pokémon%20%288941002724%29.jpg",
+            "Movies": "https://wallpapers.com/images/hd/collage-of-movie-posters-g2fdqahxlakaa7yq.jpg",
+            "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-btw6ksti5ppp0i0c.jpg",
+            "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1280-x-1024-wallpaper-6rtfuw4mdqbj5bl7.jpg",
+            "Manga": "https://wallpapers.com/images/hd/manga-characters-1080-x-1921-wallpaper-0yw5dwcep9u6y5br.jpg",
+            "One Piece": "https://wallpapers.com/images/hd/one-piece-characters-1920-x-1080-wallpaper-afjei82kvqtjudwv.jpg",
+            "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-character-collage-wpu7k51bqivbzyu6.jpg",
+            "Naruto Shippuden": "https://naruto-official.com/special/anime_gallery/anime-gallery4.webp",
+            "Doraemon": "https://media.animeoshi.com/anime/images/tmdb/1194773989.jpg",
+            "Shin-Chan": "https://wallpapers.com/images/hd/shin-chan-cartoon-family-52v90xiip287tmsp.jpg",
+            "Beyblade": "https://wallpapers.com/images/hd/beyblade-burst-valt-aoi-es6gp1y8m6atxn72.jpg",
+            "Pokemon": "https://wallpapers.com/images/hd/pikachu-pokemon-character-hb662lvw02y4qq83.jpg",
         }
         image = images.get(name, "")
         return (
