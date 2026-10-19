@@ -980,8 +980,13 @@ def _adaptive_ranges(total:int|None,budget:int,used:int,initial:int):
             seen.add(off);yield off,n,label;used+=n
             if used>=budget:return
 
-async def _read_range(client,media,total,offset,n):
-    chunk=min(probe_chunk(),n);out=io.BytesIO()
+async def _read_range(client,media,total,offset,n,*,chunk_size: int | None = None):
+    # A larger request chunk cuts Telegram round trips for header metadata,
+    # while the separate total-byte budget still bounds memory and probe work.
+    configured_chunk = probe_chunk() if chunk_size is None else max(
+        128 * 1024, min(DEFAULT_CHUNK, int(chunk_size))
+    )
+    chunk=min(configured_chunk,n);out=io.BytesIO()
     try:
         async for part in client.iter_download(media,offset=max(0,offset),limit=n,chunk_size=chunk,request_size=chunk,file_size=total):
             remain=n-out.tell()
@@ -1885,7 +1890,17 @@ async def inspect_telegram_message(client:Any,message:Any,progress:ProgressFn|No
     used=0
 
     await say("🧭 Stage 1/4 • reading the file header and container metadata…")
-    b,err=await _read_range(client,media,total,0,initial)
+    file_name_hint = str(getattr(f, "name", None) or "").lower()
+    mime_hint = str(getattr(f, "mime_type", None) or "").lower()
+    fast_ebml_header = (
+        _ext(file_name_hint) in {".mkv", ".webm", ".mka"}
+        or "matroska" in mime_hint
+        or "webm" in mime_hint
+    )
+    # Use 512 KB requests for EBML headers even if a lower per-request setting
+    # was configured; the total probe size remains strictly bounded below 5 MB.
+    range_chunk = DEFAULT_CHUNK if fast_ebml_header else None
+    b,err=await _read_range(client,media,total,0,initial,chunk_size=range_chunk)
     if not b:
         raise RuntimeError(err or "Telegram returned no probe bytes")
     parts.append(ProbePiece(0,b,"initial metadata"))
