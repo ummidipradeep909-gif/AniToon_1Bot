@@ -1620,7 +1620,7 @@ class ResourceGuardPause(RuntimeError):
 
 
 status_edit_cache: dict[tuple[int, int], tuple[float, str]] = {}
-STATUS_EDIT_MIN_INTERVAL = 0.25
+STATUS_EDIT_MIN_INTERVAL = 0.4
 
 async def edit_status(message, text: str, *, buttons=None) -> None:
     """Apply non-critical progress updates without blocking or breaking a scan."""
@@ -1762,8 +1762,8 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Update below one second per number when Telegram accepts edits.
-            await asyncio.sleep(0.65)
+            # Change the displayed percentage and bar at least twice per second when Telegram accepts edits.
+            await asyncio.sleep(0.45)
             if heartbeat_stop.is_set():
                 break
 
@@ -2196,18 +2196,20 @@ async def analyze_source(
         )
 
         try:
-            await status_message.reply(
+            # Reuse the single progress message for the completed result instead
+            # of sending a second message and deleting the progress message.
+            await edit_status(
+                status_message,
                 final_result_text,
-                parse_mode="html",
                 buttons=result_buttons,
             )
             log.info(
-                "Final scan result sent | token=%s | thumbnail_web_only=%s",
+                "Final scan result shown in the existing message | token=%s | thumbnail_web_only=%s",
                 scan_token,
                 True,
             )
         except Exception:
-            log.exception("Failed to send final scan result message | token=%s", scan_token)
+            log.exception("Failed to update final scan result message | token=%s", scan_token)
             raise
 
         # Archive only after the scan is complete and its report was delivered.
