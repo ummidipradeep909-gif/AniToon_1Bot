@@ -4141,7 +4141,7 @@ def web_section(report: Report, section: str) -> str:
 
 def home_page(report_token: str | None = None) -> bytes:
     channels = [
-        ("🎬", "Movies", "https://t.me/+KEz_Up14hfFhOTI1"),
+        ("🎬", "Movies and Webseries", "https://t.me/+KEz_Up14hfFhOTI1"),
         ("🍿", "All Animes", "https://t.me/anitoons_ani"),
         ("🎧", "Dual Content", "https://t.me/ani_engjaphin"),
         ("📚", "Manga", "https://t.me/mangauniverse_ani"),
@@ -4162,12 +4162,12 @@ def home_page(report_token: str | None = None) -> bytes:
 
     def card(icon: str, name: str, url: str) -> str:
         images = {
-            "Movies": "https://wallpapers.com/images/hd/avengers-endgame-characters-8h2zx9babqh3ejdp.jpg",
+            "Movies and Webseries": "https://wallpapers.com/images/hd/collage-of-movie-posters-g2fdqahxlakaa7yq.jpg",
             "All Animes": "https://wallpapers.com/images/hd/anime-all-characters-hd-iq9ixtuvgaun4idt.jpg",
             "Dual Content": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
-            "Manga": "https://wallpapers.com/images/hd/manga-characters-750-x-1334-wallpaper-vx8thrxsyp3drooa.jpg",
-            "One Piece": "https://wallpapers.com/images/hd/one-piece-character-with-straw-hat-1vljkfw5b541vtk6.jpg",
-            "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-promotional-poster-i11xo9ig8d2ex201.jpg",
+            "Manga": "https://wallpapers.com/images/hd/manga-characters-1920-x-1080-wallpaper-dtxkak951fx24dqy.jpg",
+            "One Piece": "https://wallpapers.com/images/hd/one-piece-anime-characters-horizontal-do16pbv49bija5mc.jpg",
+            "Jujutsu Kaisen": "https://wallpapers.com/images/hd/jujutsu-kaisen-character-banner-efvhw0ned14olfy5.jpg",
             "Naruto Shippuden": "https://wallpapers.com/images/hd/1920-x-1080-naruto-w9k2fjfla24xapo0.jpg",
             "Doraemon": "https://wallpapers.com/images/hd/doraemon-anime-series-jyi51qfzj7w2aq1e.jpg",
             "Shin-Chan": "https://wallpapers.com/images/hd/crayon-shin-chan-characters-cover-fg3ovqrvinul7krz.jpg",
@@ -4180,7 +4180,7 @@ def home_page(report_token: str | None = None) -> bytes:
             f'data-channel="{html.escape(name)}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
             f'<span class="channel-picture-shade"></span>'
             f'<span class="channel-picture-content"><span class="channel-name">{html.escape(name)}</span>'
-            f'<small>{("Anime" if name in {"All Animes","Dual Content","One Piece","Jujutsu Kaisen","Naruto Shippuden"} else "Cartoon" if name in {"Doraemon","Shin-Chan","Beyblade","Pokemon"} else "Manga" if name=="Manga" else "Movies")}</small></span>'
+            f'<small>{("Anime" if name in {"All Animes","Dual Content","One Piece","Jujutsu Kaisen","Naruto Shippuden"} else "Cartoon" if name in {"Doraemon","Shin-Chan","Beyblade","Pokemon"} else "Manga" if name=="Manga" else "Movies & Series")}</small></span>'
             f'<span class="channel-arrow">↗</span>'
             f'</a>'
         )
@@ -4348,13 +4348,13 @@ h1{{margin:15px 0 7px;font-size:clamp(30px,7vw,56px);line-height:1;letter-spacin
 .channel{{display:flex;align-items:center;gap:12px;min-height:58px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;color:var(--text);text-decoration:none;background:linear-gradient(145deg,rgba(255,255,255,.035),rgba(255,255,255,.012));transition:.20s ease}}
 .channel:hover{{transform:translateY(-4px);border-color:rgba(255,255,255,.30);box-shadow:0 18px 38px rgba(0,0,0,.30)}}
 .start-hero{{animation:startReveal .8s cubic-bezier(.2,1,.2,1) both}}
-.channel-picture{{position:relative;aspect-ratio:16/9;min-height:190px;overflow:hidden;isolation:isolate;background-color:#090b16;background-image:var(--channel-image);background-position:center center;background-size:contain;background-repeat:no-repeat;border-color:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.025)}}
+.channel-picture{{position:relative;aspect-ratio:16/9;min-height:190px;overflow:hidden;isolation:isolate;background-color:#090b16;background-image:var(--channel-image);background-position:center center;background-size:cover;background-repeat:no-repeat;border-color:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.025)}}
 .channel-picture-shade{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.12) 35%,rgba(3,4,11,.84) 100%),linear-gradient(90deg,rgba(4,5,12,.58),transparent 65%);transition:.3s ease}}
 .channel-picture-content{{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;gap:3px;min-height:190px;width:100%;padding:16px}}
 .channel-picture-content .channel-name{{font-size:15px;line-height:1.1;text-shadow:0 2px 12px rgba(0,0,0,.75)}}
 .channel-picture-content small{{font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.68)}}
 .channel-picture .channel-arrow{{position:absolute;top:10px;right:12px;z-index:3;color:#fff;text-shadow:0 2px 12px rgba(0,0,0,.65)}}
-.channel-picture:hover{{background-size:contain;transform:translateY(-4px)}}
+.channel-picture:hover{{background-size:cover;transform:translateY(-4px)}}
 .channel-picture:hover .channel-picture-shade{{background:linear-gradient(180deg,rgba(0,0,0,.02),rgba(0,0,0,.12) 30%,rgba(3,4,11,.72) 100%),linear-gradient(90deg,rgba(4,5,12,.42),transparent 65%)}}
 .channel-picture::after{{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(110deg,transparent 25%,rgba(255,255,255,.12) 46%,transparent 62%);background-size:220% 100%;animation:pictureSheen 6.5s ease-in-out infinite;pointer-events:none}}
 @keyframes startReveal{{from{{opacity:0;transform:translateY(14px)}}to{{opacity:1;transform:none}}}}
