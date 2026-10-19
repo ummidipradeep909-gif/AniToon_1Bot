@@ -1745,56 +1745,70 @@ async def run_scan(
     filename = safe_filename(source_message)
 
     progress_state = {
-        "shown_pct": 1,
-        "target_pct": 15,
+        "shown_pct": 0,
+        "stage_floor": 0,
+        "started_at": time.monotonic(),
         "label": "Starting scan…",
     }
 
     async def progress(line: str):
-        # Drive the estimate from parser stages instead of letting a timer race
-        # to 96% while a remote file read is still blocked.
+        # Parser stages provide a lower bound. A time-based estimate also keeps
+        # moving during slow Telegram reads between stage callbacks, so it does
+        # not freeze at a milestone while the real scan is still working.
         _parsed_pct, label = progress_details(line)
         low = line.lower()
-        stage_targets = (
-            ("stage 1/4", 25),
-            ("stage 2/4", 50),
-            ("stage 3/4", 75),
-            ("stage 4/4", 92),
-            ("stage 1/3", 32),
-            ("stage 2/3", 65),
-            ("stage 3/3", 92),
-            ("stage 1/1", 82),
-            ("stage 2/2", 82),
+        stage_floors = (
+            ("stage 1/4", 5),
+            ("stage 2/4", 38),
+            ("stage 3/4", 65),
+            ("stage 4/4", 88),
+            ("stage 1/3", 5),
+            ("stage 2/3", 55),
+            ("stage 3/3", 88),
+            ("stage 1/1", 60),
+            ("stage 2/2", 78),
         )
-        target = next((pct for marker, pct in stage_targets if marker in low), None)
-        if target is not None:
-            progress_state["target_pct"] = max(
-                int(progress_state["target_pct"]),
-                target,
+        floor = next((pct for marker, pct in stage_floors if marker in low), None)
+        if floor is not None:
+            progress_state["stage_floor"] = max(
+                int(progress_state["stage_floor"]),
+                floor,
             )
         progress_state["label"] = label
 
     heartbeat_stop = asyncio.Event()
+
     async def heartbeat():
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Keep updates responsive without flooding Telegram with edits.
-            await asyncio.sleep(0.8)
+            # Leave enough time between edits for Telegram and the shared edit
+            # throttle. Frequent rejected edits made the old percentage look frozen.
+            await asyncio.sleep(1.05)
             if heartbeat_stop.is_set():
                 break
 
-            # Move quickly toward the next real parser-stage milestone, but
-            # never animate to a fake 96% while the file is still being read.
-            # Successful completion alone is allowed to set 100%.
-            shown_pct = int(progress_state["shown_pct"])
-            target_pct = min(
-                94,
-                max(shown_pct, int(progress_state.get("target_pct", 15))),
+            elapsed = max(0.0, time.monotonic() - float(progress_state["started_at"]))
+            # Scan timeout bounds this estimate: it advances throughout slow
+            # reads, but deliberately stays below 100 until report creation succeeds.
+            elapsed_pct = min(
+                89,
+                int(elapsed * 88 / max(1, SCAN_TIMEOUT_SECONDS)),
             )
-            if shown_pct < target_pct:
-                step = min(4, max(1, math.ceil((target_pct - shown_pct) / 3)))
-                shown_pct = min(target_pct, shown_pct + step)
+            shown_pct = int(progress_state["shown_pct"])
+            desired_pct = min(
+                89,
+                max(
+                    shown_pct,
+                    int(progress_state["stage_floor"]),
+                    elapsed_pct,
+                ),
+            )
+            # Ease toward parser-stage floors rather than making large jumps;
+            # elapsed progress then keeps advancing during any long stage.
+            if shown_pct < desired_pct:
+                step = min(3, max(1, math.ceil((desired_pct - shown_pct) / 3)))
+                shown_pct = min(desired_pct, shown_pct + step)
                 progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -2150,7 +2164,7 @@ async def analyze_source(
         queue_position = await _scan_queue_position(scan_token)
         await edit_status(
             status_message,
-            status_text(filename, "Starting scan…", 1, queue_position),
+            status_text(filename, "Starting scan…", 0, queue_position),
             buttons=cancel_button(scan_token),
         )
 
@@ -4115,10 +4129,9 @@ async def handle_callback(
         status_message = await event.get_message()
         await edit_status(
             status_message,
-            "⏳ <b>QUEUE — REGISTERING SCAN</b>\n"
-            "📄 <b>Waiting for queue position…</b>\n\n"
-            "<code>[▰▱▱▱▱▱▱▱▱▱] 10%</code>\n"
-            "Preparing your scan. Queue position will appear shortly.",
+            "⏳ <b>QUEUE — PREPARING SCAN</b>\n"
+            "📄 <b>Preparing your file…</b>\n\n"
+            "The progress bar will appear when processing begins.",
             buttons=cancel_button(token),
         )
 
