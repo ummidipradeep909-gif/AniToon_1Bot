@@ -4180,7 +4180,7 @@ def home_page(report_token: str | None = None) -> bytes:
         }
         image = images.get(name, "")
         return (
-            f'<a class="channel channel-picture" style="--channel-image:url(\"{html.escape(image)}\")" '
+            f'<a class="channel channel-picture" style="--channel-image:url({html.escape(image)})" '
             f'data-channel="{html.escape(name)}" href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'
             f'<span class="channel-picture-shade"></span>'
             f'<span class="channel-picture-content"><span class="channel-name">{html.escape(name)}</span>'
