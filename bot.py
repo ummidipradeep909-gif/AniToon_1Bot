@@ -1722,7 +1722,7 @@ def status_text(
     bar = "▓" * filled + "░" * (10 - filled)
     # Keep the percentage and bar together; use short labels to avoid mobile wrapping.
     return (
-        "⚡ <b>SCANNING</b>\n"
+        "⚡ <b>PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct:3d}%</b>\n"
         f"🔄 {html.escape(clean)}"
