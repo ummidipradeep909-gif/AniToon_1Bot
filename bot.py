@@ -1743,7 +1743,7 @@ def status_text(
     return (
         "⚡ <b>PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
-        f"<code>{bar}</code>\n"
+        f"<code>{bar}</code>  <b>{pct}%</b>\n"
         f"🔄 {html.escape(clean)}"
     )
 
