@@ -2545,33 +2545,47 @@ async def archive_scanned_file(
                     timeout=STORAGE_SEND_TIMEOUT,
                 )
             else:
-                # Clone bot can read its incoming chat, but may not have access
-                # to the private storage channel. Download through the clone,
-                # then upload through the main bot which has channel access.
-                suffix = os.path.splitext(filename)[1][:20]
-                with tempfile.NamedTemporaryFile(
-                    prefix="anitoon-archive-",
-                    suffix=suffix,
-                    delete=False,
-                ) as temp_file:
-                    temp_path = temp_file.name
-                downloaded = await asyncio.wait_for(
-                    client.download_media(source_message, file=temp_path),
-                    timeout=120,
-                )
-                if not downloaded or not os.path.isfile(temp_path):
-                    raise RuntimeError("Telegram media download returned no file")
-                await asyncio.wait_for(
-                    archive_client.send_file(
-                        peer,
-                        temp_path,
-                        caption=caption,
-                        parse_mode="html",
-                        force_document=True,
-                        silent=True,
-                    ),
-                    timeout=120,
-                )
+                # Prefer a native Telegram forward from the clone account. If
+                # the clone lacks access to the private storage channel, fall
+                # back to downloading through the clone and uploading via the
+                # main bot; that fallback cannot display Telegram's native
+                # "Forwarded from" header because it is a fresh upload.
+                try:
+                    await asyncio.wait_for(
+                        client.forward_messages(peer, source_message, silent=True),
+                        timeout=STORAGE_SEND_TIMEOUT,
+                    )
+                except Exception:
+                    log.info(
+                        "Clone cannot forward directly to storage; using main-bot upload | source_bot=%s | file=%s",
+                        source_name,
+                        filename,
+                        exc_info=True,
+                    )
+                    suffix = os.path.splitext(filename)[1][:20]
+                    with tempfile.NamedTemporaryFile(
+                        prefix="anitoon-archive-",
+                        suffix=suffix,
+                        delete=False,
+                    ) as temp_file:
+                        temp_path = temp_file.name
+                    downloaded = await asyncio.wait_for(
+                        client.download_media(source_message, file=temp_path),
+                        timeout=120,
+                    )
+                    if not downloaded or not os.path.isfile(temp_path):
+                        raise RuntimeError("Telegram media download returned no file")
+                    await asyncio.wait_for(
+                        archive_client.send_file(
+                            peer,
+                            temp_path,
+                            caption=caption,
+                            parse_mode="html",
+                            force_document=True,
+                            silent=True,
+                        ),
+                        timeout=120,
+                    )
         log.info(
             "Media archived silently | source_bot=%s | file=%s",
             source_name,
