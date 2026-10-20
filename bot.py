@@ -1782,9 +1782,10 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Refresh the animation at least twice per second while respecting
-            # the existing edit throttle to avoid Telegram rate limits.
-            await asyncio.sleep(0.45)
+            # Keep the bar calm and readable. The label changes when the scanner
+            # reports a real phase change; the bar advances slowly between those
+            # callbacks rather than racing through every percentage point.
+            await asyncio.sleep(1.5)
             if heartbeat_stop.is_set():
                 break
 
