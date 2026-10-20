@@ -1678,27 +1678,40 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
         status_edit_cache[key] = (time.monotonic(), text)
 
 
-def progress_details(line: str) -> tuple[int, str]:
+def progress_range(line: str) -> tuple[int, int]:
+    """Return the percentage band for the current real scan phase."""
     low = line.lower()
 
-    if "starting scan" in low:
-        pct = 1
-    elif "stage 1/4" in low or "stage 1/3" in low:
-        pct = 12
-    elif "stage 2/4" in low:
-        pct = 32
-    elif "stage 2/3" in low:
-        pct = 60
-    elif "stage 3/4" in low or "stage 3/3" in low:
-        pct = 88
-    elif "stage 4/4" in low:
-        pct = 92
-    elif "stage 1/1" in low:
-        pct = 20
-    elif "stage 2/2" in low or "reading available media metadata" in low:
-        pct = 72
-    else:
-        pct = 50
+    # Report generation is the final phase, but 100% is reserved for success.
+    if any(term in low for term in (
+        "assembling", "preparing report", "final metadata report",
+        "report preparation", "building report",
+    )):
+        return 85, 99
+    if any(term in low for term in (
+        "extracting", "inspecting content", "content inspection",
+        "reading the bounded zip directory", "file list",
+        "sampling", "probing", "subtitle tracks", "audio and subtitle tracks",
+    )):
+        return 65, 80
+    if any(term in low for term in (
+        "parsing", "metadata", "track metadata", "media attributes",
+        "reading available media",
+    )):
+        return 40, 60
+    if any(term in low for term in (
+        "identif", "file header", "container", "reading the complete file",
+        "reading the file", "locating the zip directory", "zip directory",
+    )):
+        return 20, 35
+    # Start-up and request registration.
+    return 1, 15
+
+
+def progress_details(line: str) -> tuple[int, str]:
+    low = line.lower()
+    low_min, low_max = progress_range(line)
+    pct = (low_min + low_max) // 2
 
     clean = line
     for prefix in ("🧭 ", "🎯 ", "🔎 ", "🧩 "):
@@ -1747,14 +1760,21 @@ async def run_scan(
     progress_state = {
         "shown_pct": 0,
         "label": "Starting scan…",
+        "phase_min": 1,
+        "phase_max": 15,
     }
 
     async def progress(line: str):
-        # Keep parser callbacks for phase text only. The percentage animation
-        # runs on its own cadence so a slow file read cannot freeze the display
-        # at any stage milestone.
+        # Keep parser callbacks for phase text and its percentage band. The
+        # heartbeat advances only inside the band for the current scan phase.
         _parsed_pct, label = progress_details(line)
+        phase_min, phase_max = progress_range(line)
         progress_state["label"] = label
+        progress_state["phase_min"] = phase_min
+        progress_state["phase_max"] = phase_max
+        progress_state["shown_pct"] = max(
+            int(progress_state["shown_pct"]), phase_min
+        )
 
     heartbeat_stop = asyncio.Event()
 
@@ -1769,10 +1789,13 @@ async def run_scan(
                 break
 
             shown_pct = int(progress_state["shown_pct"])
-            # Keep the estimate monotonic and reserve 100% for a real completion.
-            # The progress message is removed once the separate result is delivered.
-            if shown_pct < 95:
-                shown_pct = min(95, shown_pct + 2)
+            phase_min = int(progress_state["phase_min"])
+            phase_max = int(progress_state["phase_max"])
+            # Start each phase inside its requested band and advance gradually.
+            # 100% remains reserved for a successfully completed scan.
+            shown_pct = max(shown_pct, phase_min)
+            if shown_pct < phase_max:
+                shown_pct = min(phase_max, shown_pct + 1)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
