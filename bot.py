@@ -1698,7 +1698,7 @@ def progress_range(line: str) -> tuple[int, int]:
         "parsing", "metadata", "track metadata", "media attributes",
         "reading available media",
     )):
-        return 40, 60
+        return 20, 80
     if any(term in low for term in (
         "identif", "file header", "container", "reading the complete file",
         "reading the file", "locating the zip directory", "zip directory",
