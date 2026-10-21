@@ -1797,7 +1797,7 @@ async def run_scan(
             if shown_pct < phase_max:
                 # Keep progress visibly moving during slow I/O, while staying
                 # inside the current scan phase and below 100%.
-                shown_pct = min(phase_max, shown_pct + 3)
+                shown_pct = min(phase_max, shown_pct + 1)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -2378,29 +2378,40 @@ async def analyze(
     bot_username: str = BOT_USERNAME,
     include_clone: bool = True,
 ) -> None:
+    """Start scanning immediately without a separate MEDIA DETECTED button prompt."""
     purge_pending_scans()
 
     token = secrets.token_urlsafe(18)
     sender = await event.get_sender()
     sender_id = getattr(sender, "id", None)
-    pending_scans[token] = PendingScan(
-        source_message=event.message,
-        created_at=time.monotonic(),
-        user_id=int(sender_id) if sender_id is not None else None,
-        client=client,
-        bot_username=bot_username,
-        include_clone=include_clone,
-        show_privacy=bool(getattr(event, "is_private", True)),
-    )
-
+    user_id = int(sender_id) if sender_id is not None else None
+    show_privacy = bool(getattr(event, "is_private", True))
     filename = html.escape(safe_filename(event.message))[:120]
-    await event.reply(
-        "📦 <b>MEDIA DETECTED</b>\n\n"
+
+    # Keep the user's original upload and its caption/tag untouched.
+    # Start the scan immediately and use this single message for live progress.
+    status_message = await event.reply(
+        "⏳ <b>Preparing file scan…</b>\n"
         f"📄 <code>{filename}</code>\n"
-        "🔎 AniToon will identify the media type and show its available details.",
+        "Progress will update while AniToon checks the file.",
         parse_mode="html",
-        buttons=metadata_button(token),
+        buttons=cancel_button(token),
     )
+    task = asyncio.create_task(
+        analyze_source(
+            event.message,
+            status_message,
+            token,
+            user_id,
+            client=client,
+            bot_username=bot_username,
+            include_clone=include_clone,
+            show_privacy=show_privacy,
+        )
+    )
+    active_scans[token] = task
+    active_scan_users[token] = user_id
+    active_scan_clients[token] = client
 
 
 async def cancel_user_scan(user_id: int) -> int:
