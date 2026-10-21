@@ -1726,6 +1726,7 @@ def status_text(
     line: str,
     pct: int | None = None,
     queue_position: int = 1,
+    elapsed_seconds: float = 0.0,
 ) -> str:
     parsed_pct, clean = progress_details(line)
     current_pct = parsed_pct if pct is None else int(pct)
@@ -1744,7 +1745,8 @@ def status_text(
         "⚡ <b>PROCESSING</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct:3d}%</b>\n"
-        f"🔄 {html.escape(clean)}"
+        f"🔄 {html.escape(clean)}\n"
+        f"⏱️ Elapsed: <b>{max(0, int(elapsed_seconds)) // 60:02d}:{max(0, int(elapsed_seconds)) % 60:02d}</b>"
     )
 
 
@@ -1756,6 +1758,9 @@ async def run_scan(
     client: Any,
 ) -> Report:
     filename = safe_filename(source_message)
+
+    scan_started_at = time.monotonic()
+    progress_milestones = (5, 15, 25, 40, 50, 60, 70, 80, 90, 95, 99)
 
     progress_state = {
         "shown_pct": 0,
@@ -1791,13 +1796,16 @@ async def run_scan(
             shown_pct = int(progress_state["shown_pct"])
             phase_min = int(progress_state["phase_min"])
             phase_max = int(progress_state["phase_max"])
-            # Start each phase inside its requested band and advance gradually.
-            # 100% remains reserved for a successfully completed scan.
+            # Use meaningful milestones rather than showing every number.
+            # Progress remains below 100% until the scan routine returns successfully.
             shown_pct = max(shown_pct, phase_min)
-            if shown_pct < phase_max:
-                # Keep progress visibly moving during slow I/O, while staying
-                # inside the current scan phase and below 100%.
-                shown_pct = min(phase_max, shown_pct + 5)
+            next_milestone = next(
+                (milestone for milestone in progress_milestones
+                 if shown_pct < milestone <= phase_max),
+                None,
+            )
+            if next_milestone is not None:
+                shown_pct = next_milestone
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -1809,6 +1817,7 @@ async def run_scan(
                     filename,
                     f"{label} {pulse[index % len(pulse)]}",
                     shown_pct,
+                    elapsed_seconds=time.monotonic() - scan_started_at,
                 ),
                 buttons=cancel_button(scan_token),
             )
