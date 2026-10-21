@@ -331,7 +331,7 @@ def _anitoon_start_art_bytes() -> bytes | None:
 
 
 def metadata_button(token: str):
-    return [[Button.inline("🔎 Scan File Info", f"scan:{token}".encode("ascii"))]]
+    return [[Button.inline("🔎 Scan File", f"scan:{token}".encode("ascii"))]]
 
 
 def cancel_button(token: str):
@@ -1797,7 +1797,7 @@ async def run_scan(
             if shown_pct < phase_max:
                 # Keep progress visibly moving during slow I/O, while staying
                 # inside the current scan phase and below 100%.
-                shown_pct = min(phase_max, shown_pct + 3)
+                shown_pct = min(phase_max, shown_pct + 5)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -2395,9 +2395,10 @@ async def analyze(
     )
 
     # Keep the uploaded file and its original caption/tag unchanged.
-    # The only follow-up is a concise scan action; scanning starts on click.
+    # Tell users clearly to press Scan; scanning starts only after that click.
     await event.reply(
-        "🔎",
+        "🔎 <b>Want to scan this file?</b>\nTap <b>Scan File</b> below to start.",
+        parse_mode="html",
         buttons=metadata_button(token),
     )
 
