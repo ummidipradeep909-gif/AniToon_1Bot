@@ -1642,6 +1642,7 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
     lowered = text.casefold()
     terminal_update = any(marker in lowered for marker in (
         "metadata scan cancelled",
+        "process canceled",
         "free resource guard paused",
         "safe scan limit reached",
         "metadata scan reached the",
@@ -2279,7 +2280,7 @@ async def analyze_source(
         await cancel_probe(scan_token)
         await edit_status(
             status_message,
-            "❌ <b>Metadata scan cancelled.</b>",
+            "❌ <b>Process canceled.</b>",
             buttons=home_buttons(
                 bot_username,
                 include_clone=include_clone,
@@ -2322,7 +2323,7 @@ async def analyze_source(
         checks_failed += 1
         await edit_status(
             status_message,
-            "❌ <b>Metadata scan cancelled.</b>",
+            "❌ <b>Process canceled.</b>",
             buttons=home_buttons(
                 bot_username,
                 include_clone=include_clone,
