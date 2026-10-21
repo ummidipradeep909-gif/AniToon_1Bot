@@ -1642,6 +1642,7 @@ async def edit_status(message, text: str, *, buttons=None) -> None:
     lowered = text.casefold()
     terminal_update = any(marker in lowered for marker in (
         "metadata scan cancelled",
+        "process canceled",
         "free resource guard paused",
         "safe scan limit reached",
         "metadata scan reached the",
@@ -1693,7 +1694,7 @@ def progress_range(line: str) -> tuple[int, int]:
         "reading the bounded zip directory", "file list",
         "sampling", "probing", "subtitle tracks", "audio and subtitle tracks",
     )):
-        return 65, 80
+        return 65, 90
     if any(term in low for term in (
         "parsing", "metadata", "track metadata", "media attributes",
         "reading available media",
@@ -1741,12 +1742,13 @@ def status_text(
         bar += partial_cells[partial_index]
     bar += "░" * (10 - len(bar))
     # Keep the percentage and bar together; use short labels to avoid mobile wrapping.
+    elapsed = max(0, int(elapsed_seconds))
     return (
-        "⚡ <b>PROCESSING</b>\n"
+        "⚡ <b>FILE SCAN IN PROGRESS</b>\n"
         f"📄 <b>{html.escape(filename)}</b>\n\n"
         f"<code>{bar}</code> <b>{pct:3d}%</b>\n"
-        f"🔄 {html.escape(clean)}\n"
-        f"⏱️ Elapsed: <b>{max(0, int(elapsed_seconds)) // 60:02d}:{max(0, int(elapsed_seconds)) % 60:02d}</b>"
+        f"🛠️ <i>{html.escape(clean)}</i>\n"
+        f"⏱️ Time elapsed: <b>{elapsed // 60:02d}:{elapsed % 60:02d}</b>"
     )
 
 
@@ -1760,7 +1762,7 @@ async def run_scan(
     filename = safe_filename(source_message)
 
     scan_started_at = time.monotonic()
-    progress_milestones = (5, 15, 25, 40, 50, 60, 70, 80, 90, 95, 99)
+    progress_milestones = (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 99)
 
     progress_state = {
         "shown_pct": 0,
@@ -1780,6 +1782,10 @@ async def run_scan(
         progress_state["shown_pct"] = max(
             int(progress_state["shown_pct"]), phase_min
         )
+        # A newly reported parser phase may move the bar forward immediately.
+        progress_state["shown_pct"] = min(
+            max(int(progress_state["shown_pct"]), phase_min), 99
+        )
 
     heartbeat_stop = asyncio.Event()
 
@@ -1787,9 +1793,9 @@ async def run_scan(
         pulse = ("·", "••", "•••")
         index = 0
         while not heartbeat_stop.is_set():
-            # Refresh the animation at least twice per second while respecting
-            # the existing edit throttle to avoid Telegram rate limits.
-            await asyncio.sleep(0.45)
+            # Tick the elapsed-time display every second. Progress edits remain
+            # best-effort and are throttled to avoid Telegram flood limits.
+            await asyncio.sleep(1.0)
             if heartbeat_stop.is_set():
                 break
 
@@ -1806,6 +1812,11 @@ async def run_scan(
             )
             if next_milestone is not None:
                 shown_pct = next_milestone
+            # If a real phase remains busy (notably content inspection around 80%),
+            # don't freeze the bar: continue in small steps toward 99% while the
+            # elapsed timer keeps ticking. 100% is still reserved for success.
+            elif shown_pct < 99 and phase_max >= 80:
+                shown_pct = min(99, shown_pct + 1)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
@@ -2267,14 +2278,10 @@ async def analyze_source(
         await persist_outcome("cancelled")
         checks_failed += 1
         await cancel_probe(scan_token)
+        # Cancellation should leave only the short status text, with no extra buttons.
         await edit_status(
             status_message,
-            "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                show_privacy=show_privacy,
-            ),
+            "❌ <b>Process canceled.</b>",
         )
         raise
 
@@ -2310,14 +2317,10 @@ async def analyze_source(
         outcome = "cancelled"
         await persist_outcome("cancelled")
         checks_failed += 1
+        # Keep cancellation UI minimal: text only, no Home or other buttons.
         await edit_status(
             status_message,
-            "❌ <b>Metadata scan cancelled.</b>",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                show_privacy=show_privacy,
-            ),
+            "❌ <b>Process canceled.</b>",
         )
 
     except asyncio.TimeoutError:
