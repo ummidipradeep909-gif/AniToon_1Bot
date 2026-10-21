@@ -2278,14 +2278,10 @@ async def analyze_source(
         await persist_outcome("cancelled")
         checks_failed += 1
         await cancel_probe(scan_token)
+        # Cancellation should leave only the short status text, with no extra buttons.
         await edit_status(
             status_message,
             "❌ <b>Process canceled.</b>",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                show_privacy=show_privacy,
-            ),
         )
         raise
 
@@ -2321,14 +2317,10 @@ async def analyze_source(
         outcome = "cancelled"
         await persist_outcome("cancelled")
         checks_failed += 1
+        # Keep cancellation UI minimal: text only, no Home or other buttons.
         await edit_status(
             status_message,
             "❌ <b>Process canceled.</b>",
-            buttons=home_buttons(
-                bot_username,
-                include_clone=include_clone,
-                show_privacy=show_privacy,
-            ),
         )
 
     except asyncio.TimeoutError:
