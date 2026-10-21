@@ -1795,9 +1795,9 @@ async def run_scan(
             # 100% remains reserved for a successfully completed scan.
             shown_pct = max(shown_pct, phase_min)
             if shown_pct < phase_max:
-                # Keep progress visibly moving during slow I/O, while staying
-                # inside the current scan phase and below 100%.
-                shown_pct = min(phase_max, shown_pct + 3)
+                # Advance one percentage point at a time so no displayed
+                # percentages are skipped; 100% remains reserved for success.
+                shown_pct = min(phase_max, shown_pct + 1)
             progress_state["shown_pct"] = shown_pct
 
             label = progress_state["label"]
