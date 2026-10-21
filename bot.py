@@ -2406,12 +2406,19 @@ async def analyze(
         show_privacy=bool(getattr(event, "is_private", True)),
     )
 
-    # Keep the uploaded file and its original caption/tag unchanged.
-    # Tell users clearly to press Scan; scanning starts only after that click.
-    await event.reply(
-        "🔎 <b>Want to scan this file?</b>\nTap <b>Scan File</b> below to start.",
-        parse_mode="html",
+    # Telegram bots cannot add buttons to another user's existing message.
+    # Repost the same media with its original caption/entities and put the Scan
+    # button directly on that file, without a separate prompt text in the channel.
+    source_message = event.message
+    original_caption = getattr(source_message, "message", None) or None
+    original_entities = getattr(source_message, "entities", None) if original_caption else None
+    await client.send_file(
+        event.chat_id,
+        source_message,
+        caption=original_caption,
+        formatting_entities=original_entities,
         buttons=metadata_button(token),
+        reply_to=getattr(source_message, "id", None),
     )
 
 
@@ -4138,13 +4145,18 @@ async def handle_callback(
         else:
             await event.answer("Metadata scan starting…")
 
-        status_message = await event.get_message()
-        await edit_status(
-            status_message,
+        # Remove the now-used Scan button from the reposted file, preserving
+        # its caption/tags. Show progress in a separate message only after click.
+        with suppress(Exception):
+            await event.edit(buttons=None)
+        status_message = await client.send_message(
+            event.chat_id,
             "⏳ <b>QUEUE — PREPARING SCAN</b>\n"
             "📄 <b>Preparing your file…</b>\n\n"
             "The progress bar will appear when processing begins.",
+            parse_mode="html",
             buttons=cancel_button(token),
+            reply_to=getattr(event, "message_id", None),
         )
 
         task = asyncio.create_task(
