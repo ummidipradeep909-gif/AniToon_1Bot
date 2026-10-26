@@ -102,10 +102,10 @@ OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 # Clone bots are live in memory only; scan execution is globally queued.
 MAX_ACTIVE_SCANS_PER_USER = max(1, min(int(os.getenv("MAX_ACTIVE_SCANS_PER_USER", "1")), 2))
 SCAN_COOLDOWN_SECONDS = max(0, min(int(os.getenv("SCAN_COOLDOWN_SECONDS", "2")), 10))
-# Render's current Hobby workspace includes 5 GB/month of outbound bandwidth.
-# This app deliberately stops heavy work at 80% of that as a safety buffer.
+# Local safety cap for HTTP response bodies served by this process. This is an
+# app-local counter, not Render's authoritative monthly bandwidth metric. Keep
+# HTTP response protection separate from the RAM-based Telegram scan controller.
 WEB_EGRESS_GUARD_BYTES = 4 * 1024 * 1024 * 1024
-WEB_EGRESS_PAUSE_BYTES = int(WEB_EGRESS_GUARD_BYTES * 0.80)
 RAM_PAUSE_PCT = 75.0
 
 # Ask Telegram to pre-enable all group admin permissions when the user adds AniToon.
@@ -1215,16 +1215,12 @@ def memory_pressure_high() -> bool:
 
 
 def resource_guard_reason() -> str | None:
+    """Explain only guards that actually stop new Telegram scans."""
     stats = runtime_resource_stats()
     if stats["ram_pct"] >= RAM_PAUSE_PCT:
         return (
             f"RAM pressure is {stats['ram_pct']:.1f}% (pause threshold {RAM_PAUSE_PCT:.0f}%). "
-            f"New heavy scans stay paused until memory falls below {RAM_PAUSE_PCT:.0f}%."
-        )
-    if web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES:
-        return (
-            f"Tracked web egress reached {stats['web_egress_gb']:.2f} GB. "
-            f"Heavy work is paused before the {WEB_EGRESS_GUARD_BYTES / (1024**3):.0f} GB app guard."
+            f"New scans stay paused until memory falls below {RAM_PAUSE_PCT:.0f}%."
         )
     return None
 
@@ -1266,10 +1262,11 @@ async def render_owner_resources(event, user_id: int) -> None:
         f"⚙️ Worker cap: <b>{scan_worker_cap}/{MAX_SCAN_WORKERS}</b> • {scan_worker_cap_source}\n"
         f"🤖 Adaptive limit now: <b>{scan_limit if scan_limit else 'PAUSED'}</b> worker(s)\n"
         f"🔎 Active scans: <b>{active_processes}</b> • Waiting: <b>{queued_processes}</b>\n"
-        f"📡 Web egress <b>{stats['web_egress_gb']:.3f}/4 GB</b> • {stats['web_egress_pct']:.1f}% {egress_state}\n"
+        f"🌐 App response data <b>{stats['web_egress_gb']:.3f}/4 GB</b> • {stats['web_egress_pct']:.1f}% {egress_state} <i>(since restart)</i>\n"
         f"⏱️ Uptime <b>{stats['uptime_hours']:.2f} h</b> • 📊 allowance {stats['uptime_pct']:.1f}%\n"
         f"🧹 Bot temp <b>{stats['tmp_mb']:.1f}/{stats['tmp_limit_mb']:.0f} MB</b> • {stats['tmp_pct']:.1f}%\n"
-        f"🛡️ Guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n\n"
+        f"🛡️ RAM scan guard: <b>{'PAUSED' if guard else 'CLEAR'}</b>\n"
+        "🌐 The 4 GB app-response cap protects browser pages only; it does not pause Telegram scans.\n\n"
         "<b>Automatic RAM limits</b>\n"
         "Below 35%: up to 5 workers • 35–44%: 4 • 45–54%: 3 • 55–64%: 2 • 65–74%: 1 • 75%+: pause new scans.\n"
         "Use the controls below to change the maximum cap. The controller still reduces workers automatically for safety.\n"
@@ -1990,14 +1987,10 @@ async def acquire_scan_slot(
         while True:
             stats = runtime_resource_stats()
             ram_high = stats["ram_pct"] >= RAM_PAUSE_PCT
-            egress_guard = web_bytes_sent >= WEB_EGRESS_PAUSE_BYTES
 
-            if egress_guard:
-                raise ResourceGuardPause(
-                    f"Tracked web egress reached {stats['web_egress_gb']:.2f} GB. "
-                    "New heavy scans are paused by the resource guard."
-                )
-
+            # Web response volume must not deadlock Telegram scans: scanning
+            # media and serving browser reports are separate resource paths.
+            # RAM pressure remains the guard that pauses new scan workers.
             start_now = False
             refresh_queue = False
             async with scan_queue_lock:
@@ -3431,7 +3424,7 @@ async def render_public_status(event, *, edit: bool = True) -> None:
         f"🗄️ MongoDB: <b>{mongo}</b>\n"
         f"{queue}\n"
         f"🧠 RAM: <b>{resources['ram_pct']:.1f}%</b>\n"
-        f"📡 Tracked web egress: <b>{resources['web_egress_pct']:.1f}%</b>"
+        f"🌐 Tracked app response data (since restart): <b>{resources['web_egress_pct']:.1f}% of local 4 GB cap</b>"
     )
     if edit:
         await event.edit(text, parse_mode="html", buttons=back_buttons())
