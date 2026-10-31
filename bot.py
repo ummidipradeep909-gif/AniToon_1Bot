@@ -197,6 +197,7 @@ bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 preview_tasks: set[asyncio.Task] = set()
 queue_refresh_tasks: set[asyncio.Task] = set()
 storage_tasks: set[asyncio.Task] = set()
+background_tasks: set[asyncio.Task] = set()
 storage_semaphore = asyncio.Semaphore(2)
 storage_peers: dict[int, Any] = {}
 
@@ -3070,14 +3071,16 @@ def _bind_bot_handlers(
     include_clone: bool,
 ) -> None:
     async def on_message(event):
-        try:
-            await _touch_group_chat(
+        # Group bookkeeping performs Telegram lookups and MongoDB writes.
+        # Run it separately so it cannot hold up command replies.
+        _schedule_background_task(
+            _touch_group_chat(
                 event,
                 client=client,
                 bot_username=bot_username,
-            )
-        except Exception:
-            log.debug("Group tracking failed", exc_info=True)
+            ),
+            "group tracking",
+        )
         try:
             await handle_new_message(
                 event,
@@ -3459,6 +3462,53 @@ def is_checkable_message(event) -> bool:
     )
 
 
+def _schedule_background_task(coro, label: str) -> None:
+    """Run non-critical persistence/bookkeeping without blocking Telegram replies."""
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+
+    def _finish(done: asyncio.Task) -> None:
+        background_tasks.discard(done)
+        if done.cancelled():
+            return
+        try:
+            error = done.exception()
+        except asyncio.CancelledError:
+            return
+        if error is not None:
+            log.warning("Background task failed | task=%s", label, exc_info=error)
+
+    task.add_done_callback(_finish)
+
+
+async def _track_bot_audience_user(
+    event,
+    *,
+    client: Any,
+    bot_username: str,
+) -> None:
+    try:
+        sender = await event.get_sender()
+        uid = getattr(sender, "id", None)
+        if uid is None:
+            return
+        bot_id = await _ensure_bot_identity(client)
+        if bot_id is None:
+            return
+        audience_key = (int(bot_id), int(uid))
+        now_mono = time.monotonic()
+        if now_mono - bot_audience_touch_cache.get(audience_key, 0.0) < 6 * 3600:
+            return
+        bot_audience_touch_cache[audience_key] = now_mono
+        await record_bot_user(
+            bot_id=int(bot_id),
+            bot_username=bot_username,
+            user_id=int(uid),
+        )
+    except Exception:
+        log.debug("Bot audience tracking failed", exc_info=True)
+
+
 async def handle_new_message(
     event,
     *,
@@ -3469,25 +3519,17 @@ async def handle_new_message(
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
-    # Keep a per-bot private audience so owner broadcasts can reach users of
-    # the main bot and each clone through the bot they actually used.
+    # Audience persistence is useful for owner broadcasts, but it must not
+    # delay a user's command response while MongoDB connects or writes.
     if getattr(event, "is_private", False):
-        try:
-            sender = await event.get_sender()
-            uid = getattr(sender, "id", None)
-            bot_id = await _ensure_bot_identity(client)
-            if uid is not None and bot_id is not None:
-                audience_key = (int(bot_id), int(uid))
-                now_mono = time.monotonic()
-                if now_mono - bot_audience_touch_cache.get(audience_key, 0.0) >= 6 * 3600:
-                    bot_audience_touch_cache[audience_key] = now_mono
-                    await record_bot_user(
-                        bot_id=int(bot_id),
-                        bot_username=bot_username,
-                        user_id=int(uid),
-                    )
-        except Exception:
-            log.debug("Bot audience tracking failed", exc_info=True)
+        _schedule_background_task(
+            _track_bot_audience_user(
+                event,
+                client=client,
+                bot_username=bot_username,
+            ),
+            "bot audience tracking",
+        )
 
     if not include_clone:
         await bump_clone_stat(client, "messages_received")
@@ -3523,7 +3565,7 @@ async def handle_new_message(
     help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
 
     if command == "/start":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         sender = await event.get_sender()
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
@@ -3596,24 +3638,24 @@ async def handle_new_message(
         return
 
     if command == "/help":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
     if command == "/scan_files":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
         return
 
     if command == "/about":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         sender = await event.get_sender()
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
     if command == "/addtogroup":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
@@ -3628,7 +3670,7 @@ async def handle_new_message(
         return
 
     if command == "/clone":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         sender = await event.get_sender()
         if include_clone:
             await render_clone_list(event, int(sender.id), edit=False)
@@ -3637,7 +3679,7 @@ async def handle_new_message(
         return
 
     if command == "/stats":
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         sender = await event.get_sender()
         await render_user_stats(event, int(sender.id), edit=False)
         return
@@ -3649,7 +3691,7 @@ async def handle_new_message(
             # Owner-only resource/status commands are intentionally invisible
             # to ordinary users.
             return
-        await record_user(event)
+        _schedule_background_task(record_user(event), "user profile tracking")
         if command == "/resources":
             await render_owner_resources(event, int(user_id))
         else:
@@ -3697,7 +3739,7 @@ async def handle_new_message(
     # Every file gets its own Download Metadata button. Scan execution is
     # bounded by the global semaphore/queue, so bursts are queued instead
     # of producing "Please wait" messages or losing files.
-    await record_user(event)
+    _schedule_background_task(record_user(event), "user profile tracking")
     await analyze(
         event,
         client=client,
