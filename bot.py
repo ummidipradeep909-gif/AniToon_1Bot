@@ -3476,7 +3476,7 @@ def _schedule_background_task(coro, label: str) -> None:
         except asyncio.CancelledError:
             return
         if error is not None:
-            log.warning("Background task failed | task=%s", label, exc_info=error)
+            log.warning("Background task failed | task=%s", label, exc_info=(type(error), error, error.__traceback__))
 
     task.add_done_callback(_finish)
 
