@@ -3555,7 +3555,7 @@ async def handle_new_message(
                 await render_user_stats(event, int(sender_id), edit=False)
             elif start_payload == "clones":
                 if include_clone:
-                    await render_clone_list(event, int(sender.id), edit=False)
+                    await render_clone_list(event, int(sender_id), edit=False)
                 else:
                     await show_clone_redirect(event, payload="clones")
             elif start_payload == "addtogroup":
@@ -3565,7 +3565,7 @@ async def handle_new_message(
                     buttons=[[Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))]],
                 )
             elif start_payload == "cancel":
-                cancelled = await cancel_user_scan(int(sender.id))
+                cancelled = await cancel_user_scan(int(sender_id))
                 await event.reply(
                     f"✅ Cancelled <b>{cancelled}</b> queued/running scan job(s)." if cancelled
                     else "ℹ️ You have no queued or running metadata scans.",
@@ -3679,8 +3679,7 @@ async def handle_new_message(
         return
 
     if command == "/cancel":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if user_id is None:
             await event.reply("⚠️ I could not identify your Telegram account.")
             return
