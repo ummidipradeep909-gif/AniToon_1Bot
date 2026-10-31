@@ -3072,11 +3072,11 @@ def _bind_bot_handlers(
 ) -> None:
     async def on_message(event):
         try:
-            await _touch_group_chat(
+            _spawn_background_task(_touch_group_chat(
                 event,
                 client=client,
                 bot_username=bot_username,
-            )
+            ))
         except Exception:
             log.debug("Group tracking failed", exc_info=True)
         try:
@@ -3541,7 +3541,7 @@ async def handle_new_message(
 
     if command == "/start":
         _spawn_background_task(record_user(event))
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
         if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
@@ -3552,7 +3552,7 @@ async def handle_new_message(
             elif start_payload == "scan_files":
                 await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
             elif start_payload == "stats":
-                await render_user_stats(event, int(sender.id), edit=False)
+                await render_user_stats(event, int(sender_id), edit=False)
             elif start_payload == "clones":
                 if include_clone:
                     await render_clone_list(event, int(sender.id), edit=False)
@@ -3581,7 +3581,7 @@ async def handle_new_message(
         start_buttons = home_buttons(
             bot_username,
             include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
+            user_id=sender_id,
             show_privacy=bool(getattr(event, "is_private", True)),
         )
         art = _anitoon_start_art_bytes()
@@ -3614,7 +3614,6 @@ async def handle_new_message(
 
     if command == "/help":
         _spawn_background_task(record_user(event))
-        sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
@@ -3625,7 +3624,6 @@ async def handle_new_message(
 
     if command == "/about":
         _spawn_background_task(record_user(event))
-        sender = await event.get_sender()
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
@@ -3646,22 +3644,21 @@ async def handle_new_message(
 
     if command == "/clone":
         _spawn_background_task(record_user(event))
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         if include_clone:
-            await render_clone_list(event, int(sender.id), edit=False)
+            await render_clone_list(event, int(sender_id), edit=False)
         else:
             await show_clone_redirect(event, payload="clones")
         return
 
     if command == "/stats":
         _spawn_background_task(record_user(event))
-        sender = await event.get_sender()
-        await render_user_stats(event, int(sender.id), edit=False)
+        sender_id = getattr(event, "sender_id", None)
+        await render_user_stats(event, int(sender_id), edit=False)
         return
 
     if command in {"/status", "/resources"}:
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if not _owner_allowed(user_id):
             # Owner-only resource/status commands are intentionally invisible
             # to ordinary users.
@@ -3674,8 +3671,7 @@ async def handle_new_message(
         return
 
     if command == "/owner":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if _owner_allowed(user_id):
             await render_owner_dashboard(event, int(user_id), edit=False)
         else:
