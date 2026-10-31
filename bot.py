@@ -3538,8 +3538,10 @@ async def handle_new_message(
         return
 
     if include_clone:
-        sender_for_broadcast = await event.get_sender()
-        owner_user_id = getattr(sender_for_broadcast, "id", None)
+        # Telethon already exposes sender_id on the event. Avoid a network
+        # get_sender() lookup on every incoming command just to check whether
+        # this user is in the owner's broadcast-reply flow.
+        owner_user_id = getattr(event, "sender_id", None)
         if (
             owner_user_id is not None
             and _owner_allowed(owner_user_id)
@@ -3639,7 +3641,6 @@ async def handle_new_message(
 
     if command == "/help":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
@@ -3650,7 +3651,6 @@ async def handle_new_message(
 
     if command == "/about":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
