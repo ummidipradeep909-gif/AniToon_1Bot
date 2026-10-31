@@ -197,6 +197,7 @@ bot_audience_touch_cache: dict[tuple[int, int], float] = {}
 preview_tasks: set[asyncio.Task] = set()
 queue_refresh_tasks: set[asyncio.Task] = set()
 storage_tasks: set[asyncio.Task] = set()
+background_tasks: set[asyncio.Task] = set()
 storage_semaphore = asyncio.Semaphore(2)
 storage_peers: dict[int, Any] = {}
 
@@ -3071,11 +3072,11 @@ def _bind_bot_handlers(
 ) -> None:
     async def on_message(event):
         try:
-            await _touch_group_chat(
+            _spawn_background_task(_touch_group_chat(
                 event,
                 client=client,
                 bot_username=bot_username,
-            )
+            ))
         except Exception:
             log.debug("Group tracking failed", exc_info=True)
         try:
@@ -3459,6 +3460,43 @@ def is_checkable_message(event) -> bool:
     )
 
 
+def _background_task_finished(task: asyncio.Task) -> None:
+    background_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        log.debug("Background bot task failed", exc_info=True)
+
+
+def _spawn_background_task(coro: Any) -> None:
+    """Run non-interactive persistence away from Telegram command response paths."""
+    task = asyncio.create_task(coro)
+    background_tasks.add(task)
+    task.add_done_callback(_background_task_finished)
+
+
+async def _track_bot_audience(client: Any, event: Any, bot_username: str) -> None:
+    try:
+        sender = await event.get_sender()
+        uid = getattr(sender, "id", None)
+        bot_id = await _ensure_bot_identity(client)
+        if uid is None or bot_id is None:
+            return
+        audience_key = (int(bot_id), int(uid))
+        now_mono = time.monotonic()
+        if now_mono - bot_audience_touch_cache.get(audience_key, 0.0) >= 6 * 3600:
+            bot_audience_touch_cache[audience_key] = now_mono
+            await record_bot_user(
+                bot_id=int(bot_id),
+                bot_username=bot_username,
+                user_id=int(uid),
+            )
+    except Exception:
+        log.debug("Bot audience tracking failed", exc_info=True)
+
+
 async def handle_new_message(
     event,
     *,
@@ -3469,62 +3507,51 @@ async def handle_new_message(
     text = (event.raw_text or "").strip()
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
 
-    # Keep a per-bot private audience so owner broadcasts can reach users of
-    # the main bot and each clone through the bot they actually used.
+    # Database writes and bot-identity lookups must never sit in front of a
+    # user's command response. Track them asynchronously in the background.
     if getattr(event, "is_private", False):
-        try:
-            sender = await event.get_sender()
-            uid = getattr(sender, "id", None)
-            bot_id = await _ensure_bot_identity(client)
-            if uid is not None and bot_id is not None:
-                audience_key = (int(bot_id), int(uid))
-                now_mono = time.monotonic()
-                if now_mono - bot_audience_touch_cache.get(audience_key, 0.0) >= 6 * 3600:
-                    bot_audience_touch_cache[audience_key] = now_mono
-                    await record_bot_user(
-                        bot_id=int(bot_id),
-                        bot_username=bot_username,
-                        user_id=int(uid),
-                    )
-        except Exception:
-            log.debug("Bot audience tracking failed", exc_info=True)
+        _spawn_background_task(_track_bot_audience(client, event, bot_username))
 
     if not include_clone:
-        await bump_clone_stat(client, "messages_received")
+        _spawn_background_task(bump_clone_stat(client, "messages_received"))
 
-    if include_clone and await handle_clone_token_message(event):
-        return
+    # Resolve sender IDs from the incoming update where possible; avoid an
+    # extra Telegram get_sender request for ordinary commands.
+    sender_id = getattr(event, "sender_id", None)
 
-    if include_clone:
-        sender_for_broadcast = await event.get_sender()
-        owner_user_id = getattr(sender_for_broadcast, "id", None)
-        if (
-            owner_user_id is not None
-            and _owner_allowed(owner_user_id)
-            and _owner_broadcast_pending(int(owner_user_id))
-        ):
-            if text:
-                owner_broadcast_pending.pop(int(owner_user_id), None)
-                result = await _broadcast_owner_message(text)
-                await event.reply(
-                    "✅ <b>Broadcast finished</b>\n\n"
-                    f"👤 Users reached: <b>{result['users']}</b>\n"
-                    f"🤖 Main-bot users: <b>{result['main_users']}</b>\n"
-                    f"🧬 Clone-bot users: <b>{result['clone_users']}</b>\n"
-                    f"👥 Groups reached: <b>{result['group_sent']}/{result['groups']}</b>\n"
-                    f"🤖 Bot sources: <b>{result['bots']}</b>\n"
-                    f"⚠️ Failed deliveries: <b>{result['failed']}</b>",
-                    parse_mode="html",
-                    buttons=[[Button.inline("👑 Owner Dashboard", b"owner:dashboard")]],
-                )
+    if include_clone and getattr(event, "is_private", False) and sender_id is not None:
+        if _clone_pending(int(sender_id)):
+            if await handle_clone_token_message(event):
                 return
+
+    if (
+        include_clone
+        and sender_id is not None
+        and _owner_allowed(sender_id)
+        and _owner_broadcast_pending(int(sender_id))
+    ):
+        if text:
+            owner_broadcast_pending.pop(int(sender_id), None)
+            result = await _broadcast_owner_message(text)
+            await event.reply(
+                "✅ <b>Broadcast finished</b>\n\n"
+                f"👤 Users reached: <b>{result['users']}</b>\n"
+                f"🤖 Main-bot users: <b>{result['main_users']}</b>\n"
+                f"🧬 Clone-bot users: <b>{result['clone_users']}</b>\n"
+                f"👥 Groups reached: <b>{result['group_sent']}/{result['groups']}</b>\n"
+                f"🤖 Bot sources: <b>{result['bots']}</b>\n"
+                f"⚠️ Failed deliveries: <b>{result['failed']}</b>",
+                parse_mode="html",
+                buttons=[[Button.inline("👑 Owner Dashboard", b"owner:dashboard")]],
+            )
+            return
 
     home_text = HOME_TEXT if include_clone else CLONE_HOME_TEXT
     help_text = HELP_TEXT if include_clone else CLONE_HELP_TEXT
 
     if command == "/start":
-        await record_user(event)
-        sender = await event.get_sender()
+        _spawn_background_task(record_user(event))
+        sender_id = getattr(event, "sender_id", None)
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
         if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
@@ -3535,10 +3562,10 @@ async def handle_new_message(
             elif start_payload == "scan_files":
                 await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
             elif start_payload == "stats":
-                await render_user_stats(event, int(sender.id), edit=False)
+                await render_user_stats(event, int(sender_id), edit=False)
             elif start_payload == "clones":
                 if include_clone:
-                    await render_clone_list(event, int(sender.id), edit=False)
+                    await render_clone_list(event, int(sender_id), edit=False)
                 else:
                     await show_clone_redirect(event, payload="clones")
             elif start_payload == "addtogroup":
@@ -3548,7 +3575,7 @@ async def handle_new_message(
                     buttons=[[Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))]],
                 )
             elif start_payload == "cancel":
-                cancelled = await cancel_user_scan(int(sender.id))
+                cancelled = await cancel_user_scan(int(sender_id))
                 await event.reply(
                     f"✅ Cancelled <b>{cancelled}</b> queued/running scan job(s)." if cancelled
                     else "ℹ️ You have no queued or running metadata scans.",
@@ -3564,10 +3591,10 @@ async def handle_new_message(
         start_buttons = home_buttons(
             bot_username,
             include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
+            user_id=sender_id,
             show_privacy=bool(getattr(event, "is_private", True)),
         )
-        art = _anitoon_start_art_bytes()
+        art = await asyncio.to_thread(_anitoon_start_art_bytes)
         if art:
             art_stream = io.BytesIO(art)
             art_stream.name = "AniToon.jpg"
@@ -3596,24 +3623,22 @@ async def handle_new_message(
         return
 
     if command == "/help":
-        await record_user(event)
-        sender = await event.get_sender()
+        _spawn_background_task(record_user(event))
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
     if command == "/scan_files":
-        await record_user(event)
+        _spawn_background_task(record_user(event))
         await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
         return
 
     if command == "/about":
-        await record_user(event)
-        sender = await event.get_sender()
+        _spawn_background_task(record_user(event))
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
     if command == "/addtogroup":
-        await record_user(event)
+        _spawn_background_task(record_user(event))
         await event.reply(
             "➕ <b>Add AniToon to your group</b>",
             parse_mode="html",
@@ -3628,28 +3653,27 @@ async def handle_new_message(
         return
 
     if command == "/clone":
-        await record_user(event)
-        sender = await event.get_sender()
+        _spawn_background_task(record_user(event))
+        sender_id = getattr(event, "sender_id", None)
         if include_clone:
-            await render_clone_list(event, int(sender.id), edit=False)
+            await render_clone_list(event, int(sender_id), edit=False)
         else:
             await show_clone_redirect(event, payload="clones")
         return
 
     if command == "/stats":
-        await record_user(event)
-        sender = await event.get_sender()
-        await render_user_stats(event, int(sender.id), edit=False)
+        _spawn_background_task(record_user(event))
+        sender_id = getattr(event, "sender_id", None)
+        await render_user_stats(event, int(sender_id), edit=False)
         return
 
     if command in {"/status", "/resources"}:
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if not _owner_allowed(user_id):
             # Owner-only resource/status commands are intentionally invisible
             # to ordinary users.
             return
-        await record_user(event)
+        _spawn_background_task(record_user(event))
         if command == "/resources":
             await render_owner_resources(event, int(user_id))
         else:
@@ -3657,8 +3681,7 @@ async def handle_new_message(
         return
 
     if command == "/owner":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if _owner_allowed(user_id):
             await render_owner_dashboard(event, int(user_id), edit=False)
         else:
@@ -3666,8 +3689,7 @@ async def handle_new_message(
         return
 
     if command == "/cancel":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        user_id = getattr(event, "sender_id", None)
         if user_id is None:
             await event.reply("⚠️ I could not identify your Telegram account.")
             return
@@ -3697,7 +3719,7 @@ async def handle_new_message(
     # Every file gets its own Download Metadata button. Scan execution is
     # bounded by the global semaphore/queue, so bursts are queued instead
     # of producing "Please wait" messages or losing files.
-    await record_user(event)
+    _spawn_background_task(record_user(event))
     await analyze(
         event,
         client=client,
