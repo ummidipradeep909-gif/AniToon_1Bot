@@ -3460,11 +3460,21 @@ def is_checkable_message(event) -> bool:
     )
 
 
+def _background_task_finished(task: asyncio.Task) -> None:
+    background_tasks.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        log.debug("Background bot task failed", exc_info=True)
+
+
 def _spawn_background_task(coro: Any) -> None:
     """Run non-interactive persistence away from Telegram command response paths."""
     task = asyncio.create_task(coro)
     background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    task.add_done_callback(_background_task_finished)
 
 
 async def _track_bot_audience(client: Any, event: Any, bot_username: str) -> None:
@@ -3584,7 +3594,7 @@ async def handle_new_message(
             user_id=sender_id,
             show_privacy=bool(getattr(event, "is_private", True)),
         )
-        art = _anitoon_start_art_bytes()
+        art = await asyncio.to_thread(_anitoon_start_art_bytes)
         if art:
             art_stream = io.BytesIO(art)
             art_stream.name = "AniToon.jpg"
