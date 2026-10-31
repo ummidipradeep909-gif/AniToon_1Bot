@@ -2543,9 +2543,10 @@ async def archive_scanned_file(
     try:
         async with storage_semaphore:
             if client is archive_client:
-                # Same bot account: forward the Telegram media server-side.
+                # Native forwarding preserves the user's original caption,
+                # formatting entities, and media without creating a second post.
                 await asyncio.wait_for(
-                    archive_client.send_message(peer, source_message, silent=True),
+                    archive_client.forward_messages(peer, source_message, silent=True),
                     timeout=STORAGE_SEND_TIMEOUT,
                 )
             else:
@@ -2583,8 +2584,9 @@ async def archive_scanned_file(
                         archive_client.send_file(
                             peer,
                             temp_path,
-                            caption=caption,
-                            parse_mode="html",
+                            caption=(getattr(source_message, "message", None) or None),
+                            formatting_entities=getattr(source_message, "entities", None),
+                            parse_mode=None,
                             force_document=True,
                             silent=True,
                         ),
@@ -2616,16 +2618,12 @@ def is_archivable_media_message(event: Any) -> bool:
         return False
 
     # Archive actual user media/files, not text commands or service messages.
+    # Archive actual files only. Stickers and GIFs are deliberately excluded.
+    if any(getattr(message, attr, None) is not None for attr in ("sticker", "gif", "animation")):
+        return False
     return any(
         getattr(message, attr, None) is not None
-        for attr in (
-            "document",
-            "video",
-            "audio",
-            "voice",
-            "photo",
-            "gif",
-        )
+        for attr in ("document", "video", "audio", "voice", "photo")
     )
 
 
@@ -3434,25 +3432,31 @@ async def render_public_status(event, *, edit: bool = True) -> None:
 
 
 def is_checkable_message(event) -> bool:
-    """Accept downloadable files/photos and supported Telegram post attachments."""
+    """Accept real downloadable files, but ignore stickers, GIFs and link previews."""
     message = getattr(event, "message", None)
     if message is None:
         return False
 
-    if any(getattr(message, key, None) is not None for key in (
-        "photo", "video", "document", "sticker", "gif", "audio",
-        "voice", "video_note", "animation",
-    )):
-        return True
-
-    media = getattr(message, "media", None)
-    if media is None:
+    # These are not file-inspection requests. In particular, Telegram may
+    # represent GIFs as animated documents, so check both message fields and
+    # document attributes before accepting a generic document.
+    if any(getattr(message, key, None) is not None for key in ("sticker", "gif", "animation")):
         return False
+    document = getattr(message, "document", None)
+    if document is not None:
+        for attribute in (getattr(document, "attributes", None) or []):
+            if "animated" in type(attribute).__name__.lower():
+                return False
+        mime = str(getattr(document, "mime_type", "") or "").lower()
+        name = str(getattr(getattr(message, "file", None), "name", "") or "").lower()
+        if mime == "image/gif" or name.endswith(".gif"):
+            return False
 
-    # Any Telegram MessageMedia wrapper can yield useful message-level info,
-    # even when it has no downloadable file bytes. Ignore the empty placeholder.
-    media_type = type(media).__name__.lower()
-    return media_type.startswith("messagemedia") and "empty" not in media_type
+    # Do not treat MessageMediaWebPage (ordinary URLs/link previews) as files.
+    return any(
+        getattr(message, key, None) is not None
+        for key in ("photo", "video", "document", "audio", "voice", "video_note")
+    )
 
 
 async def handle_new_message(
@@ -3676,6 +3680,15 @@ async def handle_new_message(
         else:
             await event.reply("ℹ️ You have no queued or running metadata scans.")
         return
+
+    # The private storage channel is an archive destination, not a scan inbox.
+    # Never reply to its posts with a separate Scan File prompt.
+    configured_storage_id = os.getenv("STORAGE_CHANNEL_ID", STORAGE_CHANNEL_ID_DEFAULT).strip()
+    try:
+        if getattr(event, "chat_id", None) is not None and int(event.chat_id) == int(configured_storage_id):
+            return
+    except (TypeError, ValueError):
+        pass
 
     if not is_checkable_message(event):
         return
