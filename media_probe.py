@@ -15,9 +15,9 @@ import av
 from PIL import Image, ImageFilter, ImageOps
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf
 except Exception:
-    fitz = None
+    pymupdf = None
 
 from file_inspector import inspect_telegram_message, _populate_telegram_media_info
 
@@ -759,7 +759,7 @@ async def _bounded_pdf_bytes(client: Any, message: Any, token: str) -> bytes | N
 
 
 async def _pdf_first_page_preview(client: Any, message: Any, token: str) -> dict[str, Any] | None:
-    if fitz is None:
+    if pymupdf is None:
         log.warning("PyMuPDF is unavailable for PDF thumbnail | token=%s", token)
         return None
 
@@ -770,12 +770,12 @@ async def _pdf_first_page_preview(client: Any, message: Any, token: str) -> dict
 
         # Rendering happens only from the bounded bytes above; no full source copy
         # is created for PDFs over the strict 5-MB boundary.
-        document = fitz.open(stream=raw, filetype="pdf")
+        document = pymupdf.open(stream=raw, filetype="pdf")
         try:
             if document.page_count < 1:
                 return None
             page = document.load_page(0)
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.45, 1.45), alpha=False)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(1.45, 1.45), alpha=False)
             image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             image.thumbnail((1800, 1200), Image.Resampling.LANCZOS)
             output = io.BytesIO()
