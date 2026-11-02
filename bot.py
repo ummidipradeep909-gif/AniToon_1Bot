@@ -3538,7 +3538,7 @@ async def handle_new_message(
         return
 
     if include_clone:
-        sender_for_broadcast = await event.get_sender()
+        sender_for_broadcast = None
         owner_user_id = getattr(sender_for_broadcast, "id", None)
         if (
             owner_user_id is not None
@@ -3566,7 +3566,7 @@ async def handle_new_message(
 
     if command == "/start":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         start_parts = text.split(maxsplit=1)
         start_payload = start_parts[1].strip().split(maxsplit=1)[0].lower() if len(start_parts) > 1 else ""
         if start_payload in {"help", "about", "scan_files", "stats", "clones", "addtogroup", "cancel"}:
@@ -3577,10 +3577,10 @@ async def handle_new_message(
             elif start_payload == "scan_files":
                 await event.reply(SCAN_TEXT, parse_mode="html", buttons=scan_page_buttons())
             elif start_payload == "stats":
-                await render_user_stats(event, int(sender.id), edit=False)
+                await render_user_stats(event, int(sender_id), edit=False)
             elif start_payload == "clones":
                 if include_clone:
-                    await render_clone_list(event, int(sender.id), edit=False)
+                    await render_clone_list(event, int(sender_id), edit=False)
                 else:
                     await show_clone_redirect(event, payload="clones")
             elif start_payload == "addtogroup":
@@ -3590,7 +3590,7 @@ async def handle_new_message(
                     buttons=[[Button.url("➕ Add Me to Your Group", add_to_group_url(bot_username))]],
                 )
             elif start_payload == "cancel":
-                cancelled = await cancel_user_scan(int(sender.id))
+                cancelled = await cancel_user_scan(int(sender_id))
                 await event.reply(
                     f"✅ Cancelled <b>{cancelled}</b> queued/running scan job(s)." if cancelled
                     else "ℹ️ You have no queued or running metadata scans.",
@@ -3606,7 +3606,7 @@ async def handle_new_message(
         start_buttons = home_buttons(
             bot_username,
             include_clone=include_clone,
-            user_id=getattr(sender, "id", None),
+            user_id=sender_id,
             show_privacy=bool(getattr(event, "is_private", True)),
         )
         art = _anitoon_start_art_bytes()
@@ -3639,7 +3639,7 @@ async def handle_new_message(
 
     if command == "/help":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         await event.reply(help_text, parse_mode="html", buttons=help_buttons())
         return
 
@@ -3650,7 +3650,7 @@ async def handle_new_message(
 
     if command == "/about":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         await event.reply(ABOUT_TEXT, parse_mode="html", buttons=about_buttons())
         return
 
@@ -3671,22 +3671,22 @@ async def handle_new_message(
 
     if command == "/clone":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
+        sender_id = getattr(event, "sender_id", None)
         if include_clone:
-            await render_clone_list(event, int(sender.id), edit=False)
+            await render_clone_list(event, int(sender_id), edit=False)
         else:
             await show_clone_redirect(event, payload="clones")
         return
 
     if command == "/stats":
         _schedule_background_task(record_user(event), "user profile tracking")
-        sender = await event.get_sender()
-        await render_user_stats(event, int(sender.id), edit=False)
+        sender_id = getattr(event, "sender_id", None)
+        await render_user_stats(event, int(sender_id), edit=False)
         return
 
     if command in {"/status", "/resources"}:
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        sender_id = getattr(event, "sender_id", None)
+        user_id = sender_id
         if not _owner_allowed(user_id):
             # Owner-only resource/status commands are intentionally invisible
             # to ordinary users.
@@ -3699,8 +3699,8 @@ async def handle_new_message(
         return
 
     if command == "/owner":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        sender_id = getattr(event, "sender_id", None)
+        user_id = sender_id
         if _owner_allowed(user_id):
             await render_owner_dashboard(event, int(user_id), edit=False)
         else:
@@ -3708,8 +3708,8 @@ async def handle_new_message(
         return
 
     if command == "/cancel":
-        sender = await event.get_sender()
-        user_id = getattr(sender, "id", None)
+        sender_id = getattr(event, "sender_id", None)
+        user_id = sender_id
         if user_id is None:
             await event.reply("⚠️ I could not identify your Telegram account.")
             return
