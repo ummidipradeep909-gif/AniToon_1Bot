@@ -394,70 +394,69 @@ def compact_scan_result(report: Report) -> str:
     return (
         "✅ <b>Scan complete</b>\n\n"
         "Your file report is ready in the browser.\n"
-        "Tap <b>Open File Info</b> below to view the details."
+        "Tap <b>View File Info</b> below to open the browser report."
     )
 
 HOME_TEXT = (
-    "⛩ <b>Welcome to AniToon Media Bot</b> ⛩\n\n"
-    "🎞️ <b>File Metadata • Media Tools</b>\n"
-    "⚡ Get clear, easy-to-read information about your media files."
+    "⛩ <b>Welcome to AniToon File Inspector</b> ⛩\n\n"
+    "🎞️ <b>Telegram Media & Document Reports</b>\n"
+    "⚡ Send a supported file, start the scan when you're ready, and view its details in your browser."
 )
 
 CLONE_HOME_TEXT = (
-    "⛩ <b>AniToon Media Info Clone</b> ⛩\n\n"
-    "🔎 Inspect Telegram photos, videos, stickers, GIFs, PDFs, audio, documents and supported post media.\n"
-    "🌐 Open the complete type-specific report in your browser."
+    "⛩ <b>AniToon File Inspector</b> ⛩\n\n"
+    "🔎 Inspect Telegram photos, videos, video notes, audio, voice messages, PDFs, ZIP archives and documents.\n"
+    "🌐 Open the file's detailed report in your browser."
 )
 
 CLONE_HELP_TEXT = (
-    "📚 <b>AniToon Clone — Command Guide</b>\n\n"
+    "📚 <b>AniToon Clone — Help Guide</b>\n\n"
     "📤 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
+    "Send a photo, video, video note, audio or voice message, PDF, ZIP archive, or another document. Tap <b>Scan Files</b>, then press <b>Scan File</b> under the upload. When the scan finishes, open <b>View File Info</b> for the browser report. ZIP contents are listed when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the bot menu\n"
-    "/help — Show this command guide\n"
-    "/about — Learn about AniToon\n"
-    "/scan_files — Open the Scan Files instructions\n"
+    "/help — Show this help guide\n"
+    "/about — Learn what AniToon checks\n"
+    "/scan_files — View scanning instructions\n"
     "/stats — View your scan statistics\n"
     "/clone — Open Clone Manager on the main bot\n"
     "/addtogroup — Get the group invite link\n"
-    "/cancel — Cancel all your queued and running scans"
+    "/cancel — Cancel your queued or running scans"
 )
 
 HELP_TEXT = (
-    "📚 <b>AniToon — Command Guide</b>\n\n"
+    "📚 <b>AniToon — Help Guide</b>\n\n"
     "🔎 <b>Scan a file</b>\n"
-    "Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file or document. Tap <b>Scan Files</b>, then open <b>Open File Info</b> for the full report. ZIP reports include a contents listing when readable.\n\n"
+    "Send a photo, video, video note, audio or voice message, PDF, ZIP archive, or another document. Tap <b>Scan Files</b>, then press <b>Scan File</b> under the upload. When the scan finishes, open <b>View File Info</b> for the browser report. ZIP contents are listed when readable.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the main menu\n"
-    "/help — Show this command guide\n"
-    "/about — Learn about AniToon\n"
-    "/scan_files — Open Scan Files instructions\n"
+    "/help — Show this help guide\n"
+    "/about — Learn what AniToon checks\n"
+    "/scan_files — View scanning instructions\n"
     "/stats — View your scan statistics\n"
     "/clone — Manage your clone bots\n"
     "/addtogroup — Get the group invite link\n"
-    "/cancel — Cancel queued and running scans"
+    "/cancel — Cancel your queued or running scans"
 )
 
 SCAN_TEXT = (
-    "🔎 <b>Scan Files</b>\n\n"
-    "1️⃣ Send a photo, video, GIF, sticker, PDF, ZIP archive, audio file, document or supported post media.\n"
-    "2️⃣ Tap <b>🔎 Scan File Info</b> under the file message.\n"
-    "3️⃣ Tap <b>🌐 Open File Info</b> to view the complete web report.\n\n"
-    "📄 The report shows the metadata available for that file."
+    "🔎 <b>How to Scan a File</b>\n\n"
+    "1️⃣ Send a photo, video, video note, audio or voice message, PDF, ZIP archive, or another document.\n"
+    "2️⃣ Press <b>🔎 Scan File</b> under your upload. Scanning starts only after you press this button.\n"
+    "3️⃣ Follow the queue and progress message while the file is inspected.\n"
+    "4️⃣ When the scan completes, press <b>🌐 View File Info</b> to open the browser report.\n\n"
+    "📄 The report shows the metadata AniToon could read. ZIP directory details and embedded track names appear when available."
 )
 
 ABOUT_TEXT = (
     "ℹ️ <b>About AniToon</b> ✨\n\n"
     "🤖 <b>AniToon Bot</b>\n"
-    "A Telegram media inspector that reports available metadata for photos, images, videos, stickers, animations, PDFs, audio, documents and supported post attachments. Reads stay bounded for large files.\n\n"
+    "AniToon inspects supported Telegram media and document uploads. It can report image properties, video runtime and stream details, audio tracks, subtitles, PDF information, ZIP directory listings and other file metadata when available.\n\n"
     "🌐 <b>AniToon Web</b>\n"
-    "The web page presents the complete file information in a clean, easy-to-read report.\n\n"
-    "📦 <b>What you get</b>\n"
-    "Images • Video • Audio • Stickers • GIFs • PDFs • ZIP contents • Subtitles • Post context • Technical metadata\n\n"
-    "⚡ <b>Simple workflow</b>\n"
-    "Send file → tap Scan File Info → open the web report.\n\n"
-    "For help or questions, use the Help & Support button below."
+    "Each completed scan has a browser report with the available file information, organized by media type. Report links expire after 10 minutes.\n\n"
+    "⚡ <b>How it works</b>\n"
+    "Send a supported file → press <b>Scan File</b> → follow the progress → open <b>View File Info</b>. Uploading a file does not start the scan automatically.\n\n"
+    "📦 Large files and ZIP archives are inspected with bounded reads. Results depend on the metadata the file and Telegram expose."
 )
 
 
@@ -2374,6 +2373,40 @@ async def analyze_source(
                 await bump_clone_stat(client, "scans_failed")
 
 
+def video_runtime_line(message: Any) -> str | None:
+    """Return the total runtime for a video upload when Telegram exposes it."""
+    file_obj = getattr(message, "file", None)
+    attrs = getattr(getattr(message, "document", None), "attributes", None) or []
+    video_attrs = [
+        item for item in attrs
+        if "documentattributevideo" in type(item).__name__.lower()
+    ]
+    is_video = bool(
+        getattr(message, "video", None)
+        or getattr(message, "video_note", None)
+        or video_attrs
+    )
+    if not is_video:
+        return None
+
+    duration = getattr(file_obj, "duration", None)
+    if duration is None:
+        duration = next(
+            (getattr(item, "duration", None) for item in video_attrs
+             if getattr(item, "duration", None) is not None),
+            None,
+        )
+    try:
+        seconds = max(0, int(float(duration)))
+    except (TypeError, ValueError, OverflowError):
+        return "🎬 Total video runtime: Not available"
+
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    runtime = f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+    return f"🎬 Total video runtime: <b>{runtime}</b>"
+
+
 async def analyze(
     event,
     *,
@@ -2399,8 +2432,12 @@ async def analyze(
 
     # Keep the uploaded file and its original caption/tag unchanged.
     # Tell users clearly to press Scan; scanning starts only after that click.
+    runtime_line = video_runtime_line(event.message)
+    prompt = "🔎 <b>File received.</b>\nPress <b>Scan File</b> below when you're ready to inspect it."
+    if runtime_line:
+        prompt += f"\n{runtime_line}"
     await event.reply(
-        "🔎 <b>Want to scan this file?</b>\nTap <b>Scan File</b> below to start.",
+        prompt,
         parse_mode="html",
         buttons=metadata_button(token),
     )
@@ -2426,34 +2463,34 @@ def _clean_bot_token(value: str) -> str:
 
 
 GROUP_ONBOARDING_MESSAGES = (
-    "👋 <b>Hi everyone! I’m new here — AniToon Media Info Bot.</b>\n\n"
-    "🔎 I help you see what is inside your Telegram video or document files.\n"
-    "🎬 Quality • resolution • codec • bitrate • duration\n"
-    "🎧 Audio tracks • languages • channels\n"
-    "💬 Subtitles • languages • formats\n"
-    "📦 Container and technical file details\n\n"
-    "📤 Send a media file here and tap <b>🔎 Scan File Info</b>.\n"
-    "🌐 Open the full report in the web page.\n"
-    "🧬 You can also create your own AniToon clone bot for personal use.",
-    "🎬 <b>Day 2 • Check Video Quality</b>\n\n"
-    "See the video resolution, codec, pixel format, profile and other available quality details before you download or share a file.\n\n"
-    "📤 Send the video and tap <b>🔎 Scan File Info</b>.",
+    "👋 <b>Welcome! This is AniToon File Inspector.</b>\n\n"
+    "🔎 Inspect supported Telegram photos, videos, video notes, audio, voice messages and document uploads.\n"
+    "🎬 Video runtime • resolution • frame rate • codecs\n"
+    "🎧 Audio tracks • channels • sample rate • bitrate\n"
+    "💬 Embedded subtitle tracks and languages\n"
+    "📦 PDF details • ZIP directory listings • file metadata\n\n"
+    "📤 Send a supported file and press <b>🔎 Scan File</b> below the upload. Scanning starts only after you press it.\n"
+    "🌐 Open <b>View File Info</b> to see the browser report.\n"
+    "🧬 You can also create your own AniToon clone bot.",
+    "🎬 <b>Day 2 • Check Video Details</b>\n\n"
+    "View the available video runtime, resolution, frame rate, codec, pixel format and profile. The exact details depend on the file metadata.\n\n"
+    "📤 Send a video and press <b>🔎 Scan File</b>.",
     "🎧 <b>Day 3 • Check Audio Tracks</b>\n\n"
-    "See audio track count, language, codec, channels, layout, sample rate and bitrate when available.\n\n"
-    "📤 Send the file and scan its media information.",
-    "💬 <b>Day 4 • Find Subtitles</b>\n\n"
-    "Check embedded subtitle tracks, languages and subtitle formats so you know what is available before downloading the file.\n\n"
-    "📤 Send the media file and tap <b>🔎 Scan File Info</b>.",
-    "📦 <b>Day 5 • Check File & Container Details</b>\n\n"
-    "AniToon can identify the container or media format and show technical details such as runtime, MIME type and average bitrate when available.\n\n"
-    "🌐 Everything is organized in one clean report.",
-    "🌐 <b>Day 6 • Open the Full Web Report</b>\n\n"
-    "After the scan, use <b>🌐 Open File Info</b> to see video, audio, subtitle and technical details in an easy-to-read browser page.\n\n"
-    "⚡ Useful for checking a file quickly without downloading a complete copy.",
+    "View audio track count, language, codec, channels, layout, sample rate and bitrate when available.\n\n"
+    "📤 Send an audio file or voice message and press <b>🔎 Scan File</b>.",
+    "💬 <b>Day 4 • Check Embedded Subtitles</b>\n\n"
+    "The report can show embedded subtitle tracks, languages and formats when the media exposes them.\n\n"
+    "📤 Send a supported media file and press <b>🔎 Scan File</b>.",
+    "📦 <b>Day 5 • File & Container Details</b>\n\n"
+    "AniToon identifies file and container formats and reports details such as runtime, MIME type and average bitrate when available. ZIP directory entries are listed when readable; files are not extracted.\n\n"
+    "🌐 Details appear in one browser report.",
+    "🌐 <b>Day 6 • Open the Browser Report</b>\n\n"
+    "After a scan completes, press <b>🌐 View File Info</b> to open the organized report with available video, audio, subtitle and technical details.\n\n"
+    "📄 Report links remain available for 10 minutes.",
     "✨ <b>Day 7 • Make AniToon Part of Your Workflow</b>\n\n"
-    "Use AniToon for quality checks, audio and subtitle inspection, container details and complete web reports.\n\n"
-    "🧬 You can also create your own clone bot for personal use.\n"
-    "📤 Send a file anytime and tap <b>🔎 Scan File Info</b>."
+    "Use AniToon to review video quality, runtime, audio tracks, embedded subtitles, ZIP contents and file metadata.\n\n"
+    "🧬 You can also create your own clone bot.\n"
+    "📤 Send a supported file and press <b>🔎 Scan File</b>."
 )
 
 
@@ -4342,27 +4379,24 @@ def home_page(report_token: str | None = None) -> bytes:
     media_guide_html = """
     <section class="section">
       <div class="section-head">
-        <div><small>SUPPORTED TELEGRAM MEDIA</small><h2>🧾 What AniToon checks</h2></div>
+        <div><small>SUPPORTED TELEGRAM UPLOADS</small><h2>🧾 What AniToon checks</h2></div>
       </div>
       <div class="media-guide-wrap">
         <table class="media-guide">
-          <thead><tr><th>Media / format</th><th>What AniToon checks</th><th>How to use it</th></tr></thead>
+          <thead><tr><th>Upload type</th><th>What AniToon can report</th><th>How to use it</th></tr></thead>
           <tbody>
-            <tr><td>📷 Photos & images</td><td>Image dimensions, file size, format and available image metadata.</td><td>Send the photo/image, tap <b>Scan File Info</b>, then open the web report.</td></tr>
-            <tr><td>🎬 Videos & movies</td><td>Duration, dimensions, frame rate, codecs, container and available video/audio tracks.</td><td>Send the video or video file and scan it. Detailed codec data depends on what can be read.</td></tr>
-            <tr><td>🎧 Music & audio files</td><td>Duration, audio codec, channels, sample rate, bitrate and tags when available.</td><td>Send an audio file or music document, then open the report.</td></tr>
-            <tr><td>🎙️ Voice messages</td><td>Available audio properties, duration, file size and encoding details.</td><td>Send/forward the voice message to the bot and scan it.</td></tr>
-            <tr><td>⭕ Video notes</td><td>Available video duration, dimensions and stream details.</td><td>Send the round video message and use Scan File Info.</td></tr>
-            <tr><td>🌀 GIFs & animations</td><td>Animation/video properties and file details exposed by Telegram.</td><td>Send the GIF/animation as a Telegram attachment, then scan it.</td></tr>
-            <tr><td>🌟 Stickers & custom emoji</td><td>Sticker format (such as static, animated or video-based), dimensions and available file attributes.</td><td>Send the sticker to the bot and scan the message. Some custom-emoji details may be limited.</td></tr>
-            <tr><td>📄 PDFs & office documents</td><td>File name, size, MIME type and document properties supported by the file inspector; PDFs can include page and document metadata.</td><td>Send the document as an attachment and open its report.</td></tr>
-            <tr><td>🗜️ ZIPs, archives & other files</td><td>Filename, extension, size, MIME type and general metadata available without unpacking unsupported contents.</td><td>Send as a document. AniToon does not promise to inspect every file inside an archive.</td></tr>
-            <tr><td>💬 Subtitle files</td><td>Subtitle stream details when embedded in media, plus basic file metadata for separate subtitle files.</td><td>Send the subtitle file or a media file containing subtitle tracks.</td></tr>
-            <tr><td>📍 Other Telegram attachments</td><td>Forwards and supported attachment types may expose captions, sender/post context, links or general metadata.</td><td>Send/forward the message. Unsupported message types may only show limited details.</td></tr>
+            <tr><td>📷 Photos & images</td><td>Image dimensions, file size, image format and metadata exposed by the file.</td><td>Send a photo or image, press <b>Scan File</b>, then open <b>View File Info</b>.</td></tr>
+            <tr><td>🎬 Videos</td><td>Total runtime, dimensions, frame rate, codecs, container and available video/audio tracks.</td><td>Send the video and press <b>Scan File</b>. Runtime is shown with the upload when Telegram provides it.</td></tr>
+            <tr><td>⭕ Video notes</td><td>Available runtime, dimensions and video stream details.</td><td>Send the round video message and press <b>Scan File</b>.</td></tr>
+            <tr><td>🎧 Audio & music</td><td>Duration, codec, channels, sample rate, bitrate and tags when available.</td><td>Send an audio file and press <b>Scan File</b>.</td></tr>
+            <tr><td>🎙️ Voice messages</td><td>Available audio properties, duration, file size and encoding details.</td><td>Send or forward the voice message, then press <b>Scan File</b>.</td></tr>
+            <tr><td>📄 PDFs & documents</td><td>File name, size, MIME type and supported document properties. PDFs can include page and document metadata.</td><td>Send the document as a Telegram file upload and press <b>Scan File</b>.</td></tr>
+            <tr><td>🗜️ ZIP archives</td><td>Archive file details and a directory listing, including entry names and available audio/subtitle names when readable.</td><td>Send the ZIP as a document and press <b>Scan File</b>. Contents are listed without extracting files to disk.</td></tr>
+            <tr><td>📦 Other document uploads</td><td>Filename, extension, size, MIME type and general metadata supported by the file format.</td><td>Send the file as a document and press <b>Scan File</b>.</td></tr>
           </tbody>
         </table>
       </div>
-      <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:11px">AniToon reports information available from Telegram and the file itself. Results vary by format, file size and embedded metadata; it cannot guarantee every field for every file.</p>
+      <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:11px">AniToon reads available Telegram and file metadata using bounded inspection. Results vary by format and file contents; some fields may not be present. Uploading does not start a scan—you choose when to press <b>Scan File</b>. Completed report links expire after 10 minutes.</p>
     </section>
     """
     
@@ -4374,7 +4408,7 @@ def home_page(report_token: str | None = None) -> bytes:
           <div class="section-head">
             <div>
               <small>LIVE REPORT</small>
-              <h2>🔬 File Metadata</h2>
+              <h2>🔬 Your File Report</h2>
             </div>
             <a class="mini-link" href="/report/{safe_token}">Open ↗</a>
           </div>
@@ -4388,7 +4422,7 @@ def home_page(report_token: str | None = None) -> bytes:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#050611">
-<meta name="description" content="AniToon Media Info — anime channels and Telegram file metadata tools.">
+<meta name="description" content="AniToon inspects supported Telegram photos, videos, audio, PDFs, ZIP archives and document uploads, then creates browser-based file reports.">
 <title>AniToon Media Info</title>
 <style>
 :root {{
@@ -4518,7 +4552,7 @@ html[data-theme="light"] .display-controls{{background:rgba(255,255,255,.7)}}
   <header class="hero start-hero">
     <span class="eyebrow"><span class="dot"></span> Media tools</span>
     <h1>⛩ AniToon</h1>
-    <div class="lead">A lightweight hub for Telegram file reports, useful media tools and anime communities.</div>
+    <div class="lead">Inspect supported Telegram media and document uploads, then open a clear browser report with the file details AniToon can read.</div>
     <div class="cta-row">
       <a class="cta primary" href="https://t.me/AniToon_1Bot" target="_blank" rel="noopener noreferrer">🤖 Open AniToon Bot</a>
       <a class="cta" href="https://t.me/Anitoon_group" target="_blank" rel="noopener noreferrer">👥 Community</a>
@@ -5345,7 +5379,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
 <div class="anime-wallpaper"></div><div class="bg-grid"></div><div class="topline"></div>
 <div class="wrap">
   <nav class="nav">
-    <div class="brand">AniToon • File Reports</div>
+    <div class="brand">AniToon • File Information</div>
     <div class="nav-tools">
       <a class="home-button" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
       <button class="home-button" type="button" id="print-report" title="Print or save this report as PDF"><span>🖨️ Save PDF</span></button>
@@ -5361,7 +5395,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
   <header class="hero">
     <div class="hero-copy">
       <span class="eyebrow"><i></i> @anitoon_1bot</span>
-      <h1>File Report</h1>
+      <h1>File Information Report</h1>
       <div class="file">{filename}</div>
       {f'<div class="hero-pills"><span class="pill">🎞️ {esc(title)}</span></div>' if title else ''}
       <div class="hero-pills">
@@ -5391,7 +5425,7 @@ html[data-theme="light"] .controls{{background:rgba(255,255,255,.72)}}
     <a class="home-button bottom-home" href="/" aria-label="Go to AniToon home">⌂ Home <span>↗</span></a>
   </div>
 
-  <div class="footer"><span><strong>AniToon</strong> • File Reports</span></div>
+  <div class="footer"><span><strong>AniToon</strong> • Telegram File Information</span></div>
 </div>
 
 <script>
@@ -5629,7 +5663,7 @@ h2{{font-size:16px;margin:0 0 12px;letter-spacing:-.01em}}
 <body><main>
 <header class="hero">
   <div class="brand">⛩ AniToon • Media report</div>
-  <h1>File information</h1>
+  <h1>File Information Report</h1>
   <div class="file"><strong>{filename}</strong></div>
   <div class="pills">{f'<span class="pill">{kind}</span>' if show_kind else ''}<span class="pill">{detected}</span><span class="pill">HTML report</span></div>
   <div class="stats">{stat_cards}</div>
@@ -5927,8 +5961,8 @@ strong{color:#fff}
 <main class="card">
 <div class="icon">⏳</div>
 <h1>Link expired</h1>
-<p>This file report link has expired.</p>
-<p><strong>Send the file to the bot again</strong> to create a new report and get a new link.</p>
+<p>This browser report link is no longer active. Report links are available for 10 minutes after a scan.</p>
+<p><strong>Send the file to AniToon again</strong>, press <strong>Scan File</strong>, and open the new report when scanning finishes.</p>
 </main>
 </body>
 </html>""".encode("utf-8")

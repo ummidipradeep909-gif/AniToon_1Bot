@@ -1,14 +1,25 @@
-# AniToon_1Bot — Telegram Media Inspector
+# AniToon_1Bot — Telegram File Inspector
 
-AniToon inspects supported Telegram media and documents, then provides a clean browser report with the metadata it can safely obtain using bounded reads.
+AniToon_1Bot inspects supported Telegram media and document uploads and creates a browser-based report with the metadata it can safely read.
+
+## How to use the bot
+
+1. Send a supported photo, video, video note, audio or voice message, PDF, ZIP archive, or another document.
+2. Press **Scan File** beneath the upload. Uploading a file does not start a scan automatically.
+3. Follow the queue and progress message while AniToon inspects the file.
+4. When the scan completes, press **View File Info** to open the browser report.
+
+For video uploads, AniToon also displays the total runtime with the upload when Telegram provides that duration.
 
 ## Main features
 
-- Inspect photos, videos, animations, stickers, audio, PDFs, documents and supported post attachments.
-- Clean, type-specific web reports with useful media metadata and less repeated technical noise.
-- ZIP archive contents, file sizes and timestamps, plus available audio/subtitle track names without extracting archive contents to disk.
-- Shared FIFO scan queue with visible processing/queue positions, cancellation and resource safeguards.
+- Inspect photos, videos, video notes, audio, voice messages, PDFs, ZIP archives and supported document uploads.
+- Type-specific browser reports for available image, video, audio, subtitle, PDF and technical metadata.
+- ZIP archive directory listings, file sizes and timestamps, plus available audio/subtitle track names without extracting archive contents to disk.
+- Shared FIFO scan queue with visible queue positions, progress updates, cancellation and resource safeguards.
 - Clone bot manager and owner dashboard for user, clone, queue, performance and service status.
+
+Stickers, GIFs/animations and ordinary link previews are not listed as supported scan inputs in the current bot workflow.
 
 Research commands, scheduled topic reports and video-discovery commands are not part of the bot's user-facing feature set.
 
@@ -31,7 +42,7 @@ Never commit bot tokens, API credentials or database credentials to source contr
 
 ## Web reports and limits
 
-Report links expire after **10 minutes**. File inspection reports available metadata; it is not a full malware scan, full media decode, or safety guarantee. Large files and archive members are inspected with bounded reads, and ZIP entries are listed without extracting files to disk.
+Report links expire after **10 minutes**. File inspection reports the metadata available from Telegram and the file; it is not a full malware scan, full media decode, or safety guarantee. Large files and archive members are inspected with bounded reads, and ZIP entries are listed without extracting files to disk. Some metadata may be unavailable depending on the format and what can be read.
 
 The Render service exposes `/health` for service monitoring. Resource guards limit scan concurrency and probe work, but they cannot guarantee that hosting quotas will never be reached.
 
