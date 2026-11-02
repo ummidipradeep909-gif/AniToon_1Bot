@@ -2437,34 +2437,32 @@ def _clean_bot_token(value: str) -> str:
 
 
 GROUP_ONBOARDING_MESSAGES = (
-    "👋 <b>Hi everyone! I’m new here — AniToon Media Info Bot.</b>\n\n"
-    "🔎 I help you see what is inside your Telegram video or document files.\n"
-    "🎬 Quality • resolution • codec • bitrate • duration\n"
-    "🎧 Audio tracks • languages • channels\n"
-    "💬 Subtitles • languages • formats\n"
-    "📦 Container and technical file details\n\n"
-    "📤 Send a media file here and tap <b>🔎 Scan File Info</b>.\n"
-    "🌐 Open the full report in the web page.\n"
-    "🧬 You can also create your own AniToon clone bot for personal use.",
-    "🎬 <b>Day 2 • Check Video Quality</b>\n\n"
-    "See the video resolution, codec, pixel format, profile and other available quality details before you download or share a file.\n\n"
-    "📤 Send the video and tap <b>🔎 Scan File Info</b>.",
-    "🎧 <b>Day 3 • Check Audio Tracks</b>\n\n"
-    "See audio track count, language, codec, channels, layout, sample rate and bitrate when available.\n\n"
-    "📤 Send the file and scan its media information.",
-    "💬 <b>Day 4 • Find Subtitles</b>\n\n"
-    "Check embedded subtitle tracks, languages and subtitle formats so you know what is available before downloading the file.\n\n"
-    "📤 Send the media file and tap <b>🔎 Scan File Info</b>.",
+    "👋 <b>Hi everyone! I’m AniToon Media Inspector.</b>\n\n"
+    "🔎 I check supported Telegram photos, videos, audio, voice messages, video notes and documents.\n"
+    "🎬 Video: resolution • codecs • bitrate • duration\n"
+    "🎧 Audio: tracks • channels • sample rate • bitrate\n"
+    "📦 Files: name • size • format • available metadata\n\n"
+    "📤 Send a supported attachment. I’ll reply with a <b>🔎 Scan File</b> button.\n"
+    "👆 Tap that button to start; uploading alone does not scan the file.\n"
+    "🌐 Open <b>Open File Info</b> after completion to view the browser report.\n"
+    "⏳ Busy scans wait in the shared queue.",
+    "🎬 <b>Day 2 • Check Video Details</b>\n\n"
+    "See available video resolution, codec, pixel format, profile, frame rate and duration.\n\n"
+    "📤 Send the video, tap <b>🔎 Scan File</b> in my reply, then open the report.",
+    "🎧 <b>Day 3 • Check Audio Details</b>\n\n"
+    "See audio track count, codec, channels, layout, sample rate and bitrate when available.\n\n"
+    "📤 Send an audio/video file and tap the scan button in my reply.",
+    "💬 <b>Day 4 • Check Embedded Subtitles</b>\n\n"
+    "Inspect subtitle tracks, languages and formats embedded in supported media files when available.\n\n"
+    "📤 Send the media file, tap <b>🔎 Scan File</b>, and open the report.",
     "📦 <b>Day 5 • Check File & Container Details</b>\n\n"
-    "AniToon can identify the container or media format and show technical details such as runtime, MIME type and average bitrate when available.\n\n"
-    "🌐 Everything is organized in one clean report.",
-    "🌐 <b>Day 6 • Open the Full Web Report</b>\n\n"
-    "After the scan, use <b>🌐 Open File Info</b> to see video, audio, subtitle and technical details in an easy-to-read browser page.\n\n"
-    "⚡ Useful for checking a file quickly without downloading a complete copy.",
-    "✨ <b>Day 7 • Make AniToon Part of Your Workflow</b>\n\n"
-    "Use AniToon for quality checks, audio and subtitle inspection, container details and complete web reports.\n\n"
-    "🧬 You can also create your own clone bot for personal use.\n"
-    "📤 Send a file anytime and tap <b>🔎 Scan File Info</b>."
+    "View the container or media format, filename, MIME type, file size and other technical details when available.\n\n"
+    "🌐 Results are organized in one browser report.",
+    "🌐 <b>Day 6 • Open the Browser Report</b>\n\n"
+    "When scanning finishes, tap <b>🌐 Open File Info</b> to see the available video, audio, subtitle and file details.",
+    "✨ <b>Day 7 • Use AniToon</b>\n\n"
+    "Send a supported file → tap <b>🔎 Scan File</b> in my reply → wait for the scan → open the browser report.\n\n"
+    "⏳ Requests wait in the shared queue when scan workers are busy. You can use <b>/cancel</b> to cancel your queued or running scans."
 )
 
 
@@ -3377,7 +3375,7 @@ async def handle_clone_token_message(event) -> bool:
     await event.reply(
         "✅ <b>Your bot is created and ready to use!</b>\n\n"
         f"🤖 <b>{html.escape(label)}</b> is now online.\n"
-        "📥 Send a video or document to your new bot to scan its metadata.",
+        "📥 Send a supported photo, video, audio/voice message or document to your new bot, then tap <b>Scan File</b> in its reply.",
         parse_mode="html",
         buttons=[
             [Button.url("🤖 Open Clone Bot", f"https://t.me/{username}")],
