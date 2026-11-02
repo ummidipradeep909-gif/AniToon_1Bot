@@ -141,7 +141,7 @@ def test_pdf_report_uses_the_shared_file_report_layout_and_clean_pdf_fields():
     ).decode("utf-8")
 
     # PDF pages now share the same nav, hero, summary grid and theme controls.
-    assert '<div class="brand">AniToon • File Reports</div>' in page
+    assert '<div class="brand">AniToon • File Information</div>' in page
     assert '<div class="hero-copy">' in page
     assert 'id="overview"' in page
     assert 'id="theme-toggle"' in page
