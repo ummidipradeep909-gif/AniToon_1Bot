@@ -399,26 +399,28 @@ def compact_scan_result(report: Report) -> str:
 
 HOME_TEXT = (
     "⛩ <b>Welcome to AniToon Media Inspector</b> ⛩\n\n"
-    "🔎 Inspect supported Telegram files and view their available technical details.\n"
-    "📤 Send a photo, video, audio/voice message or document to get started.\n"
-    "👇 I will show a <b>Scan File</b> button — scanning starts only when you tap it."
+    "🔎 Inspect photos, videos, audio, voice messages and documents shared on Telegram.\n"
+    "🎬 When you send a video, I show its total runtime whenever Telegram provides it.\n"
+    "📤 Send a supported file, then tap <b>Scan File</b> in my reply to start the scan."
 )
 
 CLONE_HOME_TEXT = (
     "⛩ <b>AniToon Media Inspector</b> ⛩\n\n"
-    "🔎 Check supported Telegram photos, videos, audio, voice messages and documents.\n"
-    "📤 Send a file, tap the <b>Scan File</b> button in my reply, then open the browser report.\n"
+    "🔎 Inspect photos, videos, audio, voice messages, video notes and documents.\n"
+    "🎬 Video uploads show the total runtime whenever Telegram provides it.\n"
+    "📤 Send a file, tap <b>Scan File</b> in my reply, then open the browser report.\n"
     "⏳ If scan workers are busy, your request waits in the queue."
 )
 
 CLONE_HELP_TEXT = (
     "📚 <b>AniToon Clone — Help & Commands</b>\n\n"
     "🔎 <b>How to scan</b>\n"
-    "1️⃣ Send a supported photo, video, audio/voice message or document.\n"
+    "1️⃣ Send a photo, video, audio/voice message, video note or document.\n"
     "2️⃣ I reply with a <b>🔎 Scan File</b> button. Your file is not scanned until you tap it.\n"
-    "3️⃣ Wait while the scan runs. If workers are busy, your request is queued.\n"
+    "3️⃣ Follow the progress message. If workers are busy, your request is queued.\n"
     "4️⃣ When it finishes, tap <b>🌐 Open File Info</b> to view the browser report.\n\n"
-    "📄 The report shows technical metadata that Telegram and the file make available. ZIP/archive details depend on the readable metadata and entries.\n\n"
+    "🎬 When you send a video, I show its total runtime whenever Telegram provides it.\n"
+    "📄 Reports show available technical details; ZIP/archive information depends on readable archive metadata and entries.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the bot menu\n"
     "/help — Show this guide\n"
@@ -433,11 +435,13 @@ CLONE_HELP_TEXT = (
 HELP_TEXT = (
     "📚 <b>AniToon — Help & Commands</b>\n\n"
     "🔎 <b>How to scan a file</b>\n"
-    "1️⃣ Send a supported photo, video, audio/voice message or document.\n"
+    "1️⃣ Send a photo, video, audio/voice message, video note or document.\n"
     "2️⃣ I reply with a <b>🔎 Scan File</b> button. Scanning starts only after you tap it.\n"
-    "3️⃣ Wait while your request is processed. If scan workers are busy, it waits in the shared queue.\n"
-    "4️⃣ When the scan completes, tap <b>🌐 Open File Info</b> to view the full browser report.\n\n"
-    "📄 Reports contain the technical details available for the file. Some fields depend on its format and embedded metadata. Stickers, GIFs/animations and ordinary link previews are ignored.\n\n"
+    "3️⃣ Follow the progress message. If workers are busy, your request waits in the shared queue.\n"
+    "4️⃣ When the scan completes, tap <b>🌐 Open File Info</b> to view the browser report.\n\n"
+    "🎬 <b>Video runtime</b>\n"
+    "When you send a video, AniToon displays its total runtime in the file prompt whenever Telegram provides the duration. The report includes further video details when available.\n\n"
+    "📄 Reports show available file details such as size, format, dimensions, codecs and embedded metadata. Exact fields depend on the file.\n\n"
     "⌨️ <b>Commands</b>\n"
     "/start — Open the main menu\n"
     "/help — Show this guide\n"
@@ -451,23 +455,24 @@ HELP_TEXT = (
 
 SCAN_TEXT = (
     "🔎 <b>How to Scan Files</b>\n\n"
-    "1️⃣ Send a supported photo, video, audio/voice message or document to AniToon.\n"
-    "2️⃣ Find my reply to that message and tap <b>🔎 Scan File</b>. Sending a file alone does not start a scan.\n"
-    "3️⃣ Your request joins the scan queue if all workers are busy.\n"
+    "1️⃣ Send a photo, video, audio/voice message, video note or document to AniToon.\n"
+    "2️⃣ Find my reply and tap <b>🔎 Scan File</b>. Uploading alone does not start a scan.\n"
+    "3️⃣ Your request joins the shared queue when scan workers are busy.\n"
     "4️⃣ Follow the progress message while the scan runs.\n"
     "5️⃣ When it is complete, tap <b>🌐 Open File Info</b> to see the browser report.\n\n"
-    "ℹ️ Stickers, GIFs/animations and ordinary link previews are not scanned. Report fields depend on the file and the metadata available."
+    "🎬 Video uploads also display the total runtime whenever Telegram provides it. Report fields depend on the file and available metadata."
 )
 
 ABOUT_TEXT = (
     "ℹ️ <b>About AniToon Media Inspector</b> ✨\n\n"
     "🤖 <b>What it does</b>\n"
-    "AniToon inspects supported Telegram photos, videos, audio, voice messages, video notes and documents. It extracts available technical information such as dimensions, duration, codecs, file size, format and embedded metadata.\n\n"
+    "AniToon inspects photos, videos, audio, voice messages, video notes and documents. It extracts available technical information such as dimensions, duration, codecs, file size, format and embedded metadata.\n\n"
+    "🎬 <b>Video runtime</b>\n"
+    "When a video is sent, AniToon displays its total runtime in the upload reply whenever Telegram provides the duration. The full report can include additional video and audio stream details.\n\n"
     "🌐 <b>Browser reports</b>\n"
-    "After a scan completes, open the web report for the detailed, type-specific results. ZIP/archive information is limited to metadata and entries that can be read safely.\n\n"
+    "After a scan completes, open the web report for detailed, type-specific results. ZIP/archive information is limited to metadata and entries that can be read safely.\n\n"
     "⚙️ <b>How scanning works</b>\n"
-    "Send a supported file → tap the <b>Scan File</b> button in AniToon's reply → wait for the scan → open <b>Open File Info</b>. Scanning is user-triggered; files are not scanned automatically on upload. Busy requests wait in a shared queue, and scan workers are bounded to protect the service.\n\n"
-    "🚫 Stickers, GIFs/animations and ordinary link previews are ignored. Results vary by file format and available metadata.\n\n"
+    "Send a supported file → tap the <b>Scan File</b> button in AniToon's reply → follow progress → open <b>Open File Info</b>. Files are not scanned automatically on upload. Busy requests wait in a shared queue, and scan workers are bounded to protect the service.\n\n"
     "For help or questions, use the Help & Support button below."
 )
 
@@ -2385,6 +2390,35 @@ async def analyze_source(
                 await bump_clone_stat(client, "scans_failed")
 
 
+def video_runtime_line(message: Any) -> str | None:
+    """Return the video's total runtime for the upload prompt when Telegram exposes it."""
+    if message is None:
+        return None
+
+    is_video = bool(
+        getattr(message, "video", None)
+        or getattr(message, "video_note", None)
+    )
+    duration = getattr(getattr(message, "file", None), "duration", None)
+    document = getattr(message, "document", None)
+    for attribute in (getattr(document, "attributes", None) or []):
+        if "video" in type(attribute).__name__.lower():
+            is_video = True
+            duration = duration or getattr(attribute, "duration", None)
+
+    if not is_video:
+        return None
+    try:
+        total_seconds = max(0, int(float(duration)))
+    except (TypeError, ValueError, OverflowError):
+        return "🎬 <b>Total video runtime:</b> Not available"
+
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    runtime = f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+    return f"🎬 <b>Total video runtime:</b> {runtime}"
+
+
 async def analyze(
     event,
     *,
@@ -2410,8 +2444,13 @@ async def analyze(
 
     # Keep the uploaded file and its original caption/tag unchanged.
     # Tell users clearly to press Scan; scanning starts only after that click.
+    runtime_line = video_runtime_line(event.message)
+    prompt = "🔎 <b>Want to scan this file?</b>\n"
+    if runtime_line:
+        prompt += f"{runtime_line}\n"
+    prompt += "Tap <b>Scan File</b> below to start."
     await event.reply(
-        "🔎 <b>Want to scan this file?</b>\nTap <b>Scan File</b> below to start.",
+        prompt,
         parse_mode="html",
         buttons=metadata_button(token),
     )
@@ -4366,7 +4405,7 @@ def home_page(report_token: str | None = None) -> bytes:
         </table>
       </div>
       <p style="padding:0 16px 8px;margin:0;color:var(--muted);font-size:11px">To scan: send a supported attachment, tap <b>Scan File</b> in AniToon's reply, wait for completion, then open <b>Open File Info</b>. Uploading alone does not start a scan. Requests wait in the shared queue when workers are busy.</p>
-      <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:11px">Stickers, GIFs/animations and ordinary link previews are ignored. AniToon reports only information available from Telegram and the file; results vary by format, file size and embedded metadata.</p>
+      <p style="padding:0 16px 14px;margin:0;color:var(--muted);font-size:11px">AniToon reports the information available from Telegram and the file; results vary by format, file size and embedded metadata.</p>
     </section>
     """
     
