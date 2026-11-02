@@ -3290,11 +3290,13 @@ async def handle_clone_token_message(event) -> bool:
     if not event.is_private or not raw_text or raw_text.startswith("/"):
         return False
 
-    sender = await event.get_sender()
-    user_id = getattr(sender, "id", None)
+    user_id = getattr(event, "sender_id", None)
     if user_id is None or not _clone_pending(int(user_id)):
         return False
 
+    # Only resolve the sender entity for the one user who is actually
+    # submitting a clone token; ordinary private messages avoid this lookup.
+    sender = await event.get_sender()
     clone_setup_pending.pop(int(user_id), None)
     token = _clean_bot_token(event.raw_text or "")
 
@@ -3532,7 +3534,10 @@ async def handle_new_message(
         )
 
     if not include_clone:
-        await bump_clone_stat(client, "messages_received")
+        _schedule_background_task(
+            bump_clone_stat(client, "messages_received"),
+            "clone message statistics",
+        )
 
     if include_clone and await handle_clone_token_message(event):
         return
