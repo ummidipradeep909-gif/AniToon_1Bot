@@ -394,7 +394,7 @@ def compact_scan_result(report: Report) -> str:
     return (
         "✅ <b>Scan complete</b>\n\n"
         "Your file report is ready in the browser.\n"
-        "Tap <b>Open File Info</b> below to view the details."
+        "Tap <b>View File Info</b> below to open the browser report."
     )
 
 HOME_TEXT = (
