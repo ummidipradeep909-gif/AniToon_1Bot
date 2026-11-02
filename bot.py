@@ -3556,7 +3556,17 @@ async def handle_new_message(
     include_clone: bool = True,
 ):
     text = (event.raw_text or "").strip()
-    command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text else ""
+    command_token = text.split(maxsplit=1)[0] if text else ""
+    command = command_token.split("@", 1)[0].lower() if command_token else ""
+
+    # In groups, a command addressed to a different bot belongs to that bot.
+    # Do not strip every @username and accidentally answer another bot's
+    # /start@OtherBot, /help@OtherBot, etc.
+    if "@" in command_token:
+        addressed_username = command_token.split("@", 1)[1].strip().lower()
+        own_username = (bot_username or "").lstrip("@").strip().lower()
+        if not addressed_username or not own_username or addressed_username != own_username:
+            return
 
     # Audience persistence is useful for owner broadcasts, but it must not
     # delay a user's command response while MongoDB connects or writes.
